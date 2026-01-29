@@ -2,6 +2,8 @@
 
 A Zig port of [beads_rust](https://github.com/Dicklesworthstone/beads_rust) - a local-first issue tracker for git repositories.
 
+> **Status**: Development blocked pending completion of [rich_zig](https://github.com/hotschmoe-zig/rich_zig) (terminal formatting library).
+
 ## Overview
 
 beads_zig is a command-line issue tracker that lives in your git repository. No accounts, no internet required, no external dependencies. Your issues stay with your code.
@@ -28,13 +30,21 @@ beads_zig is a command-line issue tracker that lives in your git repository. No 
 - Labels and type classification (bug/feature/task)
 - Assignees
 
+## Dependencies
+
+- **[rich_zig](https://github.com/hotschmoe-zig/rich_zig)** - Terminal formatting (colors, tables, TTY detection)
+- **SQLite** - System library or bundled
+
 ## Building
 
 Requires Zig 0.15.2 or later.
 
 ```bash
-# Build
+# Build (links system SQLite)
 zig build
+
+# Build with bundled SQLite
+zig build -Dbundle-sqlite=true
 
 # Run
 zig build run
@@ -44,6 +54,9 @@ zig build run -- <args>
 
 # Run tests
 zig build test
+
+# Format source
+zig build fmt
 ```
 
 ## Usage
