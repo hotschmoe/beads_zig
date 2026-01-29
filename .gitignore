@@ -1,2 +1,22 @@
-.zig-cache/
+# Zig build artifacts
 zig-out/
+zig-cache/
+.zig-cache/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Beads data directory (local issue database)
+# Uncomment the next line if you want to ignore the beads database
+# .beads/
+
+# Archive directory (per CLAUDE.md - deprecated files go here)
+.archive/
