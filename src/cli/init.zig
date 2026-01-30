@@ -38,30 +38,21 @@ pub fn run(
     });
 
     const beads_dir = global.data_path orelse ".beads";
+    const issues_file = "issues.jsonl";
 
-    // Check if already initialized by looking for issues.jsonl
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
+    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, issues_file });
     defer allocator.free(issues_path);
 
+    // Check if already initialized by looking for issues.jsonl
     const already_exists = blk: {
-        std.fs.cwd().access(issues_path, .{}) catch |err| switch (err) {
-            error.FileNotFound => break :blk false,
-            else => break :blk true,
+        std.fs.cwd().access(issues_path, .{}) catch |err| {
+            break :blk err != error.FileNotFound;
         };
         break :blk true;
     };
 
     if (already_exists) {
-        if (global.json) {
-            try output.printJson(InitResult{
-                .success = false,
-                .path = beads_dir,
-                .prefix = init_args.prefix,
-                .message = "workspace already initialized",
-            });
-        } else {
-            try output.err("workspace already initialized at {s}/", .{beads_dir});
-        }
+        try outputError(&output, global.json, beads_dir, init_args.prefix, "workspace already initialized");
         return InitError.AlreadyInitialized;
     }
 
@@ -69,37 +60,16 @@ pub fn run(
     std.fs.cwd().makeDir(beads_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => {
-            if (global.json) {
-                try output.printJson(InitResult{
-                    .success = false,
-                    .path = beads_dir,
-                    .prefix = init_args.prefix,
-                    .message = "failed to create directory",
-                });
-            } else {
-                try output.err("failed to create directory: {s}", .{beads_dir});
-            }
+            try outputError(&output, global.json, beads_dir, init_args.prefix, "failed to create directory");
             return InitError.CreateDirectoryFailed;
         },
     };
 
-    // Create empty issues.jsonl
-    const jsonl_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(jsonl_path);
-
-    const jsonl_file = std.fs.cwd().createFile(jsonl_path, .{ .exclusive = true }) catch |err| switch (err) {
+    // Create empty issues.jsonl (reuse the path we already constructed)
+    const jsonl_file = std.fs.cwd().createFile(issues_path, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => null,
         else => {
-            if (global.json) {
-                try output.printJson(InitResult{
-                    .success = false,
-                    .path = beads_dir,
-                    .prefix = init_args.prefix,
-                    .message = "failed to create issues.jsonl",
-                });
-            } else {
-                try output.err("failed to create issues.jsonl", .{});
-            }
+            try outputError(&output, global.json, beads_dir, init_args.prefix, "failed to create issues.jsonl");
             return InitError.WriteFileFailed;
         },
     };
@@ -134,6 +104,25 @@ pub fn run(
         try output.success("Initialized beads workspace in {s}/", .{beads_dir});
         try output.print("  Issue prefix: {s}\n", .{init_args.prefix});
         try output.print("  Issues file: {s}/issues.jsonl\n", .{beads_dir});
+    }
+}
+
+fn outputError(
+    output: *Output,
+    json_mode: bool,
+    path: []const u8,
+    prefix: []const u8,
+    message: []const u8,
+) !void {
+    if (json_mode) {
+        try output.printJson(InitResult{
+            .success = false,
+            .path = path,
+            .prefix = prefix,
+            .message = message,
+        });
+    } else {
+        try output.err("{s}", .{message});
     }
 }
 
