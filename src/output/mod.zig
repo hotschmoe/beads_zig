@@ -359,14 +359,8 @@ pub const Output = struct {
 
 /// Check if NO_COLOR environment variable is set (cross-platform).
 fn checkNoColorEnv() bool {
-    // Use cross-platform getEnvVarOwned - returns error if not set
-    const value = std.process.getEnvVarOwned(std.heap.page_allocator, "NO_COLOR") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => return false,
-        else => return false,
-    };
-    std.heap.page_allocator.free(value);
-    // Variable exists (value doesn't matter per NO_COLOR spec)
-    return true;
+    // Per NO_COLOR spec, only existence matters, not the value
+    return std.process.hasEnvVarConstant("NO_COLOR");
 }
 
 /// Get ANSI color for a status.
