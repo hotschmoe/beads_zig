@@ -11,6 +11,8 @@
 
 const std = @import("std");
 
+pub const Status = @import("status.zig").Status;
+
 test {
     std.testing.refAllDecls(@This());
 }
