@@ -10,6 +10,7 @@ const Priority = @import("priority.zig").Priority;
 const IssueType = @import("issue_type.zig").IssueType;
 const Dependency = @import("dependency.zig").Dependency;
 const Comment = @import("comment.zig").Comment;
+const timestamp = @import("timestamp.zig");
 
 /// Validation errors for Issue.
 pub const IssueError = error{
@@ -51,14 +52,14 @@ pub const Rfc3339Timestamp = struct {
             .string, .allocated_string => |s| s,
             else => return error.UnexpectedToken,
         };
-        return Self{ .value = parseRfc3339(str) orelse return error.InvalidCharacter };
+        return Self{ .value = timestamp.parseRfc3339(str) orelse return error.InvalidCharacter };
     }
 
     pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !Self {
         _ = allocator;
         _ = options;
         return switch (source) {
-            .string => |s| Self{ .value = parseRfc3339(s) orelse return error.InvalidCharacter },
+            .string => |s| Self{ .value = timestamp.parseRfc3339(s) orelse return error.InvalidCharacter },
             .integer => |i| Self{ .value = i },
             else => error.UnexpectedToken,
         };
@@ -84,7 +85,7 @@ pub const OptionalRfc3339Timestamp = struct {
         const token = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
         return switch (token) {
             .null => Self{ .value = null },
-            .string, .allocated_string => |s| Self{ .value = parseRfc3339(s) orelse return error.InvalidCharacter },
+            .string, .allocated_string => |s| Self{ .value = timestamp.parseRfc3339(s) orelse return error.InvalidCharacter },
             else => error.UnexpectedToken,
         };
     }
@@ -94,73 +95,12 @@ pub const OptionalRfc3339Timestamp = struct {
         _ = options;
         return switch (source) {
             .null => Self{ .value = null },
-            .string => |s| Self{ .value = parseRfc3339(s) orelse return error.InvalidCharacter },
+            .string => |s| Self{ .value = timestamp.parseRfc3339(s) orelse return error.InvalidCharacter },
             .integer => |i| Self{ .value = i },
             else => error.UnexpectedToken,
         };
     }
 };
-
-/// Parse RFC3339 timestamp string to Unix epoch seconds.
-/// Accepts formats: "2024-01-29T15:30:00Z" or "2024-01-29T15:30:00+00:00"
-fn parseRfc3339(s: []const u8) ?i64 {
-    if (s.len < 20) return null;
-
-    const year = std.fmt.parseInt(u16, s[0..4], 10) catch return null;
-    if (s[4] != '-') return null;
-    const month = std.fmt.parseInt(u8, s[5..7], 10) catch return null;
-    if (s[7] != '-') return null;
-    const day = std.fmt.parseInt(u8, s[8..10], 10) catch return null;
-    if (s[10] != 'T') return null;
-    const hour = std.fmt.parseInt(u8, s[11..13], 10) catch return null;
-    if (s[13] != ':') return null;
-    const minute = std.fmt.parseInt(u8, s[14..16], 10) catch return null;
-    if (s[16] != ':') return null;
-    const second = std.fmt.parseInt(u8, s[17..19], 10) catch return null;
-
-    if (month < 1 or month > 12) return null;
-    if (day < 1 or day > 31) return null;
-    if (hour > 23) return null;
-    if (minute > 59) return null;
-    if (second > 59) return null;
-
-    const epoch_day = yearMonthDayToEpochDay(year, month, day) orelse return null;
-    const day_seconds: i64 = @as(i64, hour) * 3600 + @as(i64, minute) * 60 + @as(i64, second);
-
-    return epoch_day * std.time.epoch.secs_per_day + day_seconds;
-}
-
-/// Convert year/month/day to epoch day (days since 1970-01-01).
-fn yearMonthDayToEpochDay(year: u16, month: u8, day: u8) ?i64 {
-    const epoch_year: i32 = std.time.epoch.epoch_year;
-    const year_i32: i32 = @intCast(year);
-
-    // Calculate days from years
-    var total_days: i64 = 0;
-    if (year_i32 >= epoch_year) {
-        var y: i32 = epoch_year;
-        while (y < year_i32) : (y += 1) {
-            total_days += std.time.epoch.getDaysInYear(@intCast(y));
-        }
-    } else {
-        var y: i32 = year_i32;
-        while (y < epoch_year) : (y += 1) {
-            total_days -= std.time.epoch.getDaysInYear(@intCast(y));
-        }
-    }
-
-    // Add days from months
-    const is_leap = std.time.epoch.isLeapYear(year);
-    const days_in_months = if (is_leap)
-        [_]u16{ 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335 }
-    else
-        [_]u16{ 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
-
-    total_days += days_in_months[month - 1];
-    total_days += day - 1;
-
-    return total_days;
-}
 
 /// The primary issue entity. All fields align with beads_rust for JSONL compatibility.
 pub const Issue = struct {
@@ -811,16 +751,16 @@ test "OptionalRfc3339Timestamp JSON parse null" {
     try std.testing.expect(parsed.value.value == null);
 }
 
-test "parseRfc3339 parses valid timestamp" {
-    const result = parseRfc3339("2024-01-29T14:53:20Z");
+test "timestamp.parseRfc3339 parses valid timestamp" {
+    const result = timestamp.parseRfc3339("2024-01-29T14:53:20Z");
     try std.testing.expect(result != null);
     try std.testing.expectEqual(@as(i64, 1706540000), result.?);
 }
 
-test "parseRfc3339 rejects invalid format" {
-    try std.testing.expect(parseRfc3339("invalid") == null);
-    try std.testing.expect(parseRfc3339("2024-01-29") == null);
-    try std.testing.expect(parseRfc3339("2024/01/29T15:33:20Z") == null);
+test "timestamp.parseRfc3339 rejects invalid format" {
+    try std.testing.expect(timestamp.parseRfc3339("invalid") == null);
+    try std.testing.expect(timestamp.parseRfc3339("2024-01-29") == null);
+    try std.testing.expect(timestamp.parseRfc3339("2024/01/29T15:33:20Z") == null);
 }
 
 test "Issue JSON serialization roundtrip" {

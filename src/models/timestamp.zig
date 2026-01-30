@@ -75,7 +75,7 @@ pub fn parseRfc3339Strict(s: []const u8) TimestampError!i64 {
     // Skip fractional seconds if present (.NNN)
     if (pos < s.len and s[pos] == '.') {
         pos += 1;
-        while (pos < s.len and s[pos] >= '0' and s[pos] <= '9') {
+        while (pos < s.len and std.ascii.isDigit(s[pos])) {
             pos += 1;
         }
     }
@@ -84,8 +84,7 @@ pub fn parseRfc3339Strict(s: []const u8) TimestampError!i64 {
     if (pos < s.len) {
         const tz_char = s[pos];
         if (tz_char == 'Z' or tz_char == 'z') {
-            // UTC, no offset
-            tz_offset_seconds = 0;
+            // UTC, offset stays 0
         } else if (tz_char == '+' or tz_char == '-') {
             // Parse offset: +HH:MM or -HH:MM
             if (s.len < pos + 6) return TimestampError.InvalidTimezone;
