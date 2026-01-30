@@ -7,6 +7,8 @@
 const std = @import("std");
 const Issue = @import("../models/issue.zig").Issue;
 
+const HEX_CHARS = "0123456789abcdef";
+
 /// Generate SHA256 content hash for an issue.
 /// Returns a 64-character lowercase hex string.
 ///
@@ -25,60 +27,46 @@ pub fn contentHash(issue: Issue) [64]u8 {
     // Content fields
     hasher.update(issue.title);
     hasher.update("\x00");
-
-    if (issue.description) |d| hasher.update(d);
-    hasher.update("\x00");
-
-    if (issue.design) |d| hasher.update(d);
-    hasher.update("\x00");
-
-    if (issue.acceptance_criteria) |a| hasher.update(a);
-    hasher.update("\x00");
-
-    if (issue.notes) |n| hasher.update(n);
-    hasher.update("\x00");
+    updateOptional(&hasher, issue.description);
+    updateOptional(&hasher, issue.design);
+    updateOptional(&hasher, issue.acceptance_criteria);
+    updateOptional(&hasher, issue.notes);
 
     // Classification
     hasher.update(issue.status.toString());
     hasher.update("\x00");
-
     hasher.update(issue.priority.toString());
     hasher.update("\x00");
-
     hasher.update(issue.issue_type.toString());
     hasher.update("\x00");
 
     // Assignment
-    if (issue.assignee) |a| hasher.update(a);
-    hasher.update("\x00");
-
-    if (issue.owner) |o| hasher.update(o);
-    hasher.update("\x00");
-
-    if (issue.created_by) |c| hasher.update(c);
-    hasher.update("\x00");
+    updateOptional(&hasher, issue.assignee);
+    updateOptional(&hasher, issue.owner);
+    updateOptional(&hasher, issue.created_by);
 
     // External references
-    if (issue.external_ref) |e| hasher.update(e);
-    hasher.update("\x00");
-
-    if (issue.source_system) |s| hasher.update(s);
-    hasher.update("\x00");
+    updateOptional(&hasher, issue.external_ref);
+    updateOptional(&hasher, issue.source_system);
 
     // Flags
     hasher.update(if (issue.pinned) "true" else "false");
     hasher.update("\x00");
-
     hasher.update(if (issue.is_template) "true" else "false");
 
-    const digest = hasher.finalResult();
+    return digestToHex(hasher.finalResult());
+}
 
-    // Convert to hex string
+fn updateOptional(hasher: *std.crypto.hash.sha2.Sha256, value: ?[]const u8) void {
+    if (value) |v| hasher.update(v);
+    hasher.update("\x00");
+}
+
+fn digestToHex(digest: [32]u8) [64]u8 {
     var hex: [64]u8 = undefined;
     for (digest, 0..) |byte, i| {
-        const chars = "0123456789abcdef";
-        hex[i * 2] = chars[byte >> 4];
-        hex[i * 2 + 1] = chars[byte & 0x0f];
+        hex[i * 2] = HEX_CHARS[byte >> 4];
+        hex[i * 2 + 1] = HEX_CHARS[byte & 0x0f];
     }
     return hex;
 }
@@ -191,33 +179,16 @@ test "contentHash different for different flags" {
     try std.testing.expect(!std.mem.eql(u8, &hash1, &hash2));
 }
 
-test "contentHash handles null optional fields" {
-    const issue = Issue.init("bd-abc123", "Test issue", 1706540000);
-
-    // Should not crash when all optional fields are null
-    const hash = contentHash(issue);
-    try std.testing.expectEqual(@as(usize, 64), hash.len);
-}
-
-test "contentHash produces 64 hex characters" {
+test "contentHash produces 64 lowercase hex characters" {
     const issue = Issue.init("bd-abc123", "Test issue", 1706540000);
     const hash = contentHash(issue);
 
     try std.testing.expectEqual(@as(usize, 64), hash.len);
 
-    // Verify all characters are lowercase hex
     for (hash) |c| {
-        try std.testing.expect((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'));
-    }
-}
-
-test "contentHash is lowercase" {
-    const issue = Issue.init("bd-abc123", "Test issue", 1706540000);
-    const hash = contentHash(issue);
-
-    // No uppercase characters
-    for (hash) |c| {
-        try std.testing.expect(c < 'A' or c > 'F');
+        const is_digit = c >= '0' and c <= '9';
+        const is_lower_hex = c >= 'a' and c <= 'f';
+        try std.testing.expect(is_digit or is_lower_hex);
     }
 }
 
