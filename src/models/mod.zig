@@ -16,6 +16,8 @@ pub const Priority = @import("priority.zig").Priority;
 pub const IssueType = @import("issue_type.zig").IssueType;
 pub const DependencyType = @import("dependency.zig").DependencyType;
 pub const Dependency = @import("dependency.zig").Dependency;
+pub const Comment = @import("comment.zig").Comment;
+pub const CommentError = @import("comment.zig").CommentError;
 
 test {
     std.testing.refAllDecls(@This());
