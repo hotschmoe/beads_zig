@@ -1,33 +1,27 @@
-//! Database storage layer for beads_zig.
+//! Storage layer for beads_zig.
 //!
-//! Handles all SQLite operations including:
-//! - Schema initialization and migrations
-//! - Issue CRUD operations
-//! - Dependency management
-//! - Label and comment storage
-//! - Event/audit logging
-//! - Full-text search via FTS5
+//! Handles all persistence operations including:
+//! - JSONL file I/O (read/write issues)
+//! - In-memory issue storage with indexing
+//! - Dependency graph management
 //! - Dirty tracking for sync
 
 const std = @import("std");
 
-pub const sqlite = @import("sqlite.zig");
-pub const schema = @import("schema.zig");
+pub const jsonl = @import("jsonl.zig");
+pub const store = @import("store.zig");
+pub const graph = @import("graph.zig");
 pub const issues = @import("issues.zig");
 pub const dependencies = @import("dependencies.zig");
 
-pub const Database = sqlite.Database;
-pub const Statement = sqlite.Statement;
-pub const SqliteError = sqlite.SqliteError;
-pub const transaction = sqlite.transaction;
-pub const transactionSimple = sqlite.transactionSimple;
+pub const JsonlFile = jsonl.JsonlFile;
+pub const JsonlError = jsonl.JsonlError;
 
-pub const createSchema = schema.createSchema;
-pub const getSchemaVersion = schema.getSchemaVersion;
-pub const SCHEMA_VERSION = schema.SCHEMA_VERSION;
+pub const IssueStore = store.IssueStore;
+pub const IssueStoreError = store.IssueStoreError;
 
-pub const IssueStore = issues.IssueStore;
-pub const IssueStoreError = issues.IssueStoreError;
+pub const DependencyGraph = graph.DependencyGraph;
+pub const DependencyGraphError = graph.DependencyGraphError;
 
 pub const DependencyStore = dependencies.DependencyStore;
 pub const DependencyStoreError = dependencies.DependencyStoreError;
