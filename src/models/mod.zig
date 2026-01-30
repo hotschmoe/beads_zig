@@ -18,6 +18,9 @@ pub const DependencyType = @import("dependency.zig").DependencyType;
 pub const Dependency = @import("dependency.zig").Dependency;
 pub const Comment = @import("comment.zig").Comment;
 pub const CommentError = @import("comment.zig").CommentError;
+pub const EventType = @import("event.zig").EventType;
+pub const Event = @import("event.zig").Event;
+pub const EventError = @import("event.zig").EventError;
 
 test {
     std.testing.refAllDecls(@This());
