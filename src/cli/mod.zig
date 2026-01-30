@@ -7,6 +7,14 @@
 
 const std = @import("std");
 
+pub const args = @import("args.zig");
+
+pub const ArgParser = args.ArgParser;
+pub const ParseResult = args.ParseResult;
+pub const ParseError = args.ParseError;
+pub const GlobalOptions = args.GlobalOptions;
+pub const Command = args.Command;
+
 test {
     std.testing.refAllDecls(@This());
 }
