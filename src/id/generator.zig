@@ -137,8 +137,6 @@ pub fn parseId(id: []const u8) !ParsedId {
 /// Validate ID format.
 pub fn validateId(id: []const u8) bool {
     const parsed = parseId(id) catch return false;
-    if (parsed.prefix.len == 0 or parsed.hash.len == 0) return false;
-    // Validate hash is valid base36
     _ = base36.decode(parsed.hash) catch return false;
     return true;
 }
