@@ -394,12 +394,14 @@ With JSONL as the primary storage, sync is simplified:
 
 ### Workspace Commands
 
-- [ ] `bz init` - Initialize workspace
-  - [ ] Create `.beads/` directory
-  - [ ] Create `issues.jsonl` (empty)
-  - [ ] Create `config.yaml`
-  - [ ] Create `metadata.json`
-  - [ ] `--prefix` option for issue ID prefix
+- [x] `bz init` - Initialize workspace
+  - [x] Create `.beads/` directory
+  - [x] Create `issues.jsonl` (empty)
+  - [x] Create `config.yaml`
+  - [x] Create `metadata.json`
+  - [x] `--prefix` option for issue ID prefix
+  - [x] `--json` output format
+  - [x] `.gitignore` for WAL/lock files
 - [ ] `bz config` - Manage configuration
   - [ ] `--list` - Show all settings
   - [ ] `--get <key>` - Get specific value
@@ -410,17 +412,18 @@ With JSONL as the primary storage, sync is simplified:
 
 ### Issue CRUD Commands
 
-- [ ] `bz create <title>` - Create issue
-  - [ ] `--type` (bug/feature/task/epic/chore/docs/question)
-  - [ ] `--priority` (0-4 or critical/high/medium/low/backlog)
-  - [ ] `--description`
-  - [ ] `--assignee`
-  - [ ] `--labels` (multiple)
+- [x] `bz create <title>` - Create issue
+  - [x] `--type` (bug/feature/task/epic/chore/docs/question)
+  - [x] `--priority` (0-4 or critical/high/medium/low/backlog)
+  - [x] `--description`
+  - [x] `--assignee`
+  - [x] `--labels` (multiple)
   - [ ] `--deps` (multiple dependency IDs)
-  - [ ] `--due` (date)
-  - [ ] `--estimate` (minutes)
-  - [ ] Return created ID
-- [ ] `bz q <title>` - Quick capture (create + print ID only)
+  - [x] `--due` (date)
+  - [x] `--estimate` (minutes)
+  - [x] Return created ID
+  - [x] `--json` output format
+- [x] `bz q <title>` - Quick capture (create + print ID only)
 - [ ] `bz show <id>` - Display issue details
   - [ ] Full metadata
   - [ ] Labels

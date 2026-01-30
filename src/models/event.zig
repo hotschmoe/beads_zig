@@ -72,7 +72,7 @@ pub const EventError = error{
 
 /// An audit log entry for an issue change.
 pub const Event = struct {
-    id: i64, // Auto-increment from SQLite, 0 for new events before insert
+    id: i64, // Unique identifier, 0 for new events before insert
     issue_id: []const u8, // The issue this event relates to
     event_type: EventType, // What kind of change occurred
     actor: []const u8, // Who performed the action

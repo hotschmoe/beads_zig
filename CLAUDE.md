@@ -113,6 +113,22 @@ Only if all three answers are "yes" should you fix the code.
 - A specification to code against
 
 **The real success metric**: Does the code further our project's vision and goals?
+
+### Running Tests Safely
+
+**Always use timeouts when running tests** to avoid locking up the terminal:
+
+```bash
+timeout 60 zig build test 2>&1   # 60 second timeout
+timeout 30 zig test src/models/mod.zig 2>&1   # For individual modules
+```
+
+If tests hang:
+1. Kill with `pkill -9 -f "zig.*test"`
+2. Investigate which module is causing the hang
+3. Test modules individually to isolate the problem
+
+**Manual CLI testing** is preferred for CLI commands - test in `sandbox/` directory.
 <!-- END:testing-philosophy -->
 
 <!-- BEGIN:footer -->

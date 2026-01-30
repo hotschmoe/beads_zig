@@ -14,7 +14,7 @@ pub const CommentError = error{
 
 /// A comment attached to an issue.
 pub const Comment = struct {
-    id: i64, // Auto-increment from SQLite, 0 for new comments before insert
+    id: i64, // Unique identifier, 0 for new comments before insert
     issue_id: []const u8, // Parent issue ID
     author: []const u8, // Who wrote the comment
     body: []const u8, // Comment content

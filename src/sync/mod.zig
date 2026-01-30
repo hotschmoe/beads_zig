@@ -1,8 +1,8 @@
 //! JSONL import/export synchronization for beads_zig.
 //!
 //! Handles:
-//! - Export (flush): SQLite -> issues.jsonl
-//! - Import: issues.jsonl -> SQLite
+//! - Export (flush): memory -> issues.jsonl
+//! - Import: issues.jsonl -> memory
 //! - Merge conflict detection
 //! - Content hash deduplication
 //! - Atomic file writes
