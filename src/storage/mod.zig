@@ -11,6 +11,14 @@
 
 const std = @import("std");
 
+pub const sqlite = @import("sqlite.zig");
+
+pub const Database = sqlite.Database;
+pub const Statement = sqlite.Statement;
+pub const SqliteError = sqlite.SqliteError;
+pub const transaction = sqlite.transaction;
+pub const transactionSimple = sqlite.transactionSimple;
+
 test {
     std.testing.refAllDecls(@This());
 }
