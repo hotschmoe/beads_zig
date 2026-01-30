@@ -14,6 +14,8 @@ const std = @import("std");
 pub const Status = @import("status.zig").Status;
 pub const Priority = @import("priority.zig").Priority;
 pub const IssueType = @import("issue_type.zig").IssueType;
+pub const DependencyType = @import("dependency.zig").DependencyType;
+pub const Dependency = @import("dependency.zig").Dependency;
 
 test {
     std.testing.refAllDecls(@This());
