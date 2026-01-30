@@ -235,11 +235,11 @@ pub const Issue = struct {
         if (a.created_at.value != b.created_at.value) return false;
         if (!optionalStrEql(a.created_by, b.created_by)) return false;
         if (a.updated_at.value != b.updated_at.value) return false;
-        if (!optionalI64Eql(a.closed_at.value, b.closed_at.value)) return false;
+        if (a.closed_at.value != b.closed_at.value) return false;
         if (!optionalStrEql(a.close_reason, b.close_reason)) return false;
-        if (!optionalI64Eql(a.due_at.value, b.due_at.value)) return false;
-        if (!optionalI64Eql(a.defer_until.value, b.defer_until.value)) return false;
-        if (!optionalI32Eql(a.estimated_minutes, b.estimated_minutes)) return false;
+        if (a.due_at.value != b.due_at.value) return false;
+        if (a.defer_until.value != b.defer_until.value) return false;
+        if (a.estimated_minutes != b.estimated_minutes) return false;
         if (!optionalStrEql(a.external_ref, b.external_ref)) return false;
         if (!optionalStrEql(a.source_system, b.source_system)) return false;
         if (a.pinned != b.pinned) return false;
@@ -272,12 +272,12 @@ pub const Issue = struct {
         result.notes = if (self.notes) |n| try allocator.dupe(u8, n) else null;
         errdefer if (result.notes) |n| allocator.free(n);
 
-        result.status = cloneStatus(self.status, allocator) catch |e| return e;
+        result.status = try cloneStatus(self.status, allocator);
         errdefer freeStatus(result.status, allocator);
 
         result.priority = self.priority;
 
-        result.issue_type = cloneIssueType(self.issue_type, allocator) catch |e| return e;
+        result.issue_type = try cloneIssueType(self.issue_type, allocator);
         errdefer freeIssueType(result.issue_type, allocator);
 
         result.assignee = if (self.assignee) |a| try allocator.dupe(u8, a) else null;
@@ -459,18 +459,6 @@ fn optionalStrEql(a: ?[]const u8, b: ?[]const u8) bool {
     const a_val = a orelse return b == null;
     const b_val = b orelse return false;
     return std.mem.eql(u8, a_val, b_val);
-}
-
-fn optionalI64Eql(a: ?i64, b: ?i64) bool {
-    const a_val = a orelse return b == null;
-    const b_val = b orelse return false;
-    return a_val == b_val;
-}
-
-fn optionalI32Eql(a: ?i32, b: ?i32) bool {
-    const a_val = a orelse return b == null;
-    const b_val = b orelse return false;
-    return a_val == b_val;
 }
 
 fn statusEql(a: Status, b: Status) bool {
