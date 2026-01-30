@@ -31,12 +31,11 @@ pub const Comment = struct {
 
     /// Check deep equality between two Comments.
     pub fn eql(a: Self, b: Self) bool {
-        if (a.id != b.id) return false;
-        if (!std.mem.eql(u8, a.issue_id, b.issue_id)) return false;
-        if (!std.mem.eql(u8, a.author, b.author)) return false;
-        if (!std.mem.eql(u8, a.body, b.body)) return false;
-        if (a.created_at != b.created_at) return false;
-        return true;
+        return a.id == b.id and
+            a.created_at == b.created_at and
+            std.mem.eql(u8, a.issue_id, b.issue_id) and
+            std.mem.eql(u8, a.author, b.author) and
+            std.mem.eql(u8, a.body, b.body);
     }
 };
 
