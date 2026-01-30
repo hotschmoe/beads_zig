@@ -23,8 +23,9 @@ Issues live in `.beads/` within your repository:
 
 ```
 .beads/
-  beads.db      # SQLite for fast local queries (gitignored)
-  issues.jsonl  # JSONL export for git-friendly diffs (tracked)
+  beads.jsonl   # Main storage - git-friendly diffs (tracked)
+  beads.wal     # Write-ahead log for concurrent writes (gitignored)
+  beads.lock    # Lock file for process coordination (gitignored)
 ```
 
 **Git is the infrastructure.** No servers, no accounts, no external dependencies. Issues travel with your code through normal push/pull operations.
@@ -98,11 +99,12 @@ beads_zig never:
 ## Why Zig?
 
 - **Single static binary** - No runtime dependencies, drop into any system
-- **Small footprint** - Target: under 1MB (vs 5-8MB for Rust version)
+- **Small footprint** - Target: ~12KB release (vs 5-8MB for Rust version with SQLite)
 - **Fast compilation** - Seconds, not minutes
-- **C interop** - Direct SQLite integration without FFI overhead
+- **No C dependencies** - Pure Zig storage layer (no SQLite, no libc on many targets)
 - **Memory safety** - Explicit allocation without garbage collection
 - **Cross-platform** - Compile for any target from any host
+- **Native concurrency** - Leverage kernel-managed flock for concurrent agent access
 
 ---
 

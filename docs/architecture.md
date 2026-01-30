@@ -2,7 +2,9 @@
 
 ## Overview
 
-beads_zig is a pure Zig implementation of a local-first issue tracker. It uses JSONL for persistence with in-memory indexing for fast queries.
+beads_zig is a pure Zig implementation of a local-first issue tracker. It uses a Lock + WAL + Compact architecture for concurrent-safe persistence with in-memory indexing for fast queries.
+
+**Key Difference from beads_rust**: beads_rust uses SQLite with WAL mode. beads_zig uses a custom file-based locking system that eliminates SQLite's lock contention under heavy parallel agent load.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -37,14 +39,16 @@ beads_zig is a pure Zig implementation of a local-first issue tracker. It uses J
 │  └──────────────────────┬──────────────────────────────────┘   │
 │                         │                                      │
 │  ┌──────────────────────▼──────────────────────────────────┐   │
-│  │                    JsonlFile                             │   │
-│  │  - Atomic writes (temp + fsync + rename)                 │   │
-│  │  - Line-by-line JSON parsing                             │   │
-│  │  - beads_rust compatible format                          │   │
+│  │              Lock + WAL + Compact                        │   │
+│  │  - flock-based exclusive locking                         │   │
+│  │  - Write-ahead log for constant-time writes              │   │
+│  │  - Periodic compaction into main file                    │   │
 │  └──────────────────────┬──────────────────────────────────┘   │
 └─────────────────────────│──────────────────────────────────────┘
                           ▼
-                 .beads/issues.jsonl
+              .beads/beads.jsonl  (main)
+              .beads/beads.wal    (write-ahead log)
+              .beads/beads.lock   (flock target)
 ```
 
 ---
@@ -151,6 +155,84 @@ pub const JsonlFile = struct {
 
 ---
 
+## Concurrent Write Architecture
+
+beads_zig handles concurrent writes from multiple agents using a Lock + WAL + Compact pattern. This replaces SQLite's locking which suffers from contention under heavy parallel load.
+
+### Why Not SQLite?
+
+SQLite with WAL mode still experiences lock contention when multiple processes write simultaneously:
+
+```
+Agent 1: write -> retry -> write -> success
+Agent 2: write -> BUSY -> retry -> BUSY -> retry -> success
+Agent 3: write -> BUSY -> BUSY -> BUSY -> BUSY -> success
+...
+```
+
+The retry storms compound. Each retry holds locks longer, making other retries more likely.
+
+### Lock + WAL + Compact Design
+
+```
+Write path (serialized, ~1ms):
+  acquire flock -> append to WAL -> fsync -> release flock
+
+Read path (no lock):
+  read main file + read WAL -> merge in memory
+
+Compaction (periodic, ~10-50ms):
+  acquire flock -> merge WAL into main -> atomic rename -> truncate WAL -> release
+```
+
+**Key Properties**:
+- Writes are constant-time (~1ms) regardless of database size
+- Reads never block (lock-free)
+- Process crash auto-releases lock (kernel-managed flock)
+- Atomic visibility (readers see complete state or previous state)
+
+### File Structure
+
+```
+.beads/
+  beads.jsonl       # Main file (compacted state)
+  beads.wal         # Write-ahead log (recent appends)
+  beads.lock        # Lock file (flock target)
+```
+
+### WAL Entry Format
+
+Each WAL entry is a JSON line with operation metadata:
+
+```json
+{"op":"add","ts":1706540000,"id":"bd-abc123","data":{...issue...}}
+{"op":"close","ts":1706540001,"id":"bd-abc123","data":null}
+```
+
+Operations: `add`, `update`, `close`, `reopen`, `delete`, `set_blocked`, `unset_blocked`
+
+### Compaction
+
+Triggered when WAL exceeds threshold (100 ops or 100KB):
+1. Acquire exclusive lock
+2. Load main file + replay WAL into memory
+3. Write merged state to temp file
+4. fsync for durability
+5. Atomic rename over main file
+6. Truncate WAL
+7. Release lock
+
+### Platform Support
+
+| Platform | Locking Mechanism |
+|----------|-------------------|
+| Linux    | flock (POSIX)     |
+| macOS    | flock (POSIX)     |
+| FreeBSD  | flock (POSIX)     |
+| Windows  | LockFileEx        |
+
+---
+
 ## Data Flow
 
 ### Read Path
@@ -236,15 +318,28 @@ For typical issue tracker workloads (< 10K issues), in-memory storage is fast en
 
 ## JSONL Format
 
-One JSON object per line, compatible with beads_rust:
+### Main File (`beads.jsonl`)
+
+One JSON object per line, import-compatible with beads_rust:
 
 ```json
 {"id":"bd-abc123","title":"Fix bug","status":"open","priority":2,"created_at":"2026-01-30T10:00:00Z",...}
 {"id":"bd-def456","title":"Add feature","status":"closed","priority":1,"created_at":"2026-01-29T09:00:00Z",...}
 ```
 
+### WAL File (`beads.wal`)
+
+Operation log entries, one per line:
+
+```json
+{"op":"add","ts":1706540000,"id":"bd-abc123","data":{...issue...}}
+{"op":"close","ts":1706540001,"id":"bd-abc123","data":null}
+{"op":"update","ts":1706540002,"id":"bd-abc123","data":{...updated issue...}}
+```
+
 **Key Properties**:
-- RFC3339 timestamps
+- RFC3339 timestamps in issue data
+- Unix timestamps for WAL entry ordering
 - Null for missing optional fields
 - UTF-8 encoding
 - Unknown fields preserved (forward compatibility)

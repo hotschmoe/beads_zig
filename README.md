@@ -10,7 +10,9 @@ beads_zig is a command-line issue tracker that lives in your git repository. No 
 
 ```
 .beads/
-  issues.jsonl  # JSONL storage - git-friendly, human-readable
+  beads.jsonl   # Main storage - git-friendly, human-readable
+  beads.wal     # Write-ahead log for concurrent writes
+  beads.lock    # Lock file for process coordination
   config.yaml   # Project configuration
 ```
 
@@ -23,6 +25,7 @@ beads_zig is a command-line issue tracker that lives in your git repository. No 
 - **Cross-platform**: Compiles to Linux, macOS, Windows, ARM64
 - **Non-invasive**: Never modifies source code or runs git commands automatically
 - **Agent-first**: Machine-readable JSON output for AI tooling integration
+- **Concurrent-safe**: Lock + WAL architecture handles parallel agent writes without contention
 
 ### Issue Management
 
@@ -96,15 +99,26 @@ src/
     jsonl.zig        # JSONL file I/O (atomic writes)
     store.zig        # In-memory IssueStore with indexing
     graph.zig        # Dependency graph with cycle detection
+    lock.zig         # flock-based concurrent write locking
+    wal.zig          # Write-ahead log operations
+    compact.zig      # WAL compaction into main file
   models/            # Data structures (Issue, Status, Priority, etc.)
   cli/               # Command implementations
 ```
 
-**Storage**:
-- JSONL file for persistence (`.beads/issues.jsonl`)
-- In-memory indexing for fast queries
-- Atomic writes (temp file + fsync + rename) for crash safety
-- beads_rust compatible format
+**Storage** (Lock + WAL + Compact):
+```
+.beads/
+  beads.jsonl       # Main file (compacted state, git-tracked)
+  beads.wal         # Write-ahead log (recent writes)
+  beads.lock        # Lock file for flock
+```
+
+- **Writes**: Acquire flock -> append to WAL -> release (~1ms)
+- **Reads**: Load main + replay WAL in memory (lock-free)
+- **Compaction**: Merge WAL into main when threshold exceeded
+- Crash-safe: flock auto-releases, atomic file operations
+- beads_rust JSONL import compatible
 
 **Design principles**:
 - Explicit over implicit (no background daemons)

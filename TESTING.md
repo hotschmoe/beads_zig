@@ -87,17 +87,18 @@ CI runs in fresh checkouts with no persistent state. Each test run starts clean.
 
 **Characteristics**:
 - May use temporary files/databases
-- Tests real SQLite operations
+- Tests Lock + WAL + Compact operations
 - Tests JSONL import/export roundtrips
 - Moderate speed (<100ms per test)
 
 **Target areas**:
-- SQLite CRUD operations
+- WAL append and replay operations
+- Compaction correctness (main + WAL merge)
 - JSONL export -> import roundtrip preserves data
 - Dependency cycle detection
 - Ready/blocked query correctness
 - Dirty tracking and sync coordination
-- Transaction rollback on error
+- Lock acquisition and release
 
 **Location**: `src/tests/` directory or dedicated test modules.
 
@@ -133,9 +134,9 @@ CI runs in fresh checkouts with no persistent state. Each test run starts clean.
 **Target areas**:
 - ID generation with random inputs
 - JSONL parsing with malformed input
+- WAL parsing with truncated/malformed entries
 - Base36 decoding with invalid characters
 - Argument parsing with adversarial input
-- SQLite query building with special characters
 
 **Location**: Inline fuzz tests or `src/tests/fuzz/`.
 
@@ -165,7 +166,8 @@ These areas have high blast radius if they fail:
 - JSONL export never produces invalid JSON
 - JSONL import never silently drops issues
 - Content hash computation is deterministic
-- Database transactions rollback cleanly on error
+- WAL operations are atomic (write + fsync before lock release)
+- Compaction preserves all committed data
 
 ### 2. Sync Safety
 
@@ -187,6 +189,55 @@ These areas have high blast radius if they fail:
 - `ready` query correctly excludes blocked issues
 - `blocked` query correctly includes only blocked issues
 - Blocked cache stays synchronized with actual dependencies
+
+### 5. Concurrent Write Safety
+
+- Multiple processes can acquire lock sequentially without deadlock
+- WAL entries are fully written before lock release
+- Partial WAL reads don't corrupt state (just miss recent ops)
+- Compaction preserves all committed data
+- Process crash mid-write doesn't corrupt main file
+- Lock auto-releases on process termination
+
+---
+
+## Concurrent Write Stress Testing
+
+For testing the Lock + WAL + Compact architecture under heavy load:
+
+### Multi-Process Stress Test
+
+```bash
+#!/bin/bash
+# stress_test.sh - Spawn N agents writing simultaneously
+N=${1:-5}
+ITERATIONS=${2:-20}
+
+rm -rf .beads
+mkdir -p .beads
+
+for i in $(seq 1 $N); do
+    (
+        for j in $(seq 1 $ITERATIONS); do
+            bz add "Agent $i Issue $j" --priority $((j % 5)) 2>&1 | grep -i "error" &
+        done
+        wait
+    ) &
+done
+wait
+
+EXPECTED=$((N * ITERATIONS))
+ACTUAL=$(bz list --json | jq '.issues | length')
+[ "$EXPECTED" -eq "$ACTUAL" ] && echo "PASS" || echo "FAIL"
+```
+
+### Chaos Test (Process Crashes)
+
+Simulate process crashes mid-write and verify data integrity:
+- Spawn multiple threads
+- Kill random threads after random delays
+- Verify no corruption, all committed writes visible
+- Each issue has valid data (non-empty title, valid ID)
 
 ---
 
@@ -290,7 +341,7 @@ The GitHub Actions workflow runs:
 
 1. **Multi-platform tests**: Ubuntu, macOS, Windows
 2. **Multi-optimization**: Debug, ReleaseSafe, ReleaseFast, ReleaseSmall
-3. **SQLite variants**: System library and bundled
+3. **Concurrent write stress tests**: Multi-process WAL contention
 4. **Fuzz tests**: 60-second timeout
 5. **Format check**: `zig fmt --check`
 

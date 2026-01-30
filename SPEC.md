@@ -27,7 +27,9 @@
 
 ```
 .beads/
-  issues.jsonl    # JSONL storage (git tracked)
+  beads.jsonl     # Main storage (git tracked)
+  beads.wal       # Write-ahead log (gitignored)
+  beads.lock      # Lock file for flock (gitignored)
   config.yaml     # Project configuration (git tracked)
   metadata.json   # System metadata (gitignored)
 ```
@@ -263,7 +265,7 @@ pub const EventType = enum {
 
 ### Architecture
 
-beads_zig uses a pure Zig storage layer with no external dependencies:
+beads_zig uses a pure Zig storage layer with Lock + WAL + Compact for concurrent access:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -274,15 +276,24 @@ beads_zig uses a pure Zig storage layer with no external dependencies:
 │           │                                                  │
 │           ▼                                                  │
 │  ┌─────────────────────────────────────────────────────────┐ │
-│  │                    JsonlFile                             │ │
-│  │  - readAll() - parse JSONL to Issue structs              │ │
-│  │  - writeAll() - atomic write (temp + fsync + rename)     │ │
+│  │              Lock + WAL + Compact                        │ │
+│  │  Write: flock -> append WAL -> release (~1ms)            │ │
+│  │  Read:  load main + replay WAL (lock-free)               │ │
+│  │  Compact: merge WAL into main when threshold exceeded    │ │
 │  └─────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
-                    .beads/issues.jsonl
+              .beads/beads.jsonl   (main file)
+              .beads/beads.wal     (write-ahead log)
+              .beads/beads.lock    (flock target)
 ```
+
+**Key Difference from beads_rust**: beads_rust uses SQLite with WAL mode, which suffers from lock contention when multiple agents write simultaneously. beads_zig uses flock-based locking with a separate WAL file, providing:
+- Constant-time writes (~1ms) regardless of database size
+- Lock-free reads (no contention)
+- Auto-release on process crash (kernel-managed flock)
+- No C dependencies
 
 ### In-Memory Storage (`store.zig`)
 
@@ -344,6 +355,54 @@ pub const JsonlFile = struct {
 3. Parse each line as JSON Issue
 4. Skip malformed lines (graceful degradation)
 
+### Concurrent Write Handling (`lock.zig`, `wal.zig`, `compact.zig`)
+
+```zig
+pub const BeadsLock = struct {
+    file: std.fs.File,
+
+    pub fn acquire() !BeadsLock;      // Blocking LOCK_EX
+    pub fn tryAcquire() !?BeadsLock;  // Non-blocking LOCK_NB
+    pub fn acquireTimeout(ms: u64) !?BeadsLock;
+    pub fn release(self: *BeadsLock) void;
+};
+```
+
+**Write Flow** (serialized, ~1ms lock hold):
+1. Open `.beads/beads.lock`
+2. `flock(LOCK_EX)` - blocks until acquired
+3. Append JSON line to `.beads/beads.wal`
+4. fsync WAL
+5. `flock(LOCK_UN)`
+
+**Read Flow** (no lock):
+1. Read `.beads/beads.jsonl` (main file)
+2. Read `.beads/beads.wal` (if exists)
+3. Replay WAL operations on top of main state
+4. Return merged result
+
+**Compaction** (triggered when WAL > 100 ops or 100KB):
+1. `flock(LOCK_EX)`
+2. Load main + replay WAL
+3. Write merged state to `.beads/beads.jsonl.tmp`
+4. fsync + atomic rename
+5. Truncate WAL
+6. `flock(LOCK_UN)`
+
+**WAL Entry Format**:
+```json
+{"op":"add","ts":1706540000,"id":"bd-abc123","data":{...}}
+{"op":"close","ts":1706540001,"id":"bd-abc123","data":null}
+```
+
+Operations: `add`, `update`, `close`, `reopen`, `delete`, `set_blocked`, `unset_blocked`
+
+**Platform Support**:
+| Platform | Mechanism |
+|----------|-----------|
+| Linux/macOS/FreeBSD | flock (POSIX) |
+| Windows | LockFileEx |
+
 ### Search
 
 Full-text search is performed via linear scan with substring matching.
@@ -403,14 +462,14 @@ Used for deduplication during import.
 
 ## JSONL Format
 
-### Specification
+### Main File (`beads.jsonl`) Specification
 
 - One complete JSON object per line
 - UTF-8 encoding
-- No trailing newline after last line
 - Fields match Issue struct exactly
 - Timestamps in RFC3339 format for JSON (e.g., `"2024-01-29T15:30:00Z"`)
 - Null for missing optional fields
+- Import-compatible with beads_rust JSONL exports
 
 ### Example
 
@@ -419,9 +478,25 @@ Used for deduplication during import.
 {"id":"bd-def456","content_hash":"d4e5f6...","title":"Set up OAuth provider","description":null,"status":"in_progress","priority":1,"issue_type":"task","assignee":"alice@example.com",...}
 ```
 
+### WAL File (`beads.wal`) Specification
+
+- One operation entry per line
+- UTF-8 encoding
+- Unix timestamp (`ts`) for operation ordering
+- Full issue data for add/update ops, null for status-only ops
+
+### WAL Example
+
+```json
+{"op":"add","ts":1706540000,"id":"bd-abc123","data":{"id":"bd-abc123","title":"Fix bug",...}}
+{"op":"close","ts":1706540001,"id":"bd-abc123","data":null}
+{"op":"update","ts":1706540002,"id":"bd-abc123","data":{"id":"bd-abc123","title":"Fix login bug",...}}
+{"op":"set_blocked","ts":1706540003,"id":"bd-abc123","data":null}
+```
+
 ### Ordering
 
-Issues sorted by ID for deterministic output.
+Issues sorted by ID for deterministic output in main file.
 
 ---
 
@@ -429,33 +504,39 @@ Issues sorted by ID for deterministic output.
 
 ### Export (flush)
 
-1. Get all non-tombstone issues from in-memory store
-2. Serialize each issue as JSON line
-3. Write to temporary file (`issues.jsonl.tmp.{timestamp}`)
-4. fsync for durability
-5. Atomic rename to `issues.jsonl`
-6. Clear dirty flags
+1. Acquire flock on `.beads/beads.lock`
+2. Get all non-tombstone issues from in-memory store (main + WAL)
+3. Serialize each issue as JSON line
+4. Write to temporary file (`beads.jsonl.tmp.{timestamp}`)
+5. fsync for durability
+6. Atomic rename to `beads.jsonl`
+7. Truncate WAL
+8. Release flock
+9. Clear dirty flags
 
 ### Import
 
 1. Validate path is within `.beads/`
 2. Check for merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
-3. Parse JSONL line by line
-4. Four-phase collision detection:
+3. Acquire flock on `.beads/beads.lock`
+4. Parse JSONL line by line
+5. Four-phase collision detection:
    - Phase 1: Match by external_ref
    - Phase 2: Match by content_hash
    - Phase 3: Match by ID
    - Phase 4: New issue (no match)
-5. Upsert to in-memory store
-6. Save to JSONL file
+6. Append new/updated entries to WAL
+7. Release flock
 
 ### Safety Guarantees
 
 1. **No Git Operations**: Never execute git commands
 2. **Path Confinement**: All I/O within `.beads/` unless explicitly overridden
-3. **Atomic Writes**: Temp file + rename pattern
+3. **Atomic Writes**: Temp file + fsync + rename pattern
 4. **Merge Conflict Rejection**: Refuse import if conflict markers present
 5. **Empty Database Protection**: Refuse to export empty DB over non-empty JSONL
+6. **Lock Auto-Release**: flock is kernel-managed, auto-releases on process crash
+7. **WAL Durability**: fsync before lock release ensures writes survive crash
 
 ### Dirty Tracking
 
@@ -669,6 +750,12 @@ pub const BeadsError = error{
     PermissionDenied,
     WriteError,
     AtomicRenameFailed,
+
+    // Locking
+    LockTimeout,
+    LockFailed,
+    WalCorrupted,
+    CompactionFailed,
 };
 ```
 

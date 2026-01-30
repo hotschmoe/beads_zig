@@ -126,6 +126,64 @@ we love you, Claude! do your best today
 
 ## Project-Specific Content
 
-<!-- Add your project's toolchain, architecture, workflows here -->
-<!-- This section will not be touched by haj.sh -->
+### beads_zig Architecture Overview
+
+**beads_zig is a Zig port of beads_rust with key architectural differences:**
+
+1. **No SQLite** - Pure Zig storage layer with JSONL + WAL
+2. **Lock + WAL + Compact** - Custom concurrent write handling
+3. **No C dependencies** - Single static binary (~12KB)
+
+### Storage Layer
+
+```
+.beads/
+  beads.jsonl   # Main file (compacted state, git-tracked)
+  beads.wal     # Write-ahead log (gitignored)
+  beads.lock    # flock target (gitignored)
+```
+
+**Write path**: `flock(LOCK_EX) -> append WAL -> fsync -> flock(LOCK_UN)` (~1ms)
+**Read path**: `load main + replay WAL` (no lock)
+**Compaction**: Merge WAL into main when threshold exceeded
+
+### Key Differences from beads_rust
+
+| Aspect | beads_rust | beads_zig |
+|--------|------------|-----------|
+| Storage | SQLite + WAL mode | JSONL + custom WAL |
+| Concurrency | SQLite locking (contention under load) | flock + append-only WAL |
+| Dependencies | SQLite C library | None (pure Zig) |
+| Binary size | ~5-8MB | ~12KB |
+| Lock behavior | SQLITE_BUSY retry storms | Blocking flock (no spinning) |
+
+### Why This Matters for Agents
+
+When 5+ agents write simultaneously:
+- SQLite: Retry storms, exponential backoff, potential timeouts
+- beads_zig: Sequential flock acquisition, ~1ms per write, no retries
+
+### Build and Test
+
+```bash
+zig build              # Build
+zig build run          # Run CLI
+zig build test         # Run tests
+
+# Cross-compile
+zig build -Dtarget=aarch64-linux-gnu
+zig build -Dtarget=x86_64-windows-gnu
+```
+
+### Sandbox Testing
+
+Always test in `sandbox/` directory, not project root:
+
+```bash
+cd sandbox
+../zig-out/bin/bz init
+../zig-out/bin/bz add "Test issue"
+```
+
+The project root may have a `.beads/` for beads_rust tracking.
 

@@ -204,9 +204,26 @@ src/
 
 ## Phase 2: Storage Layer
 
-### JSONL + In-Memory Storage (`src/storage/`)
+### JSONL + WAL + In-Memory Storage (`src/storage/`)
 
-beads_zig uses pure Zig storage: JSONL files for persistence with in-memory indexing for fast queries. No SQLite, no C dependencies.
+beads_zig uses pure Zig storage: JSONL files with a Write-Ahead Log (WAL) for concurrent access, and in-memory indexing for fast queries. No SQLite, no C dependencies.
+
+**Key Difference from beads_rust**: beads_rust uses SQLite with WAL mode. beads_zig uses a custom Lock + WAL + Compact architecture that:
+- Eliminates SQLite's lock contention issues under heavy parallel agent load
+- Provides constant-time writes (~1ms) regardless of database size
+- Allows lock-free reads (no contention for list/show/status)
+- Auto-releases locks on process crash (kernel-managed flock)
+
+See `docs/concurrent_writes.md` for detailed design rationale.
+
+#### File Structure
+
+```
+.beads/
+  beads.jsonl       # Main file (compacted state)
+  beads.wal         # Write-ahead log (recent appends)
+  beads.lock        # Lock file (flock target)
+```
 
 #### JsonlFile (`src/storage/jsonl.zig`)
 
@@ -216,6 +233,31 @@ beads_zig uses pure Zig storage: JSONL files for persistence with in-memory inde
 - [x] `append(issue)` - Append single issue (for quick capture)
 - [x] Handle missing file gracefully (return empty)
 - [x] Unknown field preservation (beads_rust compatibility)
+
+#### Concurrent Write Handling (`src/storage/lock.zig`)
+
+- [ ] `BeadsLock` struct with flock-based locking
+- [ ] `acquire()` - Blocking exclusive lock (LOCK_EX)
+- [ ] `tryAcquire()` - Non-blocking lock attempt (LOCK_NB)
+- [ ] `acquireTimeout(ms)` - Lock with timeout
+- [ ] `release()` - Release lock (LOCK_UN)
+- [ ] `withLock(fn)` - RAII-style lock wrapper
+- [ ] Windows compatibility (LockFileEx)
+
+#### WAL Operations (`src/storage/wal.zig`)
+
+- [ ] `WalEntry` struct (op, timestamp, id, data)
+- [ ] `WalOp` enum (add, update, close, reopen, delete, set_blocked, unset_blocked)
+- [ ] `appendWalEntry(entry)` - Append to WAL under lock
+- [ ] `replayWal(file)` - Apply WAL entries to in-memory state
+- [ ] WAL entry serialization (JSON lines)
+
+#### Compaction (`src/storage/compact.zig`)
+
+- [ ] `compact()` - Merge WAL into main file atomically
+- [ ] `maybeCompact()` - Trigger compaction when WAL > threshold
+- [ ] Compaction threshold: 100 ops OR 100KB
+- [ ] Atomic main file replacement (temp + fsync + rename)
 
 #### IssueStore (`src/storage/store.zig`)
 
@@ -685,7 +727,7 @@ COMMANDS:
 
 ### JSONL Format
 
-beads_zig MUST produce JSONL compatible with beads_rust:
+beads_zig can import JSONL files from beads_rust:
 
 ```json
 {"id":"bd-abc123","title":"Fix login bug","description":null,"status":"open","priority":1,"issue_type":"bug","assignee":"alice","created_at":"2024-01-29T15:30:00Z","updated_at":"2024-01-29T15:30:00Z"}
@@ -696,15 +738,31 @@ Key requirements:
 - RFC3339 timestamps
 - Null for missing optional fields
 - UTF-8 encoding
-- No trailing newline on last line (debatable, verify)
 
 ### Storage Architecture
 
-beads_zig uses pure JSONL storage (no SQLite):
-- JSONL file for persistence (`.beads/issues.jsonl`)
-- In-memory ArrayList + StringHashMap for indexing
-- Atomic writes for crash safety
-- 12KB binary vs 2MB+ with SQLite
+beads_zig uses Lock + WAL + Compact (no SQLite):
+
+```
+.beads/
+  beads.jsonl   # Main file (compacted state, git-tracked)
+  beads.wal     # Write-ahead log (gitignored)
+  beads.lock    # flock target (gitignored)
+```
+
+**Key differences from beads_rust:**
+| Aspect | beads_rust | beads_zig |
+|--------|------------|-----------|
+| Storage | SQLite + WAL mode | JSONL + custom WAL |
+| Concurrency | SQLite locking | flock + append WAL |
+| Binary size | ~5-8MB | ~12KB |
+| Write time | Variable (lock contention) | Constant ~1ms |
+| Read time | O(1) with indexes | O(n) linear scan |
+
+**Trade-offs:**
+- beads_zig sacrifices read performance (linear scan vs SQLite indexes)
+- beads_zig gains concurrent write performance (no lock contention)
+- For typical workloads (<10k issues), linear scan is fast enough
 
 ---
 
