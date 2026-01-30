@@ -11,6 +11,8 @@
 
 const std = @import("std");
 
+pub const base36 = @import("base36.zig");
+
 test {
     std.testing.refAllDecls(@This());
 }
