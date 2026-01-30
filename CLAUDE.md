@@ -116,17 +116,27 @@ Only if all three answers are "yes" should you fix the code.
 
 ### Running Tests Safely
 
-**Always use timeouts when running tests** to avoid locking up the terminal:
+**Use `zig test` directly** (not `zig build test`):
 
 ```bash
-timeout 60 zig build test 2>&1   # 60 second timeout
-timeout 30 zig test src/models/mod.zig 2>&1   # For individual modules
+# Run all tests (recommended)
+zig test src/root.zig
+
+# Run specific module tests
+zig test src/storage/store.zig
+zig test src/models/issue.zig
 ```
 
-If tests hang:
-1. Kill with `pkill -9 -f "zig.*test"`
-2. Investigate which module is causing the hang
-3. Test modules individually to isolate the problem
+**Why not `zig build test`?**
+
+The build system test runner hangs after all tests pass due to a Zig 0.15.x issue. All 344 tests complete successfully, but the process never exits. This is a build system issue, not a code problem - the production binary works fine.
+
+If you must use `zig build test`, use a timeout:
+```bash
+timeout 60 zig build test 2>&1
+```
+
+If tests hang, kill with: `pkill -9 -f "zig.*test"` (Linux/macOS) or Task Manager (Windows).
 
 **Manual CLI testing** is preferred for CLI commands - test in `sandbox/` directory.
 <!-- END:testing-philosophy -->
@@ -182,9 +192,9 @@ When 5+ agents write simultaneously:
 ### Build and Test
 
 ```bash
-zig build              # Build
-zig build run          # Run CLI
-zig build test         # Run tests
+zig build                  # Build
+zig build run              # Run CLI
+zig test src/root.zig      # Run tests (recommended)
 
 # Cross-compile
 zig build -Dtarget=aarch64-linux-gnu

@@ -55,8 +55,11 @@ zig build run
 # Run with arguments
 zig build run -- <args>
 
-# Run tests
-zig build test
+# Run tests (recommended)
+zig test src/root.zig
+
+# Alternative (may hang on some platforms due to Zig build system issue)
+# zig build test
 
 # Format source
 zig build fmt
