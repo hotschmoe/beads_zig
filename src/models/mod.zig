@@ -21,6 +21,10 @@ pub const CommentError = @import("comment.zig").CommentError;
 pub const EventType = @import("event.zig").EventType;
 pub const Event = @import("event.zig").Event;
 pub const EventError = @import("event.zig").EventError;
+pub const Issue = @import("issue.zig").Issue;
+pub const IssueError = @import("issue.zig").IssueError;
+pub const Rfc3339Timestamp = @import("issue.zig").Rfc3339Timestamp;
+pub const OptionalRfc3339Timestamp = @import("issue.zig").OptionalRfc3339Timestamp;
 
 test {
     std.testing.refAllDecls(@This());
