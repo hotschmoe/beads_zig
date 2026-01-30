@@ -44,6 +44,18 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .create => |create_args| {
+            cli.runCreate(create_args, result.global, allocator) catch |err| switch (err) {
+                error.EmptyTitle, error.TitleTooLong, error.InvalidPriority, error.WorkspaceNotInitialized => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .q => |quick_args| {
+            cli.runQuick(quick_args, result.global, allocator) catch |err| switch (err) {
+                error.EmptyTitle, error.TitleTooLong, error.InvalidPriority, error.WorkspaceNotInitialized => std.process.exit(1),
+                else => return err,
+            };
+        },
         .help => |help_args| {
             try showHelp(help_args.topic, allocator);
         },
