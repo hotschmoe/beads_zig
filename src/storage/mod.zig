@@ -13,6 +13,7 @@ const std = @import("std");
 
 pub const sqlite = @import("sqlite.zig");
 pub const schema = @import("schema.zig");
+pub const issues = @import("issues.zig");
 
 pub const Database = sqlite.Database;
 pub const Statement = sqlite.Statement;
@@ -23,6 +24,9 @@ pub const transactionSimple = sqlite.transactionSimple;
 pub const createSchema = schema.createSchema;
 pub const getSchemaVersion = schema.getSchemaVersion;
 pub const SCHEMA_VERSION = schema.SCHEMA_VERSION;
+
+pub const IssueStore = issues.IssueStore;
+pub const IssueStoreError = issues.IssueStoreError;
 
 test {
     std.testing.refAllDecls(@This());
