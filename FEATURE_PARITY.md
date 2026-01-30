@@ -22,9 +22,9 @@ This document tracks feature parity between `beads_zig` and `beads_rust`. The go
 
 - [x] `build.zig` - Build configuration
 - [x] `build.zig.zon` - Package manifest
-- [x] SQLite integration option (system vs bundled)
+- [x] Pure Zig storage (no C dependencies)
+- [x] Cross-platform builds verified (Linux, macOS, Windows, ARM64)
 - [ ] Add `rich_zig` dependency (terminal formatting)
-- [ ] Verify cross-platform builds (Linux, macOS, Windows)
 
 ### Project Structure
 
@@ -34,28 +34,14 @@ src/
 ├── root.zig              # Library exports
 ├── cli/                  # Command implementations
 │   ├── mod.zig           # CLI module root
-│   ├── init.zig
-│   ├── create.zig
-│   ├── list.zig
-│   ├── show.zig
-│   ├── update.zig
-│   ├── close.zig
-│   ├── reopen.zig
-│   ├── delete.zig
-│   ├── ready.zig
-│   ├── blocked.zig
-│   ├── search.zig
-│   ├── sync.zig
-│   ├── dep.zig
-│   ├── label.zig
-│   ├── comments.zig
-│   ├── history.zig
-│   └── ...
-├── storage/              # Database layer
-│   ├── mod.zig
-│   ├── sqlite.zig        # SQLite operations
-│   ├── schema.zig        # Schema definition
-│   └── migrations.zig    # Schema versioning
+│   └── ...               # Individual command files
+├── storage/              # Storage layer (JSONL + in-memory)
+│   ├── mod.zig           # Module exports
+│   ├── jsonl.zig         # JSONL file I/O (atomic writes)
+│   ├── store.zig         # In-memory IssueStore
+│   ├── graph.zig         # Dependency graph + cycle detection
+│   ├── issues.zig        # IssueStore re-export
+│   └── dependencies.zig  # DependencyGraph re-export
 ├── models/               # Data structures
 │   ├── mod.zig
 │   ├── issue.zig
@@ -65,22 +51,15 @@ src/
 │   ├── dependency.zig
 │   ├── comment.zig
 │   └── event.zig
-├── sync/                 # JSONL import/export
-│   ├── mod.zig
-│   ├── export.zig
-│   └── import.zig
+├── sync/                 # JSONL sync operations
+│   └── mod.zig
 ├── id/                   # ID generation
 │   ├── mod.zig
-│   ├── base36.zig
-│   └── hash.zig
+│   └── generator.zig
 ├── config/               # Configuration
-│   ├── mod.zig
-│   └── yaml.zig
+│   └── mod.zig
 └── output/               # Formatting
-    ├── mod.zig
-    ├── rich.zig
-    ├── plain.zig
-    └── json.zig
+    └── mod.zig
 ```
 
 ---
@@ -225,103 +204,58 @@ src/
 
 ## Phase 2: Storage Layer
 
-### SQLite Integration (`src/storage/`)
+### JSONL + In-Memory Storage (`src/storage/`)
 
-#### Core Database
+beads_zig uses pure Zig storage: JSONL files for persistence with in-memory indexing for fast queries. No SQLite, no C dependencies.
 
-- [ ] SQLite connection wrapper
-- [ ] WAL mode configuration
-- [ ] Busy timeout handling (default 5s)
-- [ ] Transaction support (immediate mode)
-- [ ] Prepared statement caching
-- [ ] Connection pooling (optional)
+#### JsonlFile (`src/storage/jsonl.zig`)
 
-#### Schema (`src/storage/schema.zig`)
+- [x] `JsonlFile` struct with path and allocator
+- [x] `readAll()` - Parse JSONL file to `[]Issue`
+- [x] `writeAll(issues)` - Atomic write (temp + fsync + rename)
+- [x] `append(issue)` - Append single issue (for quick capture)
+- [x] Handle missing file gracefully (return empty)
+- [x] Unknown field preservation (beads_rust compatibility)
 
-- [ ] `issues` table:
-  ```sql
-  CREATE TABLE issues (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT,
-      design TEXT,
-      acceptance_criteria TEXT,
-      notes TEXT,
-      status TEXT NOT NULL DEFAULT 'open',
-      priority INTEGER NOT NULL DEFAULT 2,
-      issue_type TEXT NOT NULL DEFAULT 'task',
-      assignee TEXT,
-      owner TEXT,
-      estimated_minutes INTEGER,
-      created_at INTEGER NOT NULL,
-      created_by TEXT,
-      updated_at INTEGER NOT NULL,
-      closed_at INTEGER,
-      close_reason TEXT,
-      due_at INTEGER,
-      defer_until INTEGER,
-      external_ref TEXT,
-      source_system TEXT,
-      pinned INTEGER NOT NULL DEFAULT 0,
-      is_template INTEGER NOT NULL DEFAULT 0,
-      content_hash TEXT
-  );
-  ```
-- [ ] `labels` table
-- [ ] `issue_labels` junction table
-- [ ] `dependencies` table
-- [ ] `comments` table
-- [ ] `events` table (audit log)
-- [ ] `dirty_issues` table (sync tracking)
-- [ ] `blocked_cache` table (query optimization)
-- [ ] FTS5 virtual table for full-text search
-- [ ] Indexes for common queries
+#### IssueStore (`src/storage/store.zig`)
 
-#### CRUD Operations
+- [x] `IssueStore` struct with ArrayList + StringHashMap
+- [x] `init/deinit` - Memory management
+- [x] `loadFromFile()` - Parse JSONL into memory
+- [x] `saveToFile()` - Atomic write to JSONL
+- [x] `insert(issue)` - Add with index update
+- [x] `get(id)` - O(1) lookup via hash map
+- [x] `getRef(id)` - Get mutable reference
+- [x] `update(id, updates)` - Modify in place
+- [x] `delete(id)` - Remove from store
+- [x] `list(filters)` - Linear scan with filtering
+- [x] `count()` - Total issue count
+- [x] `exists(id)` - Check if issue exists
+- [x] `markDirty(id)` - Track modified issues
+- [x] `getDirtyIds()` - Get modified issue IDs
+- [ ] `addLabel(issue_id, label)` - Add label to issue
+- [ ] `removeLabel(issue_id, label)` - Remove label from issue
+- [ ] `addComment(issue_id, comment)` - Add comment to issue
 
-- [ ] `insertIssue(issue: Issue) !void`
-- [ ] `getIssue(id: []const u8) !?Issue`
-- [ ] `updateIssue(id: []const u8, updates: IssueUpdate) !void`
-- [ ] `deleteIssue(id: []const u8) !void` (tombstone)
-- [ ] `listIssues(filters: ListFilters) ![]Issue`
-- [ ] `searchIssues(query: []const u8) ![]Issue`
-- [ ] `countIssues(group_by: ?GroupBy) !CountResult`
+#### DependencyGraph (`src/storage/graph.zig`)
 
-#### Dependency Operations
+- [x] `DependencyGraph` struct wrapping IssueStore
+- [x] `addDependency(dep)` - With automatic cycle detection
+- [x] `removeDependency(issue_id, depends_on_id)` - Remove dependency
+- [x] `getDependencies(issue_id)` - What this issue depends on
+- [x] `getDependents(issue_id)` - What depends on this issue
+- [x] `wouldCreateCycle(from, to)` - DFS reachability check
+- [x] `detectCycles()` - Find all cycles in graph
+- [x] `getReadyIssues()` - Open, unblocked, not deferred
+- [x] `getBlockedIssues()` - Open with unresolved blockers
+- [x] `getBlockers(issue_id)` - Get blocking issues
+- [x] Self-dependency rejection
+- [x] Cycle detection on add
 
-- [ ] `addDependency(dep: Dependency) !void`
-- [ ] `removeDependency(issue_id, depends_on_id) !void`
-- [ ] `getDependencies(issue_id: []const u8) ![]Dependency`
-- [ ] `getDependents(issue_id: []const u8) ![]Dependency`
-- [ ] `detectCycles() !?[][]const u8`
-- [ ] `getReadyIssues() ![]Issue` (open, not blocked, not deferred)
-- [ ] `getBlockedIssues() ![]Issue`
-- [ ] Blocked cache maintenance
+#### Search (Future)
 
-#### Label Operations
-
-- [ ] `addLabel(issue_id, label) !void`
-- [ ] `removeLabel(issue_id, label) !void`
-- [ ] `getLabels(issue_id) ![][]const u8`
-- [ ] `getAllLabels() ![][]const u8`
-- [ ] `getIssuesByLabel(label) ![]Issue`
-
-#### Comment Operations
-
-- [ ] `addComment(comment: Comment) !void`
-- [ ] `getComments(issue_id) ![]Comment`
-
-#### Event Operations
-
-- [ ] `logEvent(event: Event) !void`
-- [ ] `getHistory(issue_id) ![]Event`
-- [ ] `getAuditLog(filters: AuditFilters) ![]Event`
-
-#### Dirty Tracking
-
-- [ ] `markDirty(issue_id) !void`
-- [ ] `getDirtyIssues() ![][]const u8`
-- [ ] `clearDirty(issue_ids: [][]const u8) !void`
+- [ ] Linear scan substring matching (basic)
+- [ ] Inverted index for full-text search (advanced)
 
 ---
 
@@ -361,33 +295,29 @@ src/
 
 ## Phase 4: JSONL Sync
 
-### Export (`src/sync/export.zig`)
+### Core Operations
 
-- [ ] Query dirty issues
-- [ ] Validate issues and relations
-- [ ] Compute content hashes
-- [ ] Serialize to JSONL (one issue per line)
-- [ ] Atomic write (temp file -> rename)
-- [ ] Clear dirty flags on success
-- [ ] Backup previous JSONL
+With JSONL as the primary storage, sync is simplified:
 
-### Import (`src/sync/import.zig`)
-
-- [ ] Read JSONL line by line
-- [ ] Parse JSON to Issue struct
-- [ ] Detect ID collisions
-- [ ] Validate prefix matches config
-- [ ] Timestamp-based conflict resolution (newer wins)
-- [ ] Upsert to database
-- [ ] Rebuild blocked cache if deps changed
+- [x] `IssueStore.loadFromFile()` - Load JSONL into memory
+- [x] `IssueStore.saveToFile()` - Save memory to JSONL (atomic)
+- [x] Atomic writes (temp file + fsync + rename)
+- [x] Dirty tracking for modified issues
 
 ### Sync Commands
 
-- [ ] `sync --flush-only` - Export dirty to JSONL
-- [ ] `sync --import-only` - Import JSONL to database
-- [ ] `sync --force` - Force even if stale
-- [ ] Auto-flush after mutations (configurable)
-- [ ] Auto-import on startup if JSONL newer
+- [ ] `sync --flush-only` - Force save to JSONL
+- [ ] `sync --import-only` - Force reload from JSONL
+- [ ] `sync --force` - Force even if data loss possible
+- [ ] Auto-save after mutations (configurable)
+- [ ] Auto-load on startup
+
+### Import/Export for Migration
+
+- [ ] Import from beads_rust JSONL format
+- [ ] Validate prefix matches config
+- [ ] Timestamp-based conflict resolution (newer wins)
+- [ ] Content hash deduplication
 
 ---
 
@@ -400,11 +330,10 @@ src/
   - [ ] `-v, -vv` - Verbosity levels
   - [ ] `--quiet` - Suppress output
   - [ ] `--no-color` - Disable colors
-  - [ ] `--db <PATH>` - Override database path
+  - [ ] `--data <PATH>` - Override `.beads/` directory
   - [ ] `--actor <NAME>` - Set actor for audit
-  - [ ] `--lock-timeout <MS>` - SQLite timeout
-  - [ ] `--no-auto-flush` - Skip auto-export
-  - [ ] `--no-auto-import` - Skip JSONL check
+  - [ ] `--no-auto-flush` - Skip auto-save
+  - [ ] `--no-auto-import` - Skip auto-load
 - [ ] Subcommand dispatch
 - [ ] Help text generation
 - [ ] Error formatting
@@ -425,7 +354,7 @@ src/
 
 - [ ] `bz init` - Initialize workspace
   - [ ] Create `.beads/` directory
-  - [ ] Create `beads.db` SQLite database
+  - [ ] Create `issues.jsonl` (empty)
   - [ ] Create `config.yaml`
   - [ ] Create `metadata.json`
   - [ ] `--prefix` option for issue ID prefix
@@ -593,7 +522,6 @@ src/
 
 ### System Commands
 
-- [ ] `bz schema` - View database schema
 - [ ] `bz version` - Show version info
 - [ ] `bz completions <shell>` - Generate shell completions
   - [ ] bash
@@ -642,10 +570,11 @@ src/
 
 ### Integration Tests
 
-- [ ] SQLite operations
-- [ ] JSONL import/export roundtrip
+- [x] JSONL read/write roundtrip
+- [x] IssueStore operations
+- [x] DependencyGraph cycle detection
+- [x] Ready/blocked query correctness
 - [ ] CLI command execution
-- [ ] Ready/blocked query correctness
 
 ### Fuzz Tests
 
@@ -738,14 +667,13 @@ COMMANDS:
   undefer        Remove deferral
   orphans        Find orphaned issues
   changelog      Generate changelog
-  lint           Validate database
+  lint           Validate data integrity
   graph          Dependency graph
-  sync           JSONL sync
+  sync           Save/load JSONL
   doctor         Run diagnostics
   stats/status   Project statistics
   info           Workspace info
   config         Configuration
-  schema         View database schema
   agents         Manage agent instructions
   version        Show version
   completions    Shell completions
@@ -770,12 +698,13 @@ Key requirements:
 - UTF-8 encoding
 - No trailing newline on last line (debatable, verify)
 
-### SQLite Schema Compatibility
+### Storage Architecture
 
-Tables must be compatible for potential migration:
-- Same column names and types
-- Same index structure
-- WAL mode enabled
+beads_zig uses pure JSONL storage (no SQLite):
+- JSONL file for persistence (`.beads/issues.jsonl`)
+- In-memory ArrayList + StringHashMap for indexing
+- Atomic writes for crash safety
+- 12KB binary vs 2MB+ with SQLite
 
 ---
 
@@ -783,15 +712,14 @@ Tables must be compatible for potential migration:
 
 Recommended implementation order for efficient development:
 
-1. **Models** - Foundation for everything
-2. **Storage/SQLite** - Core persistence
-3. **ID Generation** - Required for create
-4. **Basic CLI** (init, create, show, list) - Usable MVP
-5. **JSONL Sync** - Collaboration feature
-6. **Dependencies** - Key differentiator
-7. **Labels/Comments** - Secondary features
-8. **Advanced Commands** - Nice to have
-9. **Polish** - Error handling, docs, perf
+1. **Models** - Foundation for everything [DONE]
+2. **Storage** - JSONL + in-memory store [DONE]
+3. **ID Generation** - Required for create [DONE]
+4. **Dependencies** - Cycle detection, ready/blocked [DONE]
+5. **Basic CLI** (init, create, show, list) - Usable MVP
+6. **Labels/Comments** - Secondary features
+7. **Advanced Commands** - Nice to have
+8. **Polish** - Error handling, docs, perf
 
 ---
 

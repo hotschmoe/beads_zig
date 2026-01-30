@@ -27,8 +27,7 @@
 
 ```
 .beads/
-  beads.db        # SQLite database (gitignored)
-  issues.jsonl    # JSONL export (git tracked)
+  issues.jsonl    # JSONL storage (git tracked)
   config.yaml     # Project configuration (git tracked)
   metadata.json   # System metadata (gitignored)
 ```
@@ -262,159 +261,93 @@ pub const EventType = enum {
 
 ## Storage Layer
 
-### SQLite Configuration
+### Architecture
 
-```sql
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
+beads_zig uses a pure Zig storage layer with no external dependencies:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      IssueStore                              │
+│  ┌─────────────────┐    ┌─────────────────────────────────┐ │
+│  │ ArrayList(Issue)│    │ StringHashMap(usize) - ID index │ │
+│  └────────┬────────┘    └─────────────────────────────────┘ │
+│           │                                                  │
+│           ▼                                                  │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │                    JsonlFile                             │ │
+│  │  - readAll() - parse JSONL to Issue structs              │ │
+│  │  - writeAll() - atomic write (temp + fsync + rename)     │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    .beads/issues.jsonl
 ```
 
-### Schema
+### In-Memory Storage (`store.zig`)
 
-#### issues table
-
-```sql
-CREATE TABLE issues (
-    id TEXT PRIMARY KEY,
-    content_hash TEXT,
-    title TEXT NOT NULL CHECK(length(title) <= 500),
-    description TEXT,
-    design TEXT,
-    acceptance_criteria TEXT,
-    notes TEXT,
-    status TEXT NOT NULL DEFAULT 'open',
-    priority INTEGER NOT NULL DEFAULT 2 CHECK(priority >= 0 AND priority <= 4),
-    issue_type TEXT NOT NULL DEFAULT 'task',
-    assignee TEXT,
-    owner TEXT,
-    estimated_minutes INTEGER,
-    created_at INTEGER NOT NULL,
-    created_by TEXT,
-    updated_at INTEGER NOT NULL,
-    closed_at INTEGER,
-    close_reason TEXT,
-    due_at INTEGER,
-    defer_until INTEGER,
-    external_ref TEXT UNIQUE,
-    source_system TEXT,
-    pinned INTEGER NOT NULL DEFAULT 0,
-    is_template INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX idx_issues_status ON issues(status);
-CREATE INDEX idx_issues_priority ON issues(priority);
-CREATE INDEX idx_issues_assignee ON issues(assignee);
-CREATE INDEX idx_issues_created_at ON issues(created_at);
-CREATE INDEX idx_issues_updated_at ON issues(updated_at);
-CREATE INDEX idx_issues_content_hash ON issues(content_hash);
+```zig
+pub const IssueStore = struct {
+    allocator: std.mem.Allocator,
+    issues: std.ArrayListUnmanaged(Issue),     // All issues
+    id_index: std.StringHashMapUnmanaged(usize), // ID -> index lookup
+    dirty_ids: std.StringHashMapUnmanaged(void), // Modified issue IDs
+    path: []const u8,                           // JSONL file path
+};
 ```
 
-#### dependencies table
+**Operations**:
+- `insert(issue)` - Add new issue, update index
+- `get(id)` - O(1) lookup via hash map
+- `update(id, updates)` - Modify in place
+- `delete(id)` - Remove from list and index
+- `list(filters)` - Linear scan with filtering
+- `loadFromFile()` - Parse JSONL into memory
+- `saveToFile()` - Atomic write all issues
 
-```sql
-CREATE TABLE dependencies (
-    issue_id TEXT NOT NULL,
-    depends_on_id TEXT NOT NULL,
-    dep_type TEXT NOT NULL DEFAULT 'blocks',
-    created_at INTEGER NOT NULL,
-    created_by TEXT,
-    metadata TEXT,
-    thread_id TEXT,
-    PRIMARY KEY (issue_id, depends_on_id),
-    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-);
+### Dependency Graph (`graph.zig`)
 
-CREATE INDEX idx_deps_depends_on ON dependencies(depends_on_id);
+```zig
+pub const DependencyGraph = struct {
+    store: *IssueStore,
+    allocator: std.mem.Allocator,
+};
 ```
 
-#### labels table
+**Operations**:
+- `addDependency(dep)` - With cycle detection
+- `removeDependency(issue_id, depends_on_id)`
+- `getDependencies(issue_id)` - What this issue depends on
+- `getDependents(issue_id)` - What depends on this issue
+- `wouldCreateCycle(from, to)` - DFS reachability check
+- `detectCycles()` - Find all cycles in graph
+- `getReadyIssues()` - Open, unblocked, not deferred
+- `getBlockedIssues()` - Open with unresolved dependencies
 
-```sql
-CREATE TABLE labels (
-    issue_id TEXT NOT NULL,
-    label TEXT NOT NULL,
-    PRIMARY KEY (issue_id, label),
-    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-);
+### JSONL File I/O (`jsonl.zig`)
 
-CREATE INDEX idx_labels_label ON labels(label);
+```zig
+pub const JsonlFile = struct {
+    path: []const u8,
+    allocator: std.mem.Allocator,
+};
 ```
 
-#### comments table
+**Atomic Write Protocol**:
+1. Write to temp file (`{path}.tmp.{timestamp}`)
+2. fsync for durability
+3. Rename over target (atomic on POSIX)
 
-```sql
-CREATE TABLE comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    issue_id TEXT NOT NULL,
-    author TEXT NOT NULL,
-    body TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-);
+**Read Protocol**:
+1. Read entire file into memory
+2. Split by newlines
+3. Parse each line as JSON Issue
+4. Skip malformed lines (graceful degradation)
 
-CREATE INDEX idx_comments_issue ON comments(issue_id);
-```
+### Search
 
-#### events table
-
-```sql
-CREATE TABLE events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    issue_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    old_value TEXT,
-    new_value TEXT,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_events_issue ON events(issue_id);
-CREATE INDEX idx_events_created ON events(created_at);
-```
-
-#### dirty_issues table
-
-```sql
-CREATE TABLE dirty_issues (
-    issue_id TEXT PRIMARY KEY,
-    marked_at INTEGER NOT NULL
-);
-```
-
-#### blocked_cache table
-
-```sql
-CREATE TABLE blocked_cache (
-    issue_id TEXT PRIMARY KEY,
-    blocked_by TEXT NOT NULL,  -- JSON array of blocker IDs
-    cached_at INTEGER NOT NULL
-);
-```
-
-#### config table
-
-```sql
-CREATE TABLE config (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-```
-
-### Full-Text Search
-
-```sql
-CREATE VIRTUAL TABLE issues_fts USING fts5(
-    id,
-    title,
-    description,
-    notes,
-    content='issues',
-    content_rowid='rowid'
-);
-```
+Full-text search is performed via linear scan with substring matching.
+Future enhancement: inverted index for faster search.
 
 ---
 
@@ -496,10 +429,10 @@ Issues sorted by ID for deterministic output.
 
 ### Export (flush)
 
-1. Query all non-tombstone issues from SQLite
-2. Batch load labels, dependencies, comments
-3. Serialize each issue as JSON line
-4. Write to temporary file (`issues.jsonl.tmp`)
+1. Get all non-tombstone issues from in-memory store
+2. Serialize each issue as JSON line
+3. Write to temporary file (`issues.jsonl.tmp.{timestamp}`)
+4. fsync for durability
 5. Atomic rename to `issues.jsonl`
 6. Clear dirty flags
 
@@ -513,8 +446,8 @@ Issues sorted by ID for deterministic output.
    - Phase 2: Match by content_hash
    - Phase 3: Match by ID
    - Phase 4: New issue (no match)
-5. Execute upserts in transaction
-6. Rebuild blocked cache
+5. Upsert to in-memory store
+6. Save to JSONL file
 
 ### Safety Guarantees
 
@@ -547,9 +480,8 @@ Dirty flag cleared after successful export.
 | `--quiet` | `-q` | Suppress non-essential output |
 | `--verbose` | `-v` | Increase verbosity (use twice for debug) |
 | `--no-color` | | Disable ANSI colors |
-| `--db <PATH>` | | Override database path |
+| `--data <PATH>` | | Override `.beads/` directory path |
 | `--actor <NAME>` | | Override actor name for audit |
-| `--lock-timeout <MS>` | | SQLite busy timeout (default: 5000) |
 | `--no-auto-flush` | | Skip automatic JSONL export |
 | `--no-auto-import` | | Skip JSONL freshness check |
 
@@ -647,8 +579,7 @@ Dirty flag cleared after successful export.
 2. Environment variables (`BEADS_*`)
 3. Project config (`.beads/config.yaml`)
 4. User config (`~/.config/beads/config.yaml`)
-5. Database config table
-6. Built-in defaults
+5. Built-in defaults
 
 ### Environment Variables
 
@@ -693,7 +624,6 @@ output:
 | `sync.auto_import` | bool | `true` | Auto-import on read commands |
 | `output.color` | bool | auto | Use ANSI colors |
 | `actor` | string | `$USER` | Actor name for audit trail |
-| `lock_timeout_ms` | int | `5000` | SQLite busy timeout |
 
 ---
 
@@ -734,15 +664,11 @@ pub const BeadsError = error{
     ExternalPathNotAllowed,
     WouldOverwriteData,
 
-    // Database
-    DatabaseError,
-    LockTimeout,
-    TransactionFailed,
-
     // I/O
     FileNotFound,
     PermissionDenied,
     WriteError,
+    AtomicRenameFailed,
 };
 ```
 
@@ -822,7 +748,7 @@ Deeper hierarchies are rejected. Use labels or dependencies for complex organiza
 
 **Decision**: Unix epoch internally, RFC3339 in JSONL
 
-- SQLite stores `INTEGER` Unix timestamps (seconds since epoch)
+- In-memory storage uses `i64` Unix timestamps (seconds since epoch)
 - JSONL serialization uses RFC3339 format (e.g., `"2024-01-29T15:30:00Z"`)
 - This matches beads_rust behavior
 
