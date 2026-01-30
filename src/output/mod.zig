@@ -217,17 +217,11 @@ pub const Output = struct {
     // ========================================================================
 
     fn printIssueJson(self: *Self, issue: Issue) !void {
-        const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, issue, .{});
-        defer self.allocator.free(json_bytes);
-        try self.stdout.writeAll(json_bytes);
-        try self.stdout.writeAll("\n");
+        try self.printJson(issue);
     }
 
     fn printIssueListJson(self: *Self, issues: []const Issue) !void {
-        const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, issues, .{});
-        defer self.allocator.free(json_bytes);
-        try self.stdout.writeAll(json_bytes);
-        try self.stdout.writeAll("\n");
+        try self.printJson(issues);
     }
 
     // ========================================================================
@@ -365,8 +359,7 @@ pub const Output = struct {
 
 /// Check if NO_COLOR environment variable is set.
 fn checkNoColorEnv() bool {
-    const env = std.process.getEnvMap(std.heap.page_allocator) catch return false;
-    return env.get("NO_COLOR") != null;
+    return std.posix.getenv("NO_COLOR") != null;
 }
 
 /// Get ANSI color for a status.
