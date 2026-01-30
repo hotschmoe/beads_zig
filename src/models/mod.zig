@@ -7,6 +7,9 @@
 //! - Comment: Issue comments
 //! - Event: Audit log entries
 //!
+//! Utilities:
+//! - timestamp: RFC3339 parsing/formatting for JSONL compatibility
+//!
 //! All models support JSON serialization for JSONL export.
 
 const std = @import("std");
@@ -25,6 +28,17 @@ pub const Issue = @import("issue.zig").Issue;
 pub const IssueError = @import("issue.zig").IssueError;
 pub const Rfc3339Timestamp = @import("issue.zig").Rfc3339Timestamp;
 pub const OptionalRfc3339Timestamp = @import("issue.zig").OptionalRfc3339Timestamp;
+
+// Timestamp utilities
+pub const timestamp = @import("timestamp.zig");
+pub const TimestampError = timestamp.TimestampError;
+pub const parseRfc3339 = timestamp.parseRfc3339;
+pub const parseRfc3339Strict = timestamp.parseRfc3339Strict;
+pub const formatRfc3339 = timestamp.formatRfc3339;
+pub const formatRfc3339Alloc = timestamp.formatRfc3339Alloc;
+pub const timestampNow = timestamp.now;
+pub const RFC3339_LEN = timestamp.RFC3339_LEN;
+pub const RFC3339_BUFFER_SIZE = timestamp.RFC3339_BUFFER_SIZE;
 
 test {
     std.testing.refAllDecls(@This());
