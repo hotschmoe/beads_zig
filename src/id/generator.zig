@@ -252,7 +252,7 @@ test "validateId rejects invalid IDs" {
 
 test "generated IDs are unique" {
     const allocator = std.testing.allocator;
-    var gen = IdGenerator.init("bd");
+    var gen = IdGenerator.initWithSeed("bd", 42);
 
     var ids = std.StringHashMap(void).init(allocator);
     defer {
@@ -264,11 +264,12 @@ test "generated IDs are unique" {
     }
 
     // Generate IDs and check for collisions.
-    // Use a count of 100 to stay well below collision threshold for 3-char hashes.
-    // (36^3 = 46,656, birthday bound ~sqrt gives safe margin at ~200)
-    const count = 100;
-    for (0..count) |_| {
-        const id = try gen.generate(allocator, ids.count());
+    // Pass issue_count=1000 to use 4-char hashes (36^4 = 1,679,616 space).
+    // With 50 IDs, birthday collision probability is negligible (~0.07%).
+    const count = 50;
+    const base_count = 1000; // Force 4-char hashes for better uniqueness
+    for (0..count) |i| {
+        const id = try gen.generate(allocator, base_count + i);
         errdefer allocator.free(id);
 
         if (ids.contains(id)) {

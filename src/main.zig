@@ -29,9 +29,10 @@ fn run(allocator: std.mem.Allocator) !void {
     const cmd_args = if (args.len > 1) args[1..] else args[0..0];
 
     var parser = cli.ArgParser.init(allocator, cmd_args);
-    const result = parser.parse() catch |err| {
+    var result = parser.parse() catch |err| {
         return handleParseError(err, allocator);
     };
+    defer result.deinit(allocator);
 
     try dispatch(result, allocator);
 }

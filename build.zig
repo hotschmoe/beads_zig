@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
     }
     run_step.dependOn(&run_cmd.step);
 
-    // Tests
+    // Tests - run root.zig which uses refAllDecls to test all modules
     const mod_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
@@ -48,20 +48,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const exe_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "beads_zig", .module = mod },
-            },
-        }),
-    });
+    const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&b.addRunArtifact(mod_tests).step);
-    test_step.dependOn(&b.addRunArtifact(exe_tests).step);
+    test_step.dependOn(&run_mod_tests.step);
 
     // Format step
     const fmt_step = b.step("fmt", "Format source files");

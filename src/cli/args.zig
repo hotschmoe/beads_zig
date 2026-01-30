@@ -289,6 +289,24 @@ pub const ConfigArgs = struct {
 pub const ParseResult = struct {
     global: GlobalOptions,
     command: Command,
+
+    /// Free any memory allocated during parsing (labels, deps slices).
+    pub fn deinit(self: *ParseResult, allocator: std.mem.Allocator) void {
+        switch (self.command) {
+            .create => |create| {
+                if (create.labels.len > 0) allocator.free(create.labels);
+                if (create.deps.len > 0) allocator.free(create.deps);
+            },
+            .label => |label_cmd| {
+                switch (label_cmd.subcommand) {
+                    .add => |add| if (add.labels.len > 0) allocator.free(add.labels),
+                    .remove => |remove| if (remove.labels.len > 0) allocator.free(remove.labels),
+                    else => {},
+                }
+            },
+            else => {},
+        }
+    }
 };
 
 /// Errors that can occur during argument parsing.
