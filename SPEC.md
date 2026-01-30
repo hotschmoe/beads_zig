@@ -770,9 +770,11 @@ Resolved decisions for this implementation:
 
 ### Configuration Format
 
-**Decision**: YAML
+**Decision**: YAML (for now)
 
-Rationale: Maintains compatibility with beads_rust configuration files. Requires implementing or importing a YAML parser.
+Rationale: Maintains compatibility with beads_rust configuration files, allowing users to share config between implementations. Requires implementing or importing a YAML parser.
+
+**Future**: May migrate to a more performant format (JSON, TOML, or custom) once we establish our own patterns. Keeping beads_rust compatibility is valuable during early development but not a permanent constraint.
 
 ### Terminal Output
 
