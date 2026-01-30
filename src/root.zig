@@ -1,23 +1,20 @@
-//! By convention, root.zig is the root source file when making a library.
+//! beads_zig - A local-first, offline-capable issue tracker.
+//!
+//! This is the library root that exports all public modules.
+//! See VISION.md for project goals and SPEC.md for technical details.
+
 const std = @import("std");
 
-pub fn bufferedPrint() !void {
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+// Module exports
+pub const cli = @import("cli/mod.zig");
+pub const storage = @import("storage/mod.zig");
+pub const models = @import("models/mod.zig");
+pub const sync = @import("sync/mod.zig");
+pub const id = @import("id/mod.zig");
+pub const config = @import("config/mod.zig");
+pub const output = @import("output/mod.zig");
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try stdout.flush(); // Don't forget to flush!
-}
-
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
+test {
+    // Run tests from all submodules
+    std.testing.refAllDecls(@This());
 }

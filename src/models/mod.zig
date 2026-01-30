@@ -1,0 +1,16 @@
+//! Data model definitions for beads_zig.
+//!
+//! Core types:
+//! - Issue: Primary entity with all fields
+//! - Status, Priority, IssueType: Classification enums
+//! - Dependency: Issue relationships
+//! - Comment: Issue comments
+//! - Event: Audit log entries
+//!
+//! All models support JSON serialization for JSONL export.
+
+const std = @import("std");
+
+test {
+    std.testing.refAllDecls(@This());
+}
