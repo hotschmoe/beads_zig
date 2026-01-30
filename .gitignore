@@ -29,3 +29,6 @@ vendor/
 sandbox/*
 !sandbox/.gitkeep
 !sandbox/README.md
+
+# Test temp directory (created by tests, cleaned up after)
+.test_tmp/

@@ -25,7 +25,7 @@ pub const DependencyStore = graph_mod.DependencyGraph;
 
 test "DependencyStore.add creates dependency" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_add.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_add.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-parent", "Parent", 1706540000));
@@ -54,7 +54,7 @@ test "DependencyStore.add creates dependency" {
 
 test "DependencyStore.add rejects self-dependency" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_self.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_self.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-self", "Self", 1706540000));
@@ -76,7 +76,7 @@ test "DependencyStore.add rejects self-dependency" {
 
 test "DependencyStore.add rejects direct cycle" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_direct_cycle.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_direct_cycle.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-a", "A", 1706540000));
@@ -111,7 +111,7 @@ test "DependencyStore.add rejects direct cycle" {
 
 test "DependencyStore.add rejects indirect cycle (A->B->C->A)" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_indirect_cycle.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_indirect_cycle.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-a", "A", 1706540000));
@@ -158,7 +158,7 @@ test "DependencyStore.add rejects indirect cycle (A->B->C->A)" {
 
 test "DependencyStore.remove removes dependency" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_remove.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_remove.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-parent", "Parent", 1706540000));
@@ -186,7 +186,7 @@ test "DependencyStore.remove removes dependency" {
 
 test "DependencyStore.getDependencies returns dependencies" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_get.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_get.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-a", "A", 1706540000));
@@ -223,7 +223,7 @@ test "DependencyStore.getDependencies returns dependencies" {
 
 test "DependencyStore.getDependents returns dependents" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_dependents.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_dependents.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-parent", "Parent", 1706540000));
@@ -260,7 +260,7 @@ test "DependencyStore.getDependents returns dependents" {
 
 test "DependencyStore.getReadyIssues excludes blocked issues" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_ready.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_ready.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-blocker", "Blocker", 1706540000));
@@ -294,7 +294,7 @@ test "DependencyStore.getReadyIssues excludes blocked issues" {
 
 test "DependencyStore.getReadyIssues includes issue when blocker is closed" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_ready_closed.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_ready_closed.jsonl");
     defer store.deinit();
 
     var blocker = Issue.init("bd-blocker", "Blocker", 1706540000);
@@ -326,7 +326,7 @@ test "DependencyStore.getReadyIssues includes issue when blocker is closed" {
 
 test "DependencyStore.getBlockedIssues returns only blocked issues" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_blocked.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_blocked.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-blocker", "Blocker", 1706540000));
@@ -355,7 +355,7 @@ test "DependencyStore.getBlockedIssues returns only blocked issues" {
 
 test "DependencyStore dirty tracking on add" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dep_dirty.jsonl");
+    var store = IssueStore.init(allocator, "test_dep_dirty.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-parent", "Parent", 1706540000));

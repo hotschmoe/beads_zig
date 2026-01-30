@@ -8,6 +8,7 @@
 const std = @import("std");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
+const test_util = @import("../test_util.zig");
 
 pub const JsonlError = error{
     InvalidJson,
@@ -180,10 +181,12 @@ test "JsonlFile.readAll returns empty for missing file" {
 
 test "JsonlFile roundtrip" {
     const allocator = std.testing.allocator;
-    const test_path = "/tmp/beads_test_jsonl_roundtrip.jsonl";
+    const test_dir = try test_util.createTestDir(allocator, "jsonl_roundtrip");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
 
-    // Cleanup
-    defer fs.cwd().deleteFile(test_path) catch {};
+    const test_path = try std.fs.path.join(allocator, &.{ test_dir, "issues.jsonl" });
+    defer allocator.free(test_path);
 
     var jsonl = JsonlFile.init(test_path, allocator);
 
@@ -212,12 +215,16 @@ test "JsonlFile roundtrip" {
 
 test "JsonlFile handles empty file" {
     const allocator = std.testing.allocator;
-    const test_path = "/tmp/beads_test_empty.jsonl";
+    const test_dir = try test_util.createTestDir(allocator, "jsonl_empty");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    const test_path = try std.fs.path.join(allocator, &.{ test_dir, "empty.jsonl" });
+    defer allocator.free(test_path);
 
     // Create empty file
     const file = try fs.cwd().createFile(test_path, .{});
     file.close();
-    defer fs.cwd().deleteFile(test_path) catch {};
 
     var jsonl = JsonlFile.init(test_path, allocator);
     const issues = try jsonl.readAll();

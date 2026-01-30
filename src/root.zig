@@ -13,6 +13,7 @@ pub const sync = @import("sync/mod.zig");
 pub const id = @import("id/mod.zig");
 pub const config = @import("config/mod.zig");
 pub const output = @import("output/mod.zig");
+pub const test_util = @import("test_util.zig");
 
 test {
     // Run tests from all submodules

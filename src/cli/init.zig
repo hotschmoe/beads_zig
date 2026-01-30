@@ -10,6 +10,7 @@ const std = @import("std");
 const Output = @import("../output/mod.zig").Output;
 const OutputOptions = @import("../output/mod.zig").OutputOptions;
 const args = @import("args.zig");
+const test_util = @import("../test_util.zig");
 
 pub const InitError = error{
     AlreadyInitialized,
@@ -211,17 +212,11 @@ fn writeGitignore(path: []const u8) !void {
 test "init creates workspace directory structure" {
     const allocator = std.testing.allocator;
 
-    // Create unique temp directory using /tmp with timestamp
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_init_test_{d}", .{std.time.milliTimestamp()});
+    const tmp_dir_path = try test_util.createTestDir(allocator, "init_structure");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    // Cleanup on exit
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
-
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    // Use --data to specify custom .beads path
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "test" };
@@ -233,8 +228,8 @@ test "init creates workspace directory structure" {
     };
 
     // Verify files exist
-    const tmp_dir = try std.fs.cwd().openDir(tmp_dir_path, .{});
-    defer @constCast(&tmp_dir).close();
+    var tmp_dir = try std.fs.cwd().openDir(tmp_dir_path, .{});
+    defer tmp_dir.close();
 
     try tmp_dir.access(".beads/issues.jsonl", .{});
     try tmp_dir.access(".beads/config.yaml", .{});
@@ -245,14 +240,11 @@ test "init creates workspace directory structure" {
 test "init fails if already initialized" {
     const allocator = std.testing.allocator;
 
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_init_test2_{d}", .{std.time.milliTimestamp()});
+    const tmp_dir_path = try test_util.createTestDir(allocator, "init_already");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
-
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "bd" };
@@ -269,14 +261,11 @@ test "init fails if already initialized" {
 test "init respects custom prefix" {
     const allocator = std.testing.allocator;
 
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_init_test3_{d}", .{std.time.milliTimestamp()});
+    const tmp_dir_path = try test_util.createTestDir(allocator, "init_prefix");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
-
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "proj" };
@@ -285,7 +274,7 @@ test "init respects custom prefix" {
     try run(init_args, global, allocator);
 
     // Read config.yaml and verify prefix
-    const config_path = try std.fmt.allocPrint(allocator, "{s}/.beads/config.yaml", .{tmp_dir_path});
+    const config_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads", "config.yaml" });
     defer allocator.free(config_path);
 
     const config_file = try std.fs.cwd().openFile(config_path, .{});
@@ -300,14 +289,11 @@ test "init respects custom prefix" {
 test "init creates valid metadata.json" {
     const allocator = std.testing.allocator;
 
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_init_test4_{d}", .{std.time.milliTimestamp()});
+    const tmp_dir_path = try test_util.createTestDir(allocator, "init_metadata");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
-
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "bd" };
@@ -316,7 +302,7 @@ test "init creates valid metadata.json" {
     try run(init_args, global, allocator);
 
     // Read and parse metadata.json
-    const metadata_path = try std.fmt.allocPrint(allocator, "{s}/.beads/metadata.json", .{tmp_dir_path});
+    const metadata_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads", "metadata.json" });
     defer allocator.free(metadata_path);
 
     const metadata_file = try std.fs.cwd().openFile(metadata_path, .{});
@@ -340,14 +326,11 @@ test "init creates valid metadata.json" {
 test "init creates .gitignore with correct entries" {
     const allocator = std.testing.allocator;
 
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_init_test5_{d}", .{std.time.milliTimestamp()});
+    const tmp_dir_path = try test_util.createTestDir(allocator, "init_gitignore");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
-
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "bd" };
@@ -356,7 +339,7 @@ test "init creates .gitignore with correct entries" {
     try run(init_args, global, allocator);
 
     // Read .gitignore
-    const gitignore_path = try std.fmt.allocPrint(allocator, "{s}/.beads/.gitignore", .{tmp_dir_path});
+    const gitignore_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads", ".gitignore" });
     defer allocator.free(gitignore_path);
 
     const gitignore_file = try std.fs.cwd().openFile(gitignore_path, .{});

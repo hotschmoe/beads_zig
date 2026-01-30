@@ -10,6 +10,7 @@ const id_gen = @import("../id/mod.zig");
 const Output = @import("../output/mod.zig").Output;
 const OutputOptions = @import("../output/mod.zig").OutputOptions;
 const args = @import("args.zig");
+const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
 const Status = models.Status;
@@ -342,19 +343,16 @@ test "CreateResult struct works" {
 test "run validates empty title" {
     const allocator = std.testing.allocator;
 
-    // Create temp directory
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_create_test_{d}", .{std.time.milliTimestamp()});
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
+    const tmp_dir_path = try test_util.createTestDir(allocator, "create_empty");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fmt.allocPrint(allocator, "{s}/issues.jsonl", .{data_path});
+    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
     defer allocator.free(issues_path);
 
     const f = try std.fs.cwd().createFile(issues_path, .{});
@@ -370,18 +368,16 @@ test "run validates empty title" {
 test "run validates title length" {
     const allocator = std.testing.allocator;
 
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_create_test2_{d}", .{std.time.milliTimestamp()});
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
+    const tmp_dir_path = try test_util.createTestDir(allocator, "create_long");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fmt.allocPrint(allocator, "{s}/issues.jsonl", .{data_path});
+    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
     defer allocator.free(issues_path);
 
     const f = try std.fs.cwd().createFile(issues_path, .{});
@@ -398,18 +394,16 @@ test "run validates title length" {
 test "run creates issue successfully" {
     const allocator = std.testing.allocator;
 
-    var tmp_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const tmp_dir_path = try std.fmt.bufPrint(&tmp_dir_path_buf, "/tmp/beads_create_test3_{d}", .{std.time.milliTimestamp()});
-    defer std.fs.cwd().deleteTree(tmp_dir_path) catch {};
+    const tmp_dir_path = try test_util.createTestDir(allocator, "create_success");
+    defer allocator.free(tmp_dir_path);
+    defer test_util.cleanupTestDir(tmp_dir_path);
 
-    try std.fs.cwd().makeDir(tmp_dir_path);
-
-    const data_path = try std.fmt.allocPrint(allocator, "{s}/.beads", .{tmp_dir_path});
+    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fmt.allocPrint(allocator, "{s}/issues.jsonl", .{data_path});
+    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
     defer allocator.free(issues_path);
 
     const f = try std.fs.cwd().createFile(issues_path, .{});

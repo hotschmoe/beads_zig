@@ -470,7 +470,7 @@ fn freeDependency(dep: *Dependency, allocator: std.mem.Allocator) void {
 
 test "DependencyGraph rejects self-dependency" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-self", "Self", 1706540000));
@@ -492,7 +492,7 @@ test "DependencyGraph rejects self-dependency" {
 
 test "DependencyGraph rejects direct cycle" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-a", "A", 1706540000));
@@ -525,7 +525,7 @@ test "DependencyGraph rejects direct cycle" {
 
 test "DependencyGraph rejects indirect cycle" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-a", "A", 1706540000));
@@ -570,7 +570,7 @@ test "DependencyGraph rejects indirect cycle" {
 
 test "DependencyGraph getReadyIssues excludes blocked" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-blocker", "Blocker", 1706540000));
@@ -602,7 +602,7 @@ test "DependencyGraph getReadyIssues excludes blocked" {
 
 test "DependencyGraph getReadyIssues includes when blocker closed" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     var blocker = Issue.init("bd-blocker", "Blocker", 1706540000);
@@ -631,7 +631,7 @@ test "DependencyGraph getReadyIssues includes when blocker closed" {
 
 test "DependencyGraph getBlockedIssues returns only blocked" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-blocker", "Blocker", 1706540000));

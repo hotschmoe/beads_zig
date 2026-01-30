@@ -29,7 +29,7 @@ pub const IssueStore = store_mod.IssueStore;
 
 test "IssueStore.insert creates issue" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_insert.jsonl");
+    var store = IssueStore.init(allocator, "test_insert.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-test1", "Test Issue", 1706540000);
@@ -41,7 +41,7 @@ test "IssueStore.insert creates issue" {
 
 test "IssueStore.get retrieves issue" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_get.jsonl");
+    var store = IssueStore.init(allocator, "test_get.jsonl");
     defer store.deinit();
 
     const original = Issue.init("bd-test2", "Get Test", 1706540000);
@@ -58,7 +58,7 @@ test "IssueStore.get retrieves issue" {
 
 test "IssueStore.get returns null for missing issue" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_missing.jsonl");
+    var store = IssueStore.init(allocator, "test_missing.jsonl");
     defer store.deinit();
 
     const result = try store.get("bd-nonexistent");
@@ -67,7 +67,7 @@ test "IssueStore.get returns null for missing issue" {
 
 test "IssueStore.update modifies fields" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_update.jsonl");
+    var store = IssueStore.init(allocator, "test_update.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-update", "Original Title", 1706540000);
@@ -88,7 +88,7 @@ test "IssueStore.update modifies fields" {
 
 test "IssueStore.update returns error for missing issue" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_update_missing.jsonl");
+    var store = IssueStore.init(allocator, "test_update_missing.jsonl");
     defer store.deinit();
 
     const result = store.update("bd-missing", .{ .title = "New" }, 1706550000);
@@ -97,7 +97,7 @@ test "IssueStore.update returns error for missing issue" {
 
 test "IssueStore.delete sets tombstone status" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_delete.jsonl");
+    var store = IssueStore.init(allocator, "test_delete.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-delete", "To Delete", 1706540000);
@@ -112,7 +112,7 @@ test "IssueStore.delete sets tombstone status" {
 
 test "IssueStore.list returns issues" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_list.jsonl");
+    var store = IssueStore.init(allocator, "test_list.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-list1", "Issue 1", 1706540000));
@@ -133,7 +133,7 @@ test "IssueStore.list returns issues" {
 
 test "IssueStore.list excludes tombstones by default" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_tombstone.jsonl");
+    var store = IssueStore.init(allocator, "test_tombstone.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-active", "Active", 1706540000));
@@ -155,7 +155,7 @@ test "IssueStore.list excludes tombstones by default" {
 
 test "IssueStore.list with status filter" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_status_filter.jsonl");
+    var store = IssueStore.init(allocator, "test_status_filter.jsonl");
     defer store.deinit();
 
     var issue1 = Issue.init("bd-open", "Open Issue", 1706540000);
@@ -181,7 +181,7 @@ test "IssueStore.list with status filter" {
 
 test "IssueStore.list with priority filter" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_priority_filter.jsonl");
+    var store = IssueStore.init(allocator, "test_priority_filter.jsonl");
     defer store.deinit();
 
     var issue1 = Issue.init("bd-high", "High Priority", 1706540000);
@@ -207,7 +207,7 @@ test "IssueStore.list with priority filter" {
 
 test "IssueStore.list with limit and offset" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_limit_offset.jsonl");
+    var store = IssueStore.init(allocator, "test_limit_offset.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-1", "Issue 1", 1706540000));
@@ -229,7 +229,7 @@ test "IssueStore.list with limit and offset" {
 
 test "IssueStore dirty tracking" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_dirty.jsonl");
+    var store = IssueStore.init(allocator, "test_dirty.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-dirty", "Dirty Test", 1706540000);
@@ -256,7 +256,7 @@ test "IssueStore dirty tracking" {
 
 test "IssueStore.count total" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_count.jsonl");
+    var store = IssueStore.init(allocator, "test_count.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-c1", "Issue 1", 1706540000));
@@ -278,7 +278,7 @@ test "IssueStore.count total" {
 
 test "IssueStore insert with all fields" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test_all_fields.jsonl");
+    var store = IssueStore.init(allocator, "test_all_fields.jsonl");
     defer store.deinit();
 
     var issue = Issue.init("bd-full", "Full Issue", 1706540000);

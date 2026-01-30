@@ -712,7 +712,7 @@ fn freeComment(comment: *Comment, allocator: std.mem.Allocator) void {
 
 test "IssueStore insert and get" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-test1", "Test Issue", 1706540000);
@@ -729,7 +729,7 @@ test "IssueStore insert and get" {
 
 test "IssueStore get returns null for missing" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     const result = try store.get("bd-nonexistent");
@@ -738,7 +738,7 @@ test "IssueStore get returns null for missing" {
 
 test "IssueStore update modifies fields" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-update", "Original Title", 1706540000);
@@ -760,7 +760,7 @@ test "IssueStore update modifies fields" {
 
 test "IssueStore delete sets tombstone" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-delete", "To Delete", 1706540000);
@@ -776,7 +776,7 @@ test "IssueStore delete sets tombstone" {
 
 test "IssueStore list returns issues" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-list1", "Issue 1", 1706540000));
@@ -797,7 +797,7 @@ test "IssueStore list returns issues" {
 
 test "IssueStore list excludes tombstones" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-active", "Active", 1706540000));
@@ -819,7 +819,7 @@ test "IssueStore list excludes tombstones" {
 
 test "IssueStore dirty tracking" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     const issue = Issue.init("bd-dirty", "Dirty Test", 1706540000);
@@ -848,7 +848,7 @@ test "IssueStore dirty tracking" {
 
 test "IssueStore addLabel and removeLabel" {
     const allocator = std.testing.allocator;
-    var store = IssueStore.init(allocator, "/tmp/test.jsonl");
+    var store = IssueStore.init(allocator, "test.jsonl");
     defer store.deinit();
 
     try store.insert(Issue.init("bd-labels", "Label Test", 1706540000));
