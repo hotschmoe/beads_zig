@@ -1,0 +1,270 @@
+# TESTING.md - beads_zig Testing Strategy
+
+## Philosophy
+
+> **Tests are diagnostic tools, not success criteria.**
+
+A passing test suite does not mean the code is good. A failing test does not mean the code is wrong.
+
+### When a Test Fails
+
+Ask three questions in order:
+
+1. **Is the test itself correct and valuable?**
+2. **Does the test align with our current design vision?**
+3. **Is the code actually broken?**
+
+Only if all three answers are "yes" should you fix the code.
+
+### Why This Matters
+
+- Tests encode assumptions. Assumptions can be wrong or outdated.
+- Changing code to pass a bad test makes the codebase worse, not better.
+- Evolving projects explore new territory - legacy testing assumptions do not always apply.
+
+---
+
+## Test Categories
+
+### Unit Tests
+
+**Purpose**: Verify isolated behavior of individual functions and data structures.
+
+**Characteristics**:
+- No I/O (disk, network)
+- No external dependencies
+- Fast (<5ms per test)
+- Deterministic
+
+**Target areas**:
+- Model serialization/deserialization (Issue, Dependency, Comment, Event)
+- ID generation (determinism, format, collision resistance)
+- Base36 encoding/decoding
+- Content hashing (SHA256, field ordering, null handling)
+- Status/Priority/IssueType parsing
+- Argument parsing
+
+**Location**: Inline `test` blocks in each module.
+
+### Integration Tests
+
+**Purpose**: Verify components work together correctly.
+
+**Characteristics**:
+- May use temporary files/databases
+- Tests real SQLite operations
+- Tests JSONL import/export roundtrips
+- Moderate speed (<100ms per test)
+
+**Target areas**:
+- SQLite CRUD operations
+- JSONL export -> import roundtrip preserves data
+- Dependency cycle detection
+- Ready/blocked query correctness
+- Dirty tracking and sync coordination
+- Transaction rollback on error
+
+**Location**: `src/tests/` directory or dedicated test modules.
+
+### CLI Tests
+
+**Purpose**: Verify end-to-end command behavior.
+
+**Characteristics**:
+- Spawns actual `bz` process
+- Uses temporary `.beads/` directories
+- Tests argument parsing, output format, exit codes
+- Slower (<1s per test)
+
+**Target areas**:
+- `bz init` creates correct directory structure
+- `bz create` returns valid ID
+- `bz list --json` produces valid JSON
+- `bz ready` excludes blocked issues
+- `bz sync` maintains data integrity
+- Error messages are helpful
+
+**Location**: `src/tests/cli/` or separate test binary.
+
+### Fuzz Tests
+
+**Purpose**: Discover edge cases through random input generation.
+
+**Characteristics**:
+- Uses Zig's built-in fuzzing (`std.testing.fuzz`)
+- Time-boxed execution (CI: 60s, local: unbounded)
+- Finds crashes, hangs, and assertion failures
+
+**Target areas**:
+- ID generation with random inputs
+- JSONL parsing with malformed input
+- Base36 decoding with invalid characters
+- Argument parsing with adversarial input
+- SQLite query building with special characters
+
+**Location**: Inline fuzz tests or `src/tests/fuzz/`.
+
+---
+
+## What Tests Are Good For
+
+- **Regression detection**: Did a refactor break dependent modules? Did API changes break integrations?
+- **Sanity checks**: Does initialization complete? Do core operations succeed? Does the happy path work?
+- **Behavior documentation**: Tests show what the code currently does, not necessarily what it should do.
+
+## What Tests Are Not
+
+- A definition of correctness
+- A measure of code quality
+- Something to "make pass" at all costs
+- A specification to code against
+
+---
+
+## Critical Paths (High Priority Testing)
+
+These areas have high blast radius if they fail:
+
+### 1. Data Integrity
+
+- JSONL export never produces invalid JSON
+- JSONL import never silently drops issues
+- Content hash computation is deterministic
+- Database transactions rollback cleanly on error
+
+### 2. Sync Safety
+
+- Export does not overwrite JSONL with empty data
+- Import detects and rejects merge conflict markers
+- Atomic file writes prevent corruption on crash
+- Dirty tracking accurately identifies modified issues
+
+### 3. ID Generation
+
+- IDs are unique within reasonable probability bounds
+- ID format is valid (`prefix-hash`)
+- Collision detection works when hash is too short
+- Child IDs maintain hierarchy (`bd-abc.1.2`)
+
+### 4. Dependency Logic
+
+- Cycle detection prevents circular dependencies
+- `ready` query correctly excludes blocked issues
+- `blocked` query correctly includes only blocked issues
+- Blocked cache stays synchronized with actual dependencies
+
+---
+
+## Performance Targets
+
+**Decision**: Correctness first, optimize later.
+
+No specific performance targets at this time. Once core functionality is complete and stable, benchmarks will be established based on actual usage patterns.
+
+Reference targets from beads_rust (for future comparison):
+
+| Operation | beads_rust Target |
+|-----------|-------------------|
+| Create issue | < 1ms |
+| List 1k issues | < 10ms |
+| List 10k issues | < 100ms |
+| Ready query (1k issues, 2k deps) | < 5ms |
+| Ready query (10k issues, 20k deps) | < 50ms |
+| Export 10k issues | < 500ms |
+| Import 10k issues | < 1s |
+
+---
+
+## Test Conventions
+
+### Naming
+
+```zig
+test "Issue.toJson handles null description" {
+    // ...
+}
+
+test "SqliteStorage.getReadyWork excludes blocked issues" {
+    // ...
+}
+
+test "sync roundtrip preserves all fields" {
+    // ...
+}
+```
+
+### Allocation
+
+All tests should use a test allocator and verify no leaks:
+
+```zig
+test "example" {
+    const allocator = std.testing.allocator;
+    // ... test code ...
+    // allocator will fail test if memory leaks
+}
+```
+
+### Temporary Files
+
+Use `std.testing.tmpDir()` for filesystem tests:
+
+```zig
+test "init creates database" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // ... test in tmp.dir ...
+}
+```
+
+### Error Cases
+
+Test both success and failure paths:
+
+```zig
+test "addDependency rejects cycles" {
+    // Setup: A -> B -> C
+    // Act: try to add C -> A
+    // Assert: returns error.CycleDetected
+}
+```
+
+---
+
+## Running Tests
+
+```bash
+# Run all tests
+zig build test
+
+# Run tests with specific filter
+zig build test -- --test-filter "Issue"
+
+# Run fuzz tests (local, press Ctrl+C to stop)
+zig build test -- --fuzz
+
+# Run with verbose output
+zig build test -- --verbose
+```
+
+---
+
+## CI Integration
+
+The GitHub Actions workflow runs:
+
+1. **Multi-platform tests**: Ubuntu, macOS, Windows
+2. **Multi-optimization**: Debug, ReleaseSafe, ReleaseFast, ReleaseSmall
+3. **SQLite variants**: System library and bundled
+4. **Fuzz tests**: 60-second timeout
+5. **Format check**: `zig fmt --check`
+
+Tests must pass on all configurations before merge.
+
+---
+
+## The Real Success Metric
+
+> Does the code further our project's vision and goals?
+
+Tests help us detect regressions and document behavior, but they do not define correctness. The ultimate test is whether beads_zig fulfills its vision: a reliable, fast, local-first issue tracker that stays out of your way.
