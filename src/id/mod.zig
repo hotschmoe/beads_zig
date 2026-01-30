@@ -12,6 +12,10 @@
 const std = @import("std");
 
 pub const base36 = @import("base36.zig");
+pub const hash = @import("hash.zig");
+
+pub const contentHash = hash.contentHash;
+pub const contentHashAlloc = hash.contentHashAlloc;
 
 test {
     std.testing.refAllDecls(@This());
