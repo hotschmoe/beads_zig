@@ -68,7 +68,6 @@ pub const EventType = enum {
 pub const EventError = error{
     EmptyActor,
     EmptyIssueId,
-    InvalidEventType,
 };
 
 /// An audit log entry for an issue change.
@@ -91,20 +90,19 @@ pub const Event = struct {
 
     /// Check deep equality between two Events.
     pub fn eql(a: Self, b: Self) bool {
-        const old_eq = if (a.old_value) |av| blk: {
-            break :blk if (b.old_value) |bv| std.mem.eql(u8, av, bv) else false;
-        } else b.old_value == null;
-
-        const new_eq = if (a.new_value) |av| blk: {
-            break :blk if (b.new_value) |bv| std.mem.eql(u8, av, bv) else false;
-        } else b.new_value == null;
-
         return a.id == b.id and
             a.created_at == b.created_at and
             a.event_type == b.event_type and
             std.mem.eql(u8, a.issue_id, b.issue_id) and
             std.mem.eql(u8, a.actor, b.actor) and
-            old_eq and new_eq;
+            optionalStrEql(a.old_value, b.old_value) and
+            optionalStrEql(a.new_value, b.new_value);
+    }
+
+    fn optionalStrEql(a: ?[]const u8, b: ?[]const u8) bool {
+        const av = a orelse return b == null;
+        const bv = b orelse return false;
+        return std.mem.eql(u8, av, bv);
     }
 
     /// Create an event for issue creation.
