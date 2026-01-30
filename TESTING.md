@@ -24,6 +24,41 @@ Only if all three answers are "yes" should you fix the code.
 
 ---
 
+## Test Isolation
+
+### Manual Testing
+
+Use the `sandbox/` directory for interactive testing:
+
+```bash
+cd sandbox
+../zig-out/bin/bz init
+../zig-out/bin/bz create "Test issue"
+../zig-out/bin/bz list
+```
+
+**IMPORTANT**: Never run `bz` directly in the project root during development.
+The project root may contain a `.beads/` directory for tracking development
+with beads_rust. Running `bz` there could corrupt that data.
+
+### Automated Tests
+
+All filesystem tests MUST use isolated temporary directories:
+
+```zig
+test "example filesystem test" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // All operations within tmp.dir
+}
+```
+
+### CI Safety
+
+CI runs in fresh checkouts with no persistent state. Each test run starts clean.
+
+---
+
 ## Test Categories
 
 ### Unit Tests

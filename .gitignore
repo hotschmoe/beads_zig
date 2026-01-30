@@ -20,3 +20,8 @@ Thumbs.db
 
 # Archive directory (per CLAUDE.md - deprecated files go here)
 .archive/
+
+# Sandbox directory (manual testing playground)
+sandbox/*
+!sandbox/.gitkeep
+!sandbox/README.md
