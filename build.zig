@@ -70,13 +70,24 @@ pub fn build(b: *std.Build) void {
     }
     run_step.dependOn(&run_cmd.step);
 
-    // Tests
+    // Tests - create fresh modules to avoid sharing C sources with exe
     const mod_tests = b.addTest(.{
-        .root_module = mod,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "beads_zig", .module = mod },
+            },
+        }),
     });
 
     // Link SQLite for tests
@@ -84,7 +95,19 @@ pub fn build(b: *std.Build) void {
         inline for (.{ mod_tests, exe_tests }) |t| {
             t.addCSourceFile(.{
                 .file = b.path("vendor/sqlite3.c"),
-                .flags = &.{"-DSQLITE_ENABLE_FTS5"},
+                .flags = &.{
+                    "-DSQLITE_DQS=0",
+                    "-DSQLITE_THREADSAFE=2",
+                    "-DSQLITE_DEFAULT_MEMSTATUS=0",
+                    "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
+                    "-DSQLITE_LIKE_DOESNT_MATCH_BLOBS",
+                    "-DSQLITE_OMIT_DEPRECATED",
+                    "-DSQLITE_OMIT_PROGRESS_CALLBACK",
+                    "-DSQLITE_OMIT_SHARED_CACHE",
+                    "-DSQLITE_USE_ALLOCA",
+                    "-DSQLITE_ENABLE_FTS5",
+                    "-DSQLITE_ENABLE_JSON1",
+                },
             });
             t.addIncludePath(b.path("vendor"));
         }

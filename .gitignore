@@ -21,6 +21,10 @@ Thumbs.db
 # Archive directory (per CLAUDE.md - deprecated files go here)
 .archive/
 
+# Vendor directory (downloaded dependencies, not committed)
+# Run scripts/setup-vendor.sh to populate
+vendor/
+
 # Sandbox directory (manual testing playground)
 sandbox/*
 !sandbox/.gitkeep
