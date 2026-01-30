@@ -234,9 +234,16 @@ fn epochDayFromYMD(year: i32, month: u4, day: u5) !i32 {
     return era * 146097 + @as(i32, @intCast(doe)) - 719468;
 }
 
-/// Get the default actor name from environment.
+/// Get the default actor name from environment (cross-platform).
+/// Returns a slice to static/environment memory on POSIX, null on Windows.
 fn getDefaultActor() ?[]const u8 {
-    return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
+    const builtin = @import("builtin");
+    if (builtin.os.tag == .windows) {
+        // Windows env vars require allocation; return null as fallback
+        return null;
+    } else {
+        return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
+    }
 }
 
 /// Read the ID prefix from config.yaml, defaulting to "bd".
