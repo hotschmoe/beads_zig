@@ -125,21 +125,28 @@ pub fn createSchema(db: *Database) !void {
     try createFts(db);
 
     // Store schema version
-    try db.exec("INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version', '1')");
+    try db.exec("INSERT OR REPLACE INTO config (key, value) VALUES ('schema_version', '" ++
+        std.fmt.comptimePrint("{d}", .{SCHEMA_VERSION}) ++ "')");
 }
 
+const index_definitions = [_][]const u8{
+    "CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_updated_at ON issues(updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_issues_content_hash ON issues(content_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_deps_depends_on ON dependencies(depends_on_id)",
+    "CREATE INDEX IF NOT EXISTS idx_labels_label ON labels(label)",
+    "CREATE INDEX IF NOT EXISTS idx_comments_issue ON comments(issue_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_issue ON events(issue_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at)",
+};
+
 fn createIndexes(db: *Database) !void {
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_issues_assignee ON issues(assignee)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_issues_updated_at ON issues(updated_at)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_issues_content_hash ON issues(content_hash)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_deps_depends_on ON dependencies(depends_on_id)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_labels_label ON labels(label)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_comments_issue ON comments(issue_id)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON events(issue_id)");
-    try db.exec("CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at)");
+    for (index_definitions) |sql| {
+        try db.exec(sql);
+    }
 }
 
 fn createFts(db: *Database) !void {
