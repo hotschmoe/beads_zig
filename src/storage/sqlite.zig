@@ -59,21 +59,10 @@ pub const Database = struct {
     pub fn exec(self: *Database, sql: []const u8) !void {
         const sql_z = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(sql_z);
-
-        var err_msg: [*c]u8 = null;
-        const rc = c.sqlite3_exec(self.handle, sql_z, null, null, &err_msg);
-        if (err_msg != null) {
-            c.sqlite3_free(err_msg);
-        }
-        if (rc != c.SQLITE_OK) {
-            return if (rc == c.SQLITE_BUSY or rc == c.SQLITE_LOCKED)
-                SqliteError.BusyTimeout
-            else
-                SqliteError.ExecuteFailed;
-        }
+        try self.execZ(sql_z);
     }
 
-    pub fn execAlloc(self: *Database, sql: [:0]const u8) !void {
+    pub fn execZ(self: *Database, sql: [:0]const u8) !void {
         var err_msg: [*c]u8 = null;
         const rc = c.sqlite3_exec(self.handle, sql, null, null, &err_msg);
         if (err_msg != null) {
