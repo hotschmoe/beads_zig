@@ -71,8 +71,6 @@ pub const Status = union(enum) {
     }
 };
 
-// Tests
-
 test "toString returns correct strings for known statuses" {
     try std.testing.expectEqualStrings("open", (Status{ .open = {} }).toString());
     try std.testing.expectEqualStrings("in_progress", (Status{ .in_progress = {} }).toString());
