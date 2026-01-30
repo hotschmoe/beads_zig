@@ -14,6 +14,7 @@ const std = @import("std");
 pub const sqlite = @import("sqlite.zig");
 pub const schema = @import("schema.zig");
 pub const issues = @import("issues.zig");
+pub const dependencies = @import("dependencies.zig");
 
 pub const Database = sqlite.Database;
 pub const Statement = sqlite.Statement;
@@ -27,6 +28,9 @@ pub const SCHEMA_VERSION = schema.SCHEMA_VERSION;
 
 pub const IssueStore = issues.IssueStore;
 pub const IssueStoreError = issues.IssueStoreError;
+
+pub const DependencyStore = dependencies.DependencyStore;
+pub const DependencyStoreError = dependencies.DependencyStoreError;
 
 test {
     std.testing.refAllDecls(@This());
