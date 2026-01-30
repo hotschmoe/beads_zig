@@ -60,14 +60,11 @@ pub const DependencyType = union(enum) {
 
     /// Check equality between two DependencyTypes.
     pub fn eql(a: Self, b: Self) bool {
-        const TagType = @typeInfo(Self).@"union".tag_type.?;
-        const tag_a: TagType = a;
-        const tag_b: TagType = b;
+        const Tag = std.meta.Tag(Self);
+        const tag_a: Tag = a;
+        const tag_b: Tag = b;
         if (tag_a != tag_b) return false;
-        if (tag_a == .custom) {
-            return std.mem.eql(u8, a.custom, b.custom);
-        }
-        return true;
+        return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
     }
 
     /// JSON serialization for std.json.
@@ -122,11 +119,10 @@ pub const Dependency = struct {
     }
 
     fn optionalStrEql(a: ?[]const u8, b: ?[]const u8) bool {
-        if (a == null and b == null) return true;
-        if (a == null or b == null) return false;
-        return std.mem.eql(u8, a.?, b.?);
+        const a_val = a orelse return b == null;
+        const b_val = b orelse return false;
+        return std.mem.eql(u8, a_val, b_val);
     }
-
 };
 
 // --- DependencyType Tests ---
