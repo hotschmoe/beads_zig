@@ -510,106 +510,78 @@ pub const ArgParser = struct {
     }
 
     fn parseInitArgs(self: *Self) ParseError!InitArgs {
-        var args = InitArgs{};
+        var result = InitArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--prefix") or std.mem.eql(u8, arg, "-p")) {
-                _ = self.next();
-                args.prefix = self.next() orelse return error.MissingFlagValue;
-            } else if (!std.mem.startsWith(u8, arg, "-")) {
-                args.prefix = self.next().?;
-            } else {
-                break;
-            }
+            if (self.consumeFlag("-p", "--prefix")) {
+                result.prefix = self.next() orelse return error.MissingFlagValue;
+            } else if (self.peekPositional()) |_| {
+                result.prefix = self.next().?;
+            } else break;
         }
-        return args;
+        return result;
     }
 
     fn parseCreateArgs(self: *Self) ParseError!CreateArgs {
-        var args = CreateArgs{ .title = undefined };
+        var result = CreateArgs{ .title = undefined };
         var title_set = false;
         var labels: std.ArrayListUnmanaged([]const u8) = .{};
         var deps: std.ArrayListUnmanaged([]const u8) = .{};
 
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--description") or std.mem.eql(u8, arg, "-d")) {
-                _ = self.next();
-                args.description = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--type") or std.mem.eql(u8, arg, "-t")) {
-                _ = self.next();
-                args.issue_type = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--priority") or std.mem.eql(u8, arg, "-p")) {
-                _ = self.next();
-                args.priority = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--assignee") or std.mem.eql(u8, arg, "-a")) {
-                _ = self.next();
-                args.assignee = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--label") or std.mem.eql(u8, arg, "-l")) {
-                _ = self.next();
+            if (self.consumeFlag("-d", "--description")) {
+                result.description = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-t", "--type")) {
+                result.issue_type = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-p", "--priority")) {
+                result.priority = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-a", "--assignee")) {
+                result.assignee = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-l", "--label")) {
                 labels.append(self.allocator, self.next() orelse return error.MissingFlagValue) catch return error.InvalidArgument;
-            } else if (std.mem.eql(u8, arg, "--dep") or std.mem.eql(u8, arg, "--depends-on")) {
-                _ = self.next();
+            } else if (self.consumeFlag("--depends-on", "--dep")) {
                 deps.append(self.allocator, self.next() orelse return error.MissingFlagValue) catch return error.InvalidArgument;
-            } else if (std.mem.eql(u8, arg, "--due")) {
-                _ = self.next();
-                args.due = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--estimate") or std.mem.eql(u8, arg, "-e")) {
-                _ = self.next();
+            } else if (self.consumeFlag(null, "--due")) {
+                result.due = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-e", "--estimate")) {
                 const val = self.next() orelse return error.MissingFlagValue;
-                args.estimate = std.fmt.parseInt(i32, val, 10) catch return error.InvalidArgument;
-            } else if (!std.mem.startsWith(u8, arg, "-")) {
+                result.estimate = std.fmt.parseInt(i32, val, 10) catch return error.InvalidArgument;
+            } else if (self.peekPositional()) |_| {
                 if (!title_set) {
-                    args.title = self.next().?;
+                    result.title = self.next().?;
                     title_set = true;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
+                } else break;
+            } else break;
         }
 
-        if (!title_set) {
-            return error.MissingRequiredArgument;
-        }
+        if (!title_set) return error.MissingRequiredArgument;
 
         if (labels.items.len > 0) {
-            args.labels = labels.toOwnedSlice(self.allocator) catch return error.InvalidArgument;
+            result.labels = labels.toOwnedSlice(self.allocator) catch return error.InvalidArgument;
         }
         if (deps.items.len > 0) {
-            args.deps = deps.toOwnedSlice(self.allocator) catch return error.InvalidArgument;
+            result.deps = deps.toOwnedSlice(self.allocator) catch return error.InvalidArgument;
         }
 
-        return args;
+        return result;
     }
 
     fn parseQuickArgs(self: *Self) ParseError!QuickArgs {
-        var args = QuickArgs{ .title = undefined };
+        var result = QuickArgs{ .title = undefined };
         var title_set = false;
 
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--priority") or std.mem.eql(u8, arg, "-p")) {
-                _ = self.next();
-                args.priority = self.next() orelse return error.MissingFlagValue;
-            } else if (!std.mem.startsWith(u8, arg, "-")) {
+            if (self.consumeFlag("-p", "--priority")) {
+                result.priority = self.next() orelse return error.MissingFlagValue;
+            } else if (self.peekPositional()) |_| {
                 if (!title_set) {
-                    args.title = self.next().?;
+                    result.title = self.next().?;
                     title_set = true;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
+                } else break;
+            } else break;
         }
 
-        if (!title_set) {
-            return error.MissingRequiredArgument;
-        }
-
-        return args;
+        if (!title_set) return error.MissingRequiredArgument;
+        return result;
     }
 
     fn parseShowArgs(self: *Self) ParseError!ShowArgs {
@@ -618,74 +590,51 @@ pub const ArgParser = struct {
     }
 
     fn parseUpdateArgs(self: *Self) ParseError!UpdateArgs {
-        var args = UpdateArgs{ .id = undefined };
+        var result = UpdateArgs{ .id = undefined };
         var id_set = false;
 
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--title")) {
-                _ = self.next();
-                args.title = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--description") or std.mem.eql(u8, arg, "-d")) {
-                _ = self.next();
-                args.description = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--type") or std.mem.eql(u8, arg, "-t")) {
-                _ = self.next();
-                args.issue_type = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--priority") or std.mem.eql(u8, arg, "-p")) {
-                _ = self.next();
-                args.priority = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--assignee") or std.mem.eql(u8, arg, "-a")) {
-                _ = self.next();
-                args.assignee = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--status") or std.mem.eql(u8, arg, "-s")) {
-                _ = self.next();
-                args.status = self.next() orelse return error.MissingFlagValue;
-            } else if (!std.mem.startsWith(u8, arg, "-")) {
+            if (self.consumeFlag(null, "--title")) {
+                result.title = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-d", "--description")) {
+                result.description = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-t", "--type")) {
+                result.issue_type = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-p", "--priority")) {
+                result.priority = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-a", "--assignee")) {
+                result.assignee = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-s", "--status")) {
+                result.status = self.next() orelse return error.MissingFlagValue;
+            } else if (self.peekPositional()) |_| {
                 if (!id_set) {
-                    args.id = self.next().?;
+                    result.id = self.next().?;
                     id_set = true;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
+                } else break;
+            } else break;
         }
 
-        if (!id_set) {
-            return error.MissingRequiredArgument;
-        }
-
-        return args;
+        if (!id_set) return error.MissingRequiredArgument;
+        return result;
     }
 
     fn parseCloseArgs(self: *Self) ParseError!CloseArgs {
-        var args = CloseArgs{ .id = undefined };
+        var result = CloseArgs{ .id = undefined };
         var id_set = false;
 
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--reason") or std.mem.eql(u8, arg, "-r")) {
-                _ = self.next();
-                args.reason = self.next() orelse return error.MissingFlagValue;
-            } else if (!std.mem.startsWith(u8, arg, "-")) {
+            if (self.consumeFlag("-r", "--reason")) {
+                result.reason = self.next() orelse return error.MissingFlagValue;
+            } else if (self.peekPositional()) |_| {
                 if (!id_set) {
-                    args.id = self.next().?;
+                    result.id = self.next().?;
                     id_set = true;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
+                } else break;
+            } else break;
         }
 
-        if (!id_set) {
-            return error.MissingRequiredArgument;
-        }
-
-        return args;
+        if (!id_set) return error.MissingRequiredArgument;
+        return result;
     }
 
     fn parseReopenArgs(self: *Self) ParseError!ReopenArgs {
@@ -699,138 +648,86 @@ pub const ArgParser = struct {
     }
 
     fn parseListArgs(self: *Self) ParseError!ListArgs {
-        var args = ListArgs{};
-
+        var result = ListArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--status") or std.mem.eql(u8, arg, "-s")) {
-                _ = self.next();
-                args.status = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--priority") or std.mem.eql(u8, arg, "-p")) {
-                _ = self.next();
-                args.priority = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--type") or std.mem.eql(u8, arg, "-t")) {
-                _ = self.next();
-                args.issue_type = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--assignee") or std.mem.eql(u8, arg, "-a")) {
-                _ = self.next();
-                args.assignee = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--label") or std.mem.eql(u8, arg, "-l")) {
-                _ = self.next();
-                args.label = self.next() orelse return error.MissingFlagValue;
-            } else if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.limit = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else if (std.mem.eql(u8, arg, "--all") or std.mem.eql(u8, arg, "-A")) {
-                _ = self.next();
-                args.all = true;
-            } else {
-                break;
-            }
+            if (self.consumeFlag("-s", "--status")) {
+                result.status = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-p", "--priority")) {
+                result.priority = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-t", "--type")) {
+                result.issue_type = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-a", "--assignee")) {
+                result.assignee = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-l", "--label")) {
+                result.label = self.next() orelse return error.MissingFlagValue;
+            } else if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else if (self.consumeFlag("-A", "--all")) {
+                result.all = true;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseReadyArgs(self: *Self) ParseError!ReadyArgs {
-        var args = ReadyArgs{};
-
+        var result = ReadyArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.limit = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else {
-                break;
-            }
+            if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseBlockedArgs(self: *Self) ParseError!BlockedArgs {
-        var args = BlockedArgs{};
-
+        var result = BlockedArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.limit = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else {
-                break;
-            }
+            if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseSearchArgs(self: *Self) ParseError!SearchArgs {
-        var args = SearchArgs{ .query = undefined };
+        var result = SearchArgs{ .query = undefined };
         var query_set = false;
 
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.limit = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else if (!std.mem.startsWith(u8, arg, "-")) {
+            if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else if (self.peekPositional()) |_| {
                 if (!query_set) {
-                    args.query = self.next().?;
+                    result.query = self.next().?;
                     query_set = true;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
+                } else break;
+            } else break;
         }
 
-        if (!query_set) {
-            return error.MissingRequiredArgument;
-        }
-
-        return args;
+        if (!query_set) return error.MissingRequiredArgument;
+        return result;
     }
 
     fn parseStaleArgs(self: *Self) ParseError!StaleArgs {
-        var args = StaleArgs{};
-
+        var result = StaleArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--days") or std.mem.eql(u8, arg, "-d")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.days = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.limit = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else {
-                break;
-            }
+            if (self.consumeFlag("-d", "--days")) {
+                result.days = try self.consumeU32() orelse return error.MissingFlagValue;
+            } else if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseCountArgs(self: *Self) ParseError!CountArgs {
-        var args = CountArgs{};
-
+        var result = CountArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--group-by") or std.mem.eql(u8, arg, "-g")) {
-                _ = self.next();
-                args.group_by = self.next() orelse return error.MissingFlagValue;
-            } else {
-                break;
-            }
+            if (self.consumeFlag("-g", "--group-by")) {
+                result.group_by = self.next() orelse return error.MissingFlagValue;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseDepArgs(self: *Self) ParseError!DepArgs {
@@ -840,101 +737,57 @@ pub const ArgParser = struct {
             const child = self.next() orelse return error.MissingRequiredArgument;
             const parent = self.next() orelse return error.MissingRequiredArgument;
             var dep_type: []const u8 = "blocks";
-
             while (self.hasNext()) {
-                const arg = self.peek().?;
-                if (std.mem.eql(u8, arg, "--type") or std.mem.eql(u8, arg, "-t")) {
-                    _ = self.next();
+                if (self.consumeFlag("-t", "--type")) {
                     dep_type = self.next() orelse return error.MissingFlagValue;
-                } else {
-                    break;
-                }
+                } else break;
             }
-
             return .{ .subcommand = .{ .add = .{ .child = child, .parent = parent, .dep_type = dep_type } } };
         }
-
         if (std.mem.eql(u8, subcmd, "remove") or std.mem.eql(u8, subcmd, "rm")) {
             const child = self.next() orelse return error.MissingRequiredArgument;
             const parent = self.next() orelse return error.MissingRequiredArgument;
             return .{ .subcommand = .{ .remove = .{ .child = child, .parent = parent } } };
         }
-
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
-            const id = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .list = .{ .id = id } } };
+            return .{ .subcommand = .{ .list = .{ .id = self.next() orelse return error.MissingRequiredArgument } } };
         }
-
         if (std.mem.eql(u8, subcmd, "tree")) {
-            const id = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .tree = .{ .id = id } } };
+            return .{ .subcommand = .{ .tree = .{ .id = self.next() orelse return error.MissingRequiredArgument } } };
         }
-
         if (std.mem.eql(u8, subcmd, "cycles")) {
             return .{ .subcommand = .{ .cycles = {} } };
         }
-
         return error.UnknownSubcommand;
     }
 
     fn parseLabelArgs(self: *Self) ParseError!LabelArgs {
         const subcmd = self.next() orelse return error.MissingRequiredArgument;
 
-        if (std.mem.eql(u8, subcmd, "add")) {
+        if (std.mem.eql(u8, subcmd, "add") or std.mem.eql(u8, subcmd, "remove") or std.mem.eql(u8, subcmd, "rm")) {
+            const is_add = std.mem.eql(u8, subcmd, "add");
             const id = self.next() orelse return error.MissingRequiredArgument;
             var labels: std.ArrayListUnmanaged([]const u8) = .{};
 
-            while (self.hasNext()) {
-                const arg = self.peek().?;
-                if (!std.mem.startsWith(u8, arg, "-")) {
-                    labels.append(self.allocator, self.next().?) catch return error.InvalidArgument;
-                } else {
-                    break;
-                }
+            while (self.peekPositional()) |_| {
+                labels.append(self.allocator, self.next().?) catch return error.InvalidArgument;
             }
 
-            if (labels.items.len == 0) {
-                return error.MissingRequiredArgument;
-            }
+            if (labels.items.len == 0) return error.MissingRequiredArgument;
 
-            return .{ .subcommand = .{ .add = .{
-                .id = id,
-                .labels = labels.toOwnedSlice(self.allocator) catch return error.InvalidArgument,
-            } } };
+            const label_slice = labels.toOwnedSlice(self.allocator) catch return error.InvalidArgument;
+            if (is_add) {
+                return .{ .subcommand = .{ .add = .{ .id = id, .labels = label_slice } } };
+            } else {
+                return .{ .subcommand = .{ .remove = .{ .id = id, .labels = label_slice } } };
+            }
         }
-
-        if (std.mem.eql(u8, subcmd, "remove") or std.mem.eql(u8, subcmd, "rm")) {
-            const id = self.next() orelse return error.MissingRequiredArgument;
-            var labels: std.ArrayListUnmanaged([]const u8) = .{};
-
-            while (self.hasNext()) {
-                const arg = self.peek().?;
-                if (!std.mem.startsWith(u8, arg, "-")) {
-                    labels.append(self.allocator, self.next().?) catch return error.InvalidArgument;
-                } else {
-                    break;
-                }
-            }
-
-            if (labels.items.len == 0) {
-                return error.MissingRequiredArgument;
-            }
-
-            return .{ .subcommand = .{ .remove = .{
-                .id = id,
-                .labels = labels.toOwnedSlice(self.allocator) catch return error.InvalidArgument,
-            } } };
-        }
-
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
-            const id = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .list = .{ .id = id } } };
+            return .{ .subcommand = .{ .list = .{ .id = self.next() orelse return error.MissingRequiredArgument } } };
         }
-
         if (std.mem.eql(u8, subcmd, "list-all") or std.mem.eql(u8, subcmd, "all")) {
             return .{ .subcommand = .{ .list_all = {} } };
         }
-
         return error.UnknownSubcommand;
     }
 
@@ -942,16 +795,14 @@ pub const ArgParser = struct {
         const subcmd = self.next() orelse return error.MissingRequiredArgument;
 
         if (std.mem.eql(u8, subcmd, "add")) {
-            const id = self.next() orelse return error.MissingRequiredArgument;
-            const text = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .add = .{ .id = id, .text = text } } };
+            return .{ .subcommand = .{ .add = .{
+                .id = self.next() orelse return error.MissingRequiredArgument,
+                .text = self.next() orelse return error.MissingRequiredArgument,
+            } } };
         }
-
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
-            const id = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .list = .{ .id = id } } };
+            return .{ .subcommand = .{ .list = .{ .id = self.next() orelse return error.MissingRequiredArgument } } };
         }
-
         return error.UnknownSubcommand;
     }
 
@@ -961,39 +812,25 @@ pub const ArgParser = struct {
     }
 
     fn parseAuditArgs(self: *Self) ParseError!AuditArgs {
-        var args = AuditArgs{};
-
+        var result = AuditArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--limit") or std.mem.eql(u8, arg, "-n")) {
-                _ = self.next();
-                const val = self.next() orelse return error.MissingFlagValue;
-                args.limit = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            } else {
-                break;
-            }
+            if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseSyncArgs(self: *Self) ParseError!SyncArgs {
-        var args = SyncArgs{};
-
+        var result = SyncArgs{};
         while (self.hasNext()) {
-            const arg = self.peek().?;
-            if (std.mem.eql(u8, arg, "--flush-only") or std.mem.eql(u8, arg, "--export")) {
-                _ = self.next();
-                args.flush_only = true;
-            } else if (std.mem.eql(u8, arg, "--import-only") or std.mem.eql(u8, arg, "--import")) {
-                _ = self.next();
-                args.import_only = true;
-            } else {
-                break;
-            }
+            if (self.consumeFlag("--export", "--flush-only")) {
+                result.flush_only = true;
+            } else if (self.consumeFlag("--import", "--import-only")) {
+                result.import_only = true;
+            } else break;
         }
-
-        return args;
+        return result;
     }
 
     fn parseCompletionsArgs(self: *Self) ParseError!CompletionsArgs {
@@ -1007,25 +844,20 @@ pub const ArgParser = struct {
     }
 
     fn parseConfigArgs(self: *Self) ParseError!ConfigArgs {
-        const subcmd = self.next() orelse {
-            return .{ .subcommand = .{ .list = {} } };
-        };
+        const subcmd = self.next() orelse return .{ .subcommand = .{ .list = {} } };
 
         if (std.mem.eql(u8, subcmd, "get")) {
-            const key = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .get = .{ .key = key } } };
+            return .{ .subcommand = .{ .get = .{ .key = self.next() orelse return error.MissingRequiredArgument } } };
         }
-
         if (std.mem.eql(u8, subcmd, "set")) {
-            const key = self.next() orelse return error.MissingRequiredArgument;
-            const value = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .set = .{ .key = key, .value = value } } };
+            return .{ .subcommand = .{ .set = .{
+                .key = self.next() orelse return error.MissingRequiredArgument,
+                .value = self.next() orelse return error.MissingRequiredArgument,
+            } } };
         }
-
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
             return .{ .subcommand = .{ .list = {} } };
         }
-
         return error.UnknownSubcommand;
     }
 
@@ -1042,6 +874,44 @@ pub const ArgParser = struct {
         if (self.index >= self.args.len) return null;
         const arg = self.args[self.index];
         self.index += 1;
+        return arg;
+    }
+
+    /// Skip a peeked argument (used after checking with peek() and wanting to consume it).
+    fn skip(self: *Self) void {
+        if (self.index < self.args.len) {
+            self.index += 1;
+        }
+    }
+
+    /// Check if current arg matches a flag, and if so consume it and return true.
+    fn consumeFlag(self: *Self, short: ?[]const u8, long: []const u8) bool {
+        const arg = self.peek() orelse return false;
+        if (std.mem.eql(u8, arg, long) or (short != null and std.mem.eql(u8, arg, short.?))) {
+            self.skip();
+            return true;
+        }
+        return false;
+    }
+
+    /// Parse a u32 value after consuming a flag. Returns null if missing, error if invalid.
+    fn consumeU32(self: *Self) ParseError!?u32 {
+        const val = self.next() orelse return error.MissingFlagValue;
+        return std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
+    }
+
+    /// Parse an optional --limit/-n flag, returning the value if present.
+    fn parseLimitFlag(self: *Self) ParseError!?u32 {
+        if (self.consumeFlag("-n", "--limit")) {
+            return try self.consumeU32();
+        }
+        return null;
+    }
+
+    /// Returns the next arg if it's a positional (doesn't start with "-"), otherwise null.
+    fn peekPositional(self: *Self) ?[]const u8 {
+        const arg = self.peek() orelse return null;
+        if (std.mem.startsWith(u8, arg, "-")) return null;
         return arg;
     }
 };
