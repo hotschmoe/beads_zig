@@ -12,6 +12,7 @@
 const std = @import("std");
 
 pub const Status = @import("status.zig").Status;
+pub const Priority = @import("priority.zig").Priority;
 
 test {
     std.testing.refAllDecls(@This());
