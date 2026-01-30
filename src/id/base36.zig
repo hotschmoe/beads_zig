@@ -96,24 +96,24 @@ test "encode max u64" {
     const result = encode(std.math.maxInt(u64), &buf);
     // max u64 = 18446744073709551615 = "3w5e11264sgsf" in base36
     try std.testing.expectEqualStrings("3w5e11264sgsf", result);
-    try std.testing.expectEqual(@as(usize, 13), result.len);
+    try std.testing.expectEqual(13, result.len);
 }
 
 test "decode accepts lowercase" {
-    try std.testing.expectEqual(@as(u64, 10), try decode("a"));
-    try std.testing.expectEqual(@as(u64, 35), try decode("z"));
-    try std.testing.expectEqual(@as(u64, 1000), try decode("rs"));
+    try std.testing.expectEqual(10, try decode("a"));
+    try std.testing.expectEqual(35, try decode("z"));
+    try std.testing.expectEqual(1000, try decode("rs"));
 }
 
 test "decode accepts uppercase" {
-    try std.testing.expectEqual(@as(u64, 10), try decode("A"));
-    try std.testing.expectEqual(@as(u64, 35), try decode("Z"));
-    try std.testing.expectEqual(@as(u64, 1000), try decode("RS"));
+    try std.testing.expectEqual(10, try decode("A"));
+    try std.testing.expectEqual(35, try decode("Z"));
+    try std.testing.expectEqual(1000, try decode("RS"));
 }
 
 test "decode accepts mixed case" {
-    try std.testing.expectEqual(@as(u64, 1000), try decode("Rs"));
-    try std.testing.expectEqual(@as(u64, 1000), try decode("rS"));
+    try std.testing.expectEqual(1000, try decode("Rs"));
+    try std.testing.expectEqual(1000, try decode("rS"));
 }
 
 test "decode error on empty input" {
@@ -158,13 +158,13 @@ test "encode decode roundtrip" {
 }
 
 test "encodedLength" {
-    try std.testing.expectEqual(@as(usize, 1), encodedLength(0));
-    try std.testing.expectEqual(@as(usize, 1), encodedLength(1));
-    try std.testing.expectEqual(@as(usize, 1), encodedLength(35));
-    try std.testing.expectEqual(@as(usize, 2), encodedLength(36));
-    try std.testing.expectEqual(@as(usize, 2), encodedLength(1000));
-    try std.testing.expectEqual(@as(usize, 3), encodedLength(36 * 36));
-    try std.testing.expectEqual(@as(usize, 13), encodedLength(std.math.maxInt(u64)));
+    try std.testing.expectEqual(1, encodedLength(0));
+    try std.testing.expectEqual(1, encodedLength(1));
+    try std.testing.expectEqual(1, encodedLength(35));
+    try std.testing.expectEqual(2, encodedLength(36));
+    try std.testing.expectEqual(2, encodedLength(1000));
+    try std.testing.expectEqual(3, encodedLength(36 * 36));
+    try std.testing.expectEqual(13, encodedLength(std.math.maxInt(u64)));
 }
 
 test "encodedLength matches actual encoded length" {
