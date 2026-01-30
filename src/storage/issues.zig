@@ -659,6 +659,25 @@ pub const IssueStore = struct {
         return ids.toOwnedSlice(self.allocator);
     }
 
+    /// Collect issues from an already-prepared statement.
+    /// Useful for callers who need custom SQL but want standard issue parsing.
+    pub fn collectIssuesFromStmt(self: *Self, stmt: *Statement) ![]Issue {
+        var results: std.ArrayList(Issue) = .{};
+        errdefer {
+            for (results.items) |*issue| {
+                issue.deinit(self.allocator);
+            }
+            results.deinit(self.allocator);
+        }
+
+        while (try stmt.step()) {
+            const issue = try self.rowToIssue(stmt);
+            try results.append(self.allocator, issue);
+        }
+
+        return results.toOwnedSlice(self.allocator);
+    }
+
     /// Convert a database row to an Issue struct.
     fn rowToIssue(self: *Self, stmt: *Statement) !Issue {
         var issue: Issue = undefined;

@@ -11,17 +11,13 @@ const std = @import("std");
 const sqlite = @import("sqlite.zig");
 const Database = sqlite.Database;
 const Statement = sqlite.Statement;
-const SqliteError = sqlite.SqliteError;
+
+const issues_mod = @import("issues.zig");
+const IssueStore = issues_mod.IssueStore;
 
 const Issue = @import("../models/issue.zig").Issue;
-const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
-const OptionalRfc3339Timestamp = @import("../models/issue.zig").OptionalRfc3339Timestamp;
-const Status = @import("../models/status.zig").Status;
-const Priority = @import("../models/priority.zig").Priority;
-const IssueType = @import("../models/issue_type.zig").IssueType;
 const Dependency = @import("../models/dependency.zig").Dependency;
 const DependencyType = @import("../models/dependency.zig").DependencyType;
-const Comment = @import("../models/comment.zig").Comment;
 
 pub const DependencyStoreError = error{
     SelfDependency,
@@ -445,24 +441,9 @@ pub const DependencyStore = struct {
             };
 
             dep.created_at = stmt.columnInt(3);
-
-            if (stmt.columnText(4)) |c| {
-                dep.created_by = try self.allocator.dupe(u8, c);
-            } else {
-                dep.created_by = null;
-            }
-
-            if (stmt.columnText(5)) |m| {
-                dep.metadata = try self.allocator.dupe(u8, m);
-            } else {
-                dep.metadata = null;
-            }
-
-            if (stmt.columnText(6)) |t| {
-                dep.thread_id = try self.allocator.dupe(u8, t);
-            } else {
-                dep.thread_id = null;
-            }
+            dep.created_by = try self.dupeOptionalText(stmt.columnText(4));
+            dep.metadata = try self.dupeOptionalText(stmt.columnText(5));
+            dep.thread_id = try self.dupeOptionalText(stmt.columnText(6));
 
             try deps.append(self.allocator, dep);
         }
@@ -470,112 +451,16 @@ pub const DependencyStore = struct {
         return deps.toOwnedSlice(self.allocator);
     }
 
+    /// Helper to duplicate optional text from a column.
+    fn dupeOptionalText(self: *Self, text: ?[]const u8) !?[]const u8 {
+        return if (text) |t| try self.allocator.dupe(u8, t) else null;
+    }
+
     /// Collect issues from a prepared statement.
+    /// Delegates to IssueStore which owns the canonical rowToIssue implementation.
     fn collectIssues(self: *Self, stmt: *Statement) ![]Issue {
-        var issue_list: std.ArrayList(Issue) = .{};
-        errdefer {
-            for (issue_list.items) |*issue| {
-                issue.deinit(self.allocator);
-            }
-            issue_list.deinit(self.allocator);
-        }
-
-        while (try stmt.step()) {
-            const issue = try self.rowToIssue(stmt);
-            try issue_list.append(self.allocator, issue);
-        }
-
-        return issue_list.toOwnedSlice(self.allocator);
-    }
-
-    /// Convert a database row to an Issue struct.
-    fn rowToIssue(self: *Self, stmt: *Statement) !Issue {
-        var issue: Issue = undefined;
-
-        // Required fields
-        issue.id = try self.dupeColumnText(stmt, 0) orelse return error.InvalidIssue;
-        errdefer self.allocator.free(issue.id);
-
-        issue.title = try self.dupeColumnText(stmt, 2) orelse return error.InvalidIssue;
-        errdefer self.allocator.free(issue.title);
-
-        // Optional text fields
-        issue.content_hash = try self.dupeColumnText(stmt, 1);
-        errdefer if (issue.content_hash) |h| self.allocator.free(h);
-
-        issue.description = try self.dupeColumnText(stmt, 3);
-        errdefer if (issue.description) |d| self.allocator.free(d);
-
-        issue.design = try self.dupeColumnText(stmt, 4);
-        errdefer if (issue.design) |d| self.allocator.free(d);
-
-        issue.acceptance_criteria = try self.dupeColumnText(stmt, 5);
-        errdefer if (issue.acceptance_criteria) |a| self.allocator.free(a);
-
-        issue.notes = try self.dupeColumnText(stmt, 6);
-        errdefer if (issue.notes) |n| self.allocator.free(n);
-
-        issue.assignee = try self.dupeColumnText(stmt, 10);
-        errdefer if (issue.assignee) |a| self.allocator.free(a);
-
-        issue.owner = try self.dupeColumnText(stmt, 11);
-        errdefer if (issue.owner) |o| self.allocator.free(o);
-
-        issue.created_by = try self.dupeColumnText(stmt, 14);
-        errdefer if (issue.created_by) |c| self.allocator.free(c);
-
-        issue.close_reason = try self.dupeColumnText(stmt, 17);
-        errdefer if (issue.close_reason) |r| self.allocator.free(r);
-
-        issue.external_ref = try self.dupeColumnText(stmt, 20);
-        errdefer if (issue.external_ref) |e| self.allocator.free(e);
-
-        issue.source_system = try self.dupeColumnText(stmt, 21);
-        errdefer if (issue.source_system) |s| self.allocator.free(s);
-
-        // Enum fields with custom variant handling
-        const status_raw = stmt.columnText(7) orelse "open";
-        const parsed_status = Status.fromString(status_raw);
-        issue.status = switch (parsed_status) {
-            .custom => |s| Status{ .custom = try self.allocator.dupe(u8, s) },
-            else => parsed_status,
-        };
-
-        const type_raw = stmt.columnText(9) orelse "task";
-        const parsed_type = IssueType.fromString(type_raw);
-        issue.issue_type = switch (parsed_type) {
-            .custom => |s| IssueType{ .custom = try self.allocator.dupe(u8, s) },
-            else => parsed_type,
-        };
-
-        issue.priority = Priority.fromInt(stmt.columnInt(8)) catch Priority.MEDIUM;
-
-        // Numeric fields
-        issue.estimated_minutes = stmt.columnOptionalInt32(12);
-        issue.created_at = Rfc3339Timestamp{ .value = stmt.columnInt(13) };
-        issue.updated_at = Rfc3339Timestamp{ .value = stmt.columnInt(15) };
-        issue.closed_at = OptionalRfc3339Timestamp{ .value = stmt.columnOptionalInt(16) };
-        issue.due_at = OptionalRfc3339Timestamp{ .value = stmt.columnOptionalInt(18) };
-        issue.defer_until = OptionalRfc3339Timestamp{ .value = stmt.columnOptionalInt(19) };
-
-        // Boolean fields
-        issue.pinned = stmt.columnBool(22);
-        issue.is_template = stmt.columnBool(23);
-
-        // Initialize embedded relations as empty
-        issue.labels = &[_][]const u8{};
-        issue.dependencies = &[_]Dependency{};
-        issue.comments = &[_]Comment{};
-
-        return issue;
-    }
-
-    /// Helper to duplicate optional column text.
-    fn dupeColumnText(self: *Self, stmt: *Statement, idx: u32) !?[]const u8 {
-        return if (stmt.columnText(idx)) |text|
-            try self.allocator.dupe(u8, text)
-        else
-            null;
+        var issue_store = IssueStore.init(self.db, self.allocator);
+        return issue_store.collectIssuesFromStmt(stmt);
     }
 
     /// Free a single dependency's allocated memory.
@@ -619,8 +504,6 @@ pub const DependencyStore = struct {
 // --- Tests ---
 
 const schema = @import("schema.zig");
-const issues_mod = @import("issues.zig");
-const IssueStore = issues_mod.IssueStore;
 
 test "DependencyStore.add creates dependency" {
     const allocator = std.testing.allocator;
