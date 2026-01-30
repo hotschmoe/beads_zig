@@ -18,8 +18,7 @@ pub const Priority = struct {
     pub const LOW = Self{ .value = 3 };
     pub const BACKLOG = Self{ .value = 4 };
 
-    /// Create a Priority from an integer value.
-    /// Returns error.InvalidPriority if value is outside 0-4 range.
+    /// Create a Priority from an integer value (0-4).
     pub fn fromInt(n: anytype) !Self {
         const T = @TypeOf(n);
         const val: i64 = switch (@typeInfo(T)) {
@@ -30,9 +29,7 @@ pub const Priority = struct {
         return Self{ .value = @intCast(val) };
     }
 
-    /// Parse a string into a Priority.
-    /// Accepts both named priorities ("critical", "high", etc.) and
-    /// numeric strings ("0", "1", etc.). Case-insensitive for names.
+    /// Parse a string into a Priority (case-insensitive names or numeric).
     pub fn fromString(s: []const u8) !Self {
         if (std.ascii.eqlIgnoreCase(s, "critical")) return CRITICAL;
         if (std.ascii.eqlIgnoreCase(s, "high")) return HIGH;
@@ -61,8 +58,7 @@ pub const Priority = struct {
         return self.value;
     }
 
-    /// Compare two priorities.
-    /// Lower value = higher priority, so CRITICAL (0) < HIGH (1) < MEDIUM (2) etc.
+    /// Compare two priorities for sorting.
     pub fn compare(a: Self, b: Self) std.math.Order {
         return std.math.order(a.value, b.value);
     }
@@ -77,14 +73,13 @@ pub const Priority = struct {
         _ = allocator;
         _ = options;
         const token = try source.next();
-        switch (token) {
-            .number => |num_str| {
-                const num = std.fmt.parseInt(u8, num_str, 10) catch return error.InvalidNumber;
-                if (num > 4) return error.InvalidNumber;
-                return Self{ .value = @intCast(num) };
-            },
+        const num_str = switch (token) {
+            .number => |s| s,
             else => return error.UnexpectedToken,
-        }
+        };
+        const num = std.fmt.parseInt(u8, num_str, 10) catch return error.InvalidNumber;
+        if (num > 4) return error.InvalidNumber;
+        return Self{ .value = @intCast(num) };
     }
 
     /// JSON deserialization from already-parsed value.
