@@ -1,0 +1,9 @@
+time=2026-01-30T16:48:27.042-07:00 level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T16:48:27.043-07:00 level=INFO msg="using database" path=C:\Users\hotschmoe\Documents\GitHub\beads_zig\.beads\beads.db
+time=2026-01-30T16:48:27.058-07:00 level=ERROR msg="cannot open database" error="post-migration validation failed: migration invariants failed:\n  - required_config_present: required config key missing: issue_prefix (database has 56 issues)"
+time=2026-01-30T16:48:37.231-07:00 level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T16:48:37.231-07:00 level=INFO msg="using database" path=C:\Users\hotschmoe\Documents\GitHub\beads_zig\.beads\beads.db
+time=2026-01-30T16:48:37.248-07:00 level=ERROR msg="cannot open database" error="post-migration validation failed: migration invariants failed:\n  - required_config_present: required config key missing: issue_prefix (database has 56 issues)"
+time=2026-01-30T17:01:11.880-07:00 level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:01:11.882-07:00 level=INFO msg="using database" path=C:\Users\hotschmoe\Documents\GitHub\beads_zig\.beads\beads.db
+time=2026-01-30T17:01:11.895-07:00 level=ERROR msg="cannot open database" error="post-migration validation failed: migration invariants failed:\n  - required_config_present: required config key missing: issue_prefix (database has 56 issues)"
