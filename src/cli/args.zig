@@ -102,6 +102,8 @@ pub const QuickArgs = struct {
 /// Show command arguments.
 pub const ShowArgs = struct {
     id: []const u8,
+    with_comments: bool = true,
+    with_history: bool = false,
 };
 
 /// Update command arguments.
@@ -613,8 +615,24 @@ pub const ArgParser = struct {
     }
 
     fn parseShowArgs(self: *Self) ParseError!ShowArgs {
-        const id = self.next() orelse return error.MissingRequiredArgument;
-        return .{ .id = id };
+        var result = ShowArgs{ .id = undefined };
+        var id_set = false;
+
+        while (self.hasNext()) {
+            if (self.consumeFlag(null, "--no-comments")) {
+                result.with_comments = false;
+            } else if (self.consumeFlag(null, "--with-history")) {
+                result.with_history = true;
+            } else if (self.peekPositional()) |_| {
+                if (!id_set) {
+                    result.id = self.next().?;
+                    id_set = true;
+                } else break;
+            } else break;
+        }
+
+        if (!id_set) return error.MissingRequiredArgument;
+        return result;
     }
 
     fn parseUpdateArgs(self: *Self) ParseError!UpdateArgs {

@@ -1,9 +1,11 @@
 # FEATURE_PARITY.md - beads_zig vs beads_rust
 
-This document tracks feature parity between `beads_zig` and `beads_rust`. The goal is a complete Zig port of the local-first issue tracker.
+This document tracks feature implementation for `beads_zig`, a standalone Zig implementation of a local-first issue tracker.
 
-**Reference Implementation**: https://github.com/Dicklesworthstone/beads_rust
-**Target**: Full CLI and library parity with idiomatic Zig implementation
+**Inspiration**: https://github.com/Dicklesworthstone/beads_rust
+**Target**: Full CLI and library implementation with idiomatic Zig
+
+**Note**: beads_zig (`bz`) is an independent project. It draws inspiration from beads_rust but is not a migration target or compatibility layer. The two can coexist but do not interoperate.
 
 ---
 
@@ -68,137 +70,137 @@ src/
 
 ### Models (`src/models/`)
 
-#### Issue Model
+#### Issue Model (bd-19r - DONE)
 
-- [ ] `Issue` struct with all fields:
-  - [ ] `id: []const u8` - Unique ID (bd-abc123)
-  - [ ] `title: []const u8` - 1-500 chars
-  - [ ] `description: ?[]const u8`
-  - [ ] `design: ?[]const u8`
-  - [ ] `acceptance_criteria: ?[]const u8`
-  - [ ] `notes: ?[]const u8`
-  - [ ] `status: Status`
-  - [ ] `priority: Priority` (0-4)
-  - [ ] `issue_type: IssueType`
-  - [ ] `assignee: ?[]const u8`
-  - [ ] `owner: ?[]const u8`
-  - [ ] `estimated_minutes: ?i32`
-  - [ ] `created_at: i64` (Unix timestamp)
-  - [ ] `created_by: ?[]const u8`
-  - [ ] `updated_at: i64`
-  - [ ] `closed_at: ?i64`
-  - [ ] `close_reason: ?[]const u8`
-  - [ ] `due_at: ?i64`
-  - [ ] `defer_until: ?i64`
-  - [ ] `external_ref: ?[]const u8`
-  - [ ] `source_system: ?[]const u8`
-  - [ ] `pinned: bool`
-  - [ ] `is_template: bool`
-- [ ] Issue validation (title length, field constraints)
-- [ ] Issue JSON serialization
-- [ ] Issue equality and hashing
+- [x] `Issue` struct with all fields:
+  - [x] `id: []const u8` - Unique ID (bd-abc123)
+  - [x] `title: []const u8` - 1-500 chars
+  - [x] `description: ?[]const u8`
+  - [x] `design: ?[]const u8`
+  - [x] `acceptance_criteria: ?[]const u8`
+  - [x] `notes: ?[]const u8`
+  - [x] `status: Status`
+  - [x] `priority: Priority` (0-4)
+  - [x] `issue_type: IssueType`
+  - [x] `assignee: ?[]const u8`
+  - [x] `owner: ?[]const u8`
+  - [x] `estimated_minutes: ?i32`
+  - [x] `created_at: i64` (Unix timestamp)
+  - [x] `created_by: ?[]const u8`
+  - [x] `updated_at: i64`
+  - [x] `closed_at: ?i64`
+  - [x] `close_reason: ?[]const u8`
+  - [x] `due_at: ?i64`
+  - [x] `defer_until: ?i64`
+  - [x] `external_ref: ?[]const u8`
+  - [x] `source_system: ?[]const u8`
+  - [x] `pinned: bool`
+  - [x] `is_template: bool`
+- [x] Issue validation (title length, field constraints)
+- [x] Issue JSON serialization
+- [x] Issue equality and hashing
 
-#### Status Enum
+#### Status Enum (bd-8ev - DONE)
 
-- [ ] `Status` enum:
-  - [ ] `open`
-  - [ ] `in_progress`
-  - [ ] `blocked`
-  - [ ] `deferred`
-  - [ ] `closed`
-  - [ ] `tombstone` (soft deleted)
-  - [ ] `pinned`
-  - [ ] `custom` (with string payload)
-- [ ] Status string parsing
-- [ ] Status serialization
+- [x] `Status` enum:
+  - [x] `open`
+  - [x] `in_progress`
+  - [x] `blocked`
+  - [x] `deferred`
+  - [x] `closed`
+  - [x] `tombstone` (soft deleted)
+  - [x] `pinned`
+  - [x] `custom` (with string payload)
+- [x] Status string parsing
+- [x] Status serialization
 
-#### Priority
+#### Priority (bd-3t8 - DONE)
 
-- [ ] `Priority` struct (0-4, lower is higher priority):
-  - [ ] 0 = Critical
-  - [ ] 1 = High
-  - [ ] 2 = Medium
-  - [ ] 3 = Low
-  - [ ] 4 = Backlog
-- [ ] Priority parsing from int/string
-- [ ] Priority comparison
+- [x] `Priority` struct (0-4, lower is higher priority):
+  - [x] 0 = Critical
+  - [x] 1 = High
+  - [x] 2 = Medium
+  - [x] 3 = Low
+  - [x] 4 = Backlog
+- [x] Priority parsing from int/string
+- [x] Priority comparison
 
-#### Issue Type Enum
+#### Issue Type Enum (bd-4y7 - DONE)
 
-- [ ] `IssueType` enum:
-  - [ ] `task`
-  - [ ] `bug`
-  - [ ] `feature`
-  - [ ] `epic`
-  - [ ] `chore`
-  - [ ] `docs`
-  - [ ] `question`
-  - [ ] `custom` (with string payload)
-- [ ] Type string parsing
-- [ ] Type serialization
+- [x] `IssueType` enum:
+  - [x] `task`
+  - [x] `bug`
+  - [x] `feature`
+  - [x] `epic`
+  - [x] `chore`
+  - [x] `docs`
+  - [x] `question`
+  - [x] `custom` (with string payload)
+- [x] Type string parsing
+- [x] Type serialization
 
-#### Dependency Model
+#### Dependency Model (bd-2fo - DONE)
 
-- [ ] `Dependency` struct:
-  - [ ] `issue_id: []const u8`
-  - [ ] `depends_on_id: []const u8`
-  - [ ] `dep_type: DependencyType`
-  - [ ] `created_at: i64`
-  - [ ] `created_by: ?[]const u8`
-  - [ ] `metadata: ?[]const u8`
-  - [ ] `thread_id: ?[]const u8`
-- [ ] `DependencyType` enum:
-  - [ ] `blocks`
-  - [ ] `parent_child`
-  - [ ] `conditional_blocks`
-  - [ ] `waits_for`
-  - [ ] `related`
-  - [ ] `discovered_from`
-  - [ ] `replies_to`
-  - [ ] `relates_to`
-  - [ ] `duplicates`
-  - [ ] `supersedes`
-  - [ ] `caused_by`
-  - [ ] `custom`
+- [x] `Dependency` struct:
+  - [x] `issue_id: []const u8`
+  - [x] `depends_on_id: []const u8`
+  - [x] `dep_type: DependencyType`
+  - [x] `created_at: i64`
+  - [x] `created_by: ?[]const u8`
+  - [x] `metadata: ?[]const u8`
+  - [x] `thread_id: ?[]const u8`
+- [x] `DependencyType` enum:
+  - [x] `blocks`
+  - [x] `parent_child`
+  - [x] `conditional_blocks`
+  - [x] `waits_for`
+  - [x] `related`
+  - [x] `discovered_from`
+  - [x] `replies_to`
+  - [x] `relates_to`
+  - [x] `duplicates`
+  - [x] `supersedes`
+  - [x] `caused_by`
+  - [x] `custom`
 
-#### Comment Model
+#### Comment Model (bd-nwm - DONE)
 
-- [ ] `Comment` struct:
-  - [ ] `id: i64`
-  - [ ] `issue_id: []const u8`
-  - [ ] `author: []const u8`
-  - [ ] `body: []const u8`
-  - [ ] `created_at: i64`
-- [ ] Comment validation
-- [ ] Comment serialization
+- [x] `Comment` struct:
+  - [x] `id: i64`
+  - [x] `issue_id: []const u8`
+  - [x] `author: []const u8`
+  - [x] `body: []const u8`
+  - [x] `created_at: i64`
+- [x] Comment validation
+- [x] Comment serialization
 
-#### Event Model (Audit Log)
+#### Event Model (Audit Log) (bd-sbg - DONE)
 
-- [ ] `Event` struct:
-  - [ ] `id: i64`
-  - [ ] `issue_id: []const u8`
-  - [ ] `event_type: EventType`
-  - [ ] `actor: []const u8`
-  - [ ] `old_value: ?[]const u8`
-  - [ ] `new_value: ?[]const u8`
-  - [ ] `created_at: i64`
-- [ ] `EventType` enum:
-  - [ ] `created`
-  - [ ] `updated`
-  - [ ] `status_changed`
-  - [ ] `priority_changed`
-  - [ ] `assignee_changed`
-  - [ ] `commented`
-  - [ ] `closed`
-  - [ ] `reopened`
-  - [ ] `dependency_added`
-  - [ ] `dependency_removed`
-  - [ ] `label_added`
-  - [ ] `label_removed`
-  - [ ] `compacted`
-  - [ ] `deleted`
-  - [ ] `restored`
-  - [ ] `custom`
+- [x] `Event` struct:
+  - [x] `id: i64`
+  - [x] `issue_id: []const u8`
+  - [x] `event_type: EventType`
+  - [x] `actor: []const u8`
+  - [x] `old_value: ?[]const u8`
+  - [x] `new_value: ?[]const u8`
+  - [x] `created_at: i64`
+- [x] `EventType` enum:
+  - [x] `created`
+  - [x] `updated`
+  - [x] `status_changed`
+  - [x] `priority_changed`
+  - [x] `assignee_changed`
+  - [x] `commented`
+  - [x] `closed`
+  - [x] `reopened`
+  - [x] `dependency_added`
+  - [x] `dependency_removed`
+  - [x] `label_added`
+  - [x] `label_removed`
+  - [x] `compacted`
+  - [x] `deleted`
+  - [x] `restored`
+  - [x] `custom`
 
 ---
 
@@ -208,7 +210,7 @@ src/
 
 beads_zig uses pure Zig storage: JSONL files with a Write-Ahead Log (WAL) for concurrent access, and in-memory indexing for fast queries. No SQLite, no C dependencies.
 
-**Key Difference from beads_rust**: beads_rust uses SQLite with WAL mode. beads_zig uses a custom Lock + WAL + Compact architecture that:
+**Architecture Note**: Unlike SQLite-based approaches, beads_zig uses a custom Lock + WAL + Compact architecture that:
 - Eliminates SQLite's lock contention issues under heavy parallel agent load
 - Provides constant-time writes (~1ms) regardless of database size
 - Allows lock-free reads (no contention for list/show/status)
@@ -232,9 +234,9 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 - [x] `writeAll(issues)` - Atomic write (temp + fsync + rename)
 - [x] `append(issue)` - Append single issue (for quick capture)
 - [x] Handle missing file gracefully (return empty)
-- [x] Unknown field preservation (beads_rust compatibility)
+- [x] Unknown field preservation (forward compatibility)
 
-#### Concurrent Write Handling (`src/storage/lock.zig`)
+#### Concurrent Write Handling (`src/storage/lock.zig`) (bd-fw7)
 
 - [ ] `BeadsLock` struct with flock-based locking
 - [ ] `acquire()` - Blocking exclusive lock (LOCK_EX)
@@ -244,7 +246,7 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 - [ ] `withLock(fn)` - RAII-style lock wrapper
 - [ ] Windows compatibility (LockFileEx)
 
-#### WAL Operations (`src/storage/wal.zig`)
+#### WAL Operations (`src/storage/wal.zig`) (bd-1sd)
 
 - [ ] `WalEntry` struct (op, timestamp, id, data)
 - [ ] `WalOp` enum (add, update, close, reopen, delete, set_blocked, unset_blocked)
@@ -252,7 +254,7 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 - [ ] `replayWal(file)` - Apply WAL entries to in-memory state
 - [ ] WAL entry serialization (JSON lines)
 
-#### Compaction (`src/storage/compact.zig`)
+#### Compaction (`src/storage/compact.zig`) (bd-1lc)
 
 - [ ] `compact()` - Merge WAL into main file atomically
 - [ ] `maybeCompact()` - Trigger compaction when WAL > threshold
@@ -294,7 +296,7 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 - [x] Self-dependency rejection
 - [x] Cycle detection on add
 
-#### Search (Future)
+#### Search (Future) (bd-39h)
 
 - [ ] Linear scan substring matching (basic)
 - [ ] Inverted index for full-text search (advanced)
@@ -303,35 +305,35 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 
 ## Phase 3: ID Generation
 
-### Base36 Encoding (`src/id/`)
+### Base36 Encoding (`src/id/`) (bd-15t - DONE)
 
-- [ ] Base36 character set (0-9, a-z)
-- [ ] `encodeBase36(value: u64) []const u8`
-- [ ] `decodeBase36(str: []const u8) !u64`
+- [x] Base36 character set (0-9, a-z)
+- [x] `encodeBase36(value: u64) []const u8`
+- [x] `decodeBase36(str: []const u8) !u64`
 
-### Content Hashing
+### Content Hashing (bd-qhg - DONE)
 
-- [ ] SHA256 content hash function
-- [ ] Fields included: title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, owner, created_by, external_ref, source_system, pinned, is_template
-- [ ] Null byte separator for stability
-- [ ] 64-character hex output
+- [x] SHA256 content hash function
+- [x] Fields included: title, description, design, acceptance_criteria, notes, status, priority, issue_type, assignee, owner, created_by, external_ref, source_system, pinned, is_template
+- [x] Null byte separator for stability
+- [x] 64-character hex output
 
-### ID Generation
+### ID Generation (bd-2sy - DONE)
 
-- [ ] `generateId(title, description, creator, timestamp, nonce) []const u8`
-- [ ] SHA256 of metadata -> first 8 bytes -> u64 -> Base36
-- [ ] Adaptive hash length (3-8 chars based on DB size)
-- [ ] Birthday problem collision avoidance
-- [ ] Configurable prefix (default "bd")
-- [ ] Hierarchical child IDs (bd-abc123.1.2)
+- [x] `generateId(title, description, creator, timestamp, nonce) []const u8`
+- [x] SHA256 of metadata -> first 8 bytes -> u64 -> Base36
+- [x] Adaptive hash length (3-8 chars based on DB size)
+- [x] Birthday problem collision avoidance
+- [x] Configurable prefix (default "bd")
+- [x] Hierarchical child IDs (bd-abc123.1.2)
 
-### ID Parsing
+### ID Parsing (bd-2sy - DONE)
 
-- [ ] `parseId(id: []const u8) !ParsedId`
-- [ ] Prefix extraction
-- [ ] Hash extraction
-- [ ] Child path parsing
-- [ ] Validation
+- [x] `parseId(id: []const u8) !ParsedId`
+- [x] Prefix extraction
+- [x] Hash extraction
+- [x] Child path parsing
+- [x] Validation
 
 ---
 
@@ -346,7 +348,7 @@ With JSONL as the primary storage, sync is simplified:
 - [x] Atomic writes (temp file + fsync + rename)
 - [x] Dirty tracking for modified issues
 
-### Sync Commands
+### Sync Commands (bd-10o)
 
 - [ ] `sync --flush-only` - Force save to JSONL
 - [ ] `sync --import-only` - Force reload from JSONL
@@ -354,39 +356,32 @@ With JSONL as the primary storage, sync is simplified:
 - [ ] Auto-save after mutations (configurable)
 - [ ] Auto-load on startup
 
-### Import/Export for Migration
-
-- [ ] Import from beads_rust JSONL format
-- [ ] Validate prefix matches config
-- [ ] Timestamp-based conflict resolution (newer wins)
-- [ ] Content hash deduplication
-
 ---
 
 ## Phase 5: CLI Framework
 
-### Argument Parsing (`src/cli/`)
+### Argument Parsing (`src/cli/`) (bd-1ld - DONE)
 
-- [ ] Global flags:
-  - [ ] `--json` - JSON output
-  - [ ] `-v, -vv` - Verbosity levels
-  - [ ] `--quiet` - Suppress output
-  - [ ] `--no-color` - Disable colors
-  - [ ] `--data <PATH>` - Override `.beads/` directory
-  - [ ] `--actor <NAME>` - Set actor for audit
-  - [ ] `--no-auto-flush` - Skip auto-save
-  - [ ] `--no-auto-import` - Skip auto-load
-- [ ] Subcommand dispatch
-- [ ] Help text generation
-- [ ] Error formatting
+- [x] Global flags:
+  - [x] `--json` - JSON output
+  - [x] `-v, -vv` - Verbosity levels
+  - [x] `--quiet` - Suppress output
+  - [x] `--no-color` - Disable colors
+  - [x] `--data <PATH>` - Override `.beads/` directory
+  - [x] `--actor <NAME>` - Set actor for audit
+  - [x] `--no-auto-flush` - Skip auto-save
+  - [x] `--no-auto-import` - Skip auto-load
+- [x] Subcommand dispatch
+- [x] Help text generation
+- [x] Error formatting
 
-### Output Formatting (`src/output/`)
+### Output Formatting (`src/output/`) (bd-5hg - DONE)
 
-- [ ] Rich mode (TTY with colors via rich_zig)
-- [ ] Plain mode (no colors, piped output)
-- [ ] JSON mode (structured output)
-- [ ] Quiet mode (minimal output)
-- [ ] Automatic mode detection (isatty)
+- [x] Rich mode (TTY with colors via rich_zig)
+- [x] Plain mode (no colors, piped output)
+- [x] JSON mode (structured output)
+- [x] Quiet mode (minimal output)
+- [x] Automatic mode detection (isatty)
 
 ---
 
@@ -402,13 +397,13 @@ With JSONL as the primary storage, sync is simplified:
   - [x] `--prefix` option for issue ID prefix
   - [x] `--json` output format
   - [x] `.gitignore` for WAL/lock files
-- [ ] `bz config` - Manage configuration
+- [ ] `bz config` - Manage configuration (bd-12h)
   - [ ] `--list` - Show all settings
   - [ ] `--get <key>` - Get specific value
   - [ ] `--set <key>=<value>` - Set value
-- [ ] `bz info` - Show workspace info
-- [ ] `bz stats` / `bz status` - Project statistics
-- [ ] `bz doctor` - Run diagnostics
+- [ ] `bz info` - Show workspace info (bd-2lr)
+- [ ] `bz stats` / `bz status` - Project statistics (bd-2lr)
+- [ ] `bz doctor` - Run diagnostics (bd-2lr)
 
 ### Issue CRUD Commands
 
@@ -424,13 +419,13 @@ With JSONL as the primary storage, sync is simplified:
   - [x] Return created ID
   - [x] `--json` output format
 - [x] `bz q <title>` - Quick capture (create + print ID only)
-- [ ] `bz show <id>` - Display issue details
+- [ ] `bz show <id>` - Display issue details (bd-2e8)
   - [ ] Full metadata
   - [ ] Labels
   - [ ] Dependencies
   - [ ] Recent comments
   - [ ] `--json` support
-- [ ] `bz update <id>` - Update issue
+- [ ] `bz update <id>` - Update issue (bd-26k)
   - [ ] `--status`
   - [ ] `--priority`
   - [ ] `--title`
@@ -438,21 +433,21 @@ With JSONL as the primary storage, sync is simplified:
   - [ ] `--assignee`
   - [ ] `--type`
   - [ ] Audit trail event
-- [ ] `bz close <id>` - Close issue
+- [ ] `bz close <id>` - Close issue (bd-2sz)
   - [ ] `--reason`
   - [ ] Set `closed_at` timestamp
   - [ ] Audit event
-- [ ] `bz reopen <id>` - Reopen closed issue
+- [ ] `bz reopen <id>` - Reopen closed issue (bd-2sz)
   - [ ] Clear `closed_at`
   - [ ] Audit event
-- [ ] `bz delete <id>` - Soft delete (tombstone)
+- [ ] `bz delete <id>` - Soft delete (tombstone) (bd-2hi)
   - [ ] `--reason`
   - [ ] Set status to tombstone
   - [ ] Audit event
 
 ### Query Commands
 
-- [ ] `bz list` - List issues
+- [ ] `bz list` - List issues (bd-2bv)
   - [ ] `--status` filter
   - [ ] `--priority` filter
   - [ ] `--type` filter
@@ -461,30 +456,30 @@ With JSONL as the primary storage, sync is simplified:
   - [ ] `--limit` and `--offset`
   - [ ] `--sort` (created, updated, priority)
   - [ ] `--json` output
-- [ ] `bz ready` - Show actionable issues
+- [ ] `bz ready` - Show actionable issues (bd-ke1)
   - [ ] Open status
   - [ ] Not blocked by dependencies
   - [ ] Not deferred (or defer_until passed)
   - [ ] `--limit`
   - [ ] `--json`
-- [ ] `bz blocked` - Show blocked issues
+- [ ] `bz blocked` - Show blocked issues (bd-ke1)
   - [ ] Has blocking dependencies
   - [ ] Show what blocks each
   - [ ] `--json`
-- [ ] `bz search <query>` - Full-text search
+- [ ] `bz search <query>` - Full-text search (bd-2ui)
   - [ ] Search title, description, notes
   - [ ] FTS5 ranking
   - [ ] `--json`
-- [ ] `bz stale` - Find stale issues
+- [ ] `bz stale` - Find stale issues (bd-2f0)
   - [ ] `--days` (default 30)
   - [ ] Not updated in N days
   - [ ] `--json`
-- [ ] `bz count` - Count issues
+- [ ] `bz count` - Count issues (bd-2f0)
   - [ ] `--by` (status/priority/type/assignee)
   - [ ] Grouped counts
   - [ ] `--json`
 
-### Dependency Commands
+### Dependency Commands (bd-177)
 
 - [ ] `bz dep add <child> <parent>` - Add dependency
   - [ ] `--type` (blocks/parent-child/waits-for/related/etc.)
@@ -503,7 +498,7 @@ With JSONL as the primary storage, sync is simplified:
   - [ ] List all cycles found
   - [ ] `--json`
 
-### Label Commands
+### Label Commands (bd-2n2)
 
 - [ ] `bz label add <id> <labels...>` - Add labels
   - [ ] Multiple labels
@@ -514,7 +509,7 @@ With JSONL as the primary storage, sync is simplified:
 - [ ] `bz label list <id>` - List labels on issue
 - [ ] `bz label list-all` - List all labels in project
 
-### Comment Commands
+### Comment Commands (bd-2u2)
 
 - [ ] `bz comments add <id> <text>` - Add comment
   - [ ] Auto-detect actor
@@ -523,7 +518,7 @@ With JSONL as the primary storage, sync is simplified:
   - [ ] Chronological order
   - [ ] `--json`
 
-### Audit Commands
+### Audit Commands (bd-1bf)
 
 - [ ] `bz history <id>` - Show issue history
   - [ ] All events for issue
@@ -536,30 +531,30 @@ With JSONL as the primary storage, sync is simplified:
 
 ### Advanced Commands
 
-- [ ] `bz epic` - Manage epics
+- [ ] `bz epic` - Manage epics (bd-xjc)
   - [ ] Create epic
   - [ ] Add issues to epic
   - [ ] List epic contents
-- [ ] `bz defer <id> --until <date>` - Defer issue
+- [ ] `bz defer <id> --until <date>` - Defer issue (bd-2rh)
   - [ ] Set `defer_until`
   - [ ] Excluded from ready
-- [ ] `bz undefer <id>` - Remove deferral
-- [ ] `bz orphans` - Find orphaned issues
+- [ ] `bz undefer <id>` - Remove deferral (bd-2rh)
+- [ ] `bz orphans` - Find orphaned issues (bd-2q5)
   - [ ] Issues with missing parent refs
-- [ ] `bz changelog` - Generate changelog
+- [ ] `bz changelog` - Generate changelog (bd-116)
   - [ ] `--since` date
   - [ ] `--until` date
   - [ ] Grouped by type
   - [ ] Markdown output
-- [ ] `bz lint` - Validate database
+- [ ] `bz lint` - Validate database (bd-2q5)
   - [ ] Check consistency
   - [ ] Find invalid refs
   - [ ] `--json`
-- [ ] `bz graph` - Dependency graph
+- [ ] `bz graph` - Dependency graph (bd-sso)
   - [ ] ASCII visualization
   - [ ] DOT format export
 
-### Sync Commands
+### Sync Commands (bd-10o)
 
 - [ ] `bz sync --flush-only` - Export to JSONL
 - [ ] `bz sync --import-only` - Import from JSONL
@@ -567,8 +562,8 @@ With JSONL as the primary storage, sync is simplified:
 
 ### System Commands
 
-- [ ] `bz version` - Show version info
-- [ ] `bz completions <shell>` - Generate shell completions
+- [ ] `bz version` - Show version info (bd-2a4)
+- [ ] `bz completions <shell>` - Generate shell completions (bd-1o5)
   - [ ] bash
   - [ ] zsh
   - [ ] fish
@@ -578,7 +573,7 @@ With JSONL as the primary storage, sync is simplified:
 
 ## Phase 7: Configuration
 
-### Config System (`src/config/`)
+### Config System (`src/config/`) (bd-2dd)
 
 - [ ] YAML parser/writer
 - [ ] User config (`~/.config/beads/config.yaml`)
@@ -604,7 +599,7 @@ With JSONL as the primary storage, sync is simplified:
 
 ## Phase 8: Testing
 
-### Unit Tests
+### Unit Tests (bd-2uu)
 
 - [ ] Model serialization/deserialization
 - [ ] ID generation (determinism, uniqueness)
@@ -619,7 +614,7 @@ With JSONL as the primary storage, sync is simplified:
 - [x] IssueStore operations
 - [x] DependencyGraph cycle detection
 - [x] Ready/blocked query correctness
-- [ ] CLI command execution
+- [ ] CLI command execution (bd-31b)
 
 ### Fuzz Tests
 
@@ -641,7 +636,7 @@ With JSONL as the primary storage, sync is simplified:
 
 ## Phase 9: Polish
 
-### Error Handling
+### Error Handling (bd-236)
 
 - [ ] Structured error types
 - [ ] User-friendly error messages
@@ -662,7 +657,7 @@ With JSONL as the primary storage, sync is simplified:
 - [ ] Blocked cache invalidation
 - [ ] Memory pool for allocations
 
-### Cross-Platform
+### Cross-Platform (bd-kl5)
 
 - [ ] Linux support
 - [ ] macOS support
@@ -671,9 +666,9 @@ With JSONL as the primary storage, sync is simplified:
 
 ---
 
-## Appendix A: beads_rust CLI Reference
+## Appendix A: CLI Command Reference
 
-Full command reference from beads_rust for parity verification:
+Target command set for beads_zig (inspired by beads_rust):
 
 ```
 COMMANDS:
@@ -726,11 +721,11 @@ COMMANDS:
 
 ---
 
-## Appendix B: Data Format Compatibility
+## Appendix B: Data Format
 
 ### JSONL Format
 
-beads_zig can import JSONL files from beads_rust:
+beads_zig uses JSONL (JSON Lines) as its storage format:
 
 ```json
 {"id":"bd-abc123","title":"Fix login bug","description":null,"status":"open","priority":1,"issue_type":"bug","assignee":"alice","created_at":"2024-01-29T15:30:00Z","updated_at":"2024-01-29T15:30:00Z"}
@@ -753,9 +748,9 @@ beads_zig uses Lock + WAL + Compact (no SQLite):
   beads.lock    # flock target (gitignored)
 ```
 
-**Key differences from beads_rust:**
-| Aspect | beads_rust | beads_zig |
-|--------|------------|-----------|
+**Architecture comparison (for reference):**
+| Aspect | SQLite approach | beads_zig |
+|--------|-----------------|-----------|
 | Storage | SQLite + WAL mode | JSONL + custom WAL |
 | Concurrency | SQLite locking | flock + append WAL |
 | Binary size | ~5-8MB | ~12KB |
@@ -763,7 +758,7 @@ beads_zig uses Lock + WAL + Compact (no SQLite):
 | Read time | O(1) with indexes | O(n) linear scan |
 
 **Trade-offs:**
-- beads_zig sacrifices read performance (linear scan vs SQLite indexes)
+- beads_zig sacrifices read performance (linear scan vs indexes)
 - beads_zig gains concurrent write performance (no lock contention)
 - For typical workloads (<10k issues), linear scan is fast enough
 

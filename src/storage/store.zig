@@ -623,7 +623,113 @@ pub const IssueStore = struct {
     pub fn getAllRef(self: *Self) []const Issue {
         return self.issues.items;
     }
+
+    /// Suggestion for similar ID lookup.
+    pub const IdSuggestion = struct {
+        id: []const u8,
+        title: []const u8,
+    };
+
+    /// Find similar IDs when a lookup fails (for "did you mean" suggestions).
+    /// Uses prefix matching and Levenshtein-like scoring.
+    /// Returns up to `max_count` suggestions, caller must free.
+    pub fn findSimilarIds(self: *Self, target: []const u8, max_count: usize) ![]IdSuggestion {
+        if (self.issues.items.len == 0) return &[_]IdSuggestion{};
+
+        const Scored = struct {
+            id: []const u8,
+            title: []const u8,
+            score: i32,
+        };
+
+        var candidates: std.ArrayListUnmanaged(Scored) = .{};
+        defer candidates.deinit(self.allocator);
+
+        for (self.issues.items) |issue| {
+            if (statusEql(issue.status, .tombstone)) continue;
+
+            const score = computeSimilarity(target, issue.id);
+            if (score > 0) {
+                try candidates.append(self.allocator, .{
+                    .id = issue.id,
+                    .title = issue.title,
+                    .score = score,
+                });
+            }
+        }
+
+        if (candidates.items.len == 0) return &[_]IdSuggestion{};
+
+        // Sort by score descending
+        std.mem.sortUnstable(Scored, candidates.items, {}, struct {
+            fn lessThan(_: void, a: Scored, b: Scored) bool {
+                return a.score > b.score;
+            }
+        }.lessThan);
+
+        const count = @min(max_count, candidates.items.len);
+        var suggestions = try self.allocator.alloc(IdSuggestion, count);
+        errdefer self.allocator.free(suggestions);
+
+        for (0..count) |i| {
+            suggestions[i] = .{
+                .id = try self.allocator.dupe(u8, candidates.items[i].id),
+                .title = try self.allocator.dupe(u8, candidates.items[i].title),
+            };
+        }
+
+        return suggestions;
+    }
+
+    /// Free suggestions returned by findSimilarIds.
+    pub fn freeSuggestions(self: *Self, suggestions: []IdSuggestion) void {
+        for (suggestions) |s| {
+            self.allocator.free(s.id);
+            self.allocator.free(s.title);
+        }
+        self.allocator.free(suggestions);
+    }
 };
+
+/// Compute similarity score between target and candidate ID.
+/// Higher score = more similar.
+fn computeSimilarity(target: []const u8, candidate: []const u8) i32 {
+    var score: i32 = 0;
+
+    // Exact prefix match (bd-abc matches bd-abc123)
+    if (std.mem.startsWith(u8, candidate, target)) {
+        score += 100;
+    }
+    // Candidate is prefix of target (bd-abc123 starts with bd-abc)
+    else if (std.mem.startsWith(u8, target, candidate)) {
+        score += 80;
+    }
+
+    // Common prefix length
+    var common_prefix: usize = 0;
+    const min_len = @min(target.len, candidate.len);
+    for (0..min_len) |i| {
+        if (target[i] == candidate[i]) {
+            common_prefix += 1;
+        } else {
+            break;
+        }
+    }
+    score += @intCast(common_prefix * 5);
+
+    // Contains target as substring
+    if (std.mem.indexOf(u8, candidate, target) != null) {
+        score += 30;
+    }
+
+    // Similar length bonus
+    const len_diff: i32 = @intCast(@abs(@as(i64, @intCast(target.len)) - @as(i64, @intCast(candidate.len))));
+    if (len_diff <= 2) {
+        score += 10;
+    }
+
+    return score;
+}
 
 // Helper functions
 fn statusEql(a: Status, b: Status) bool {
