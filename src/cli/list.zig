@@ -6,9 +6,7 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
-const storage = @import("../storage/mod.zig");
-const Output = @import("../output/mod.zig").Output;
-const OutputOptions = @import("../output/mod.zig").OutputOptions;
+const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
@@ -16,7 +14,8 @@ const Issue = models.Issue;
 const Status = models.Status;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
-const IssueStore = storage.IssueStore;
+const IssueStore = common.IssueStore;
+const CommandContext = common.CommandContext;
 
 pub const ListError = error{
     WorkspaceNotInitialized,
@@ -46,51 +45,22 @@ pub fn run(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return ListError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return ListError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return ListError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return ListError.StorageError;
-        }
-    };
-
-    // Build filters
     var filters = IssueStore.ListFilters{};
 
     if (list_args.status) |s| {
         filters.status = Status.fromString(s);
     } else if (!list_args.all) {
-        // Default: show open issues only (unless --all is specified)
         filters.status = .open;
     }
 
     if (list_args.priority) |p| {
         filters.priority = Priority.fromString(p) catch {
-            try outputError(&output, global.json, "invalid priority value");
+            try outputError(&ctx.output, global.json, "invalid priority value");
             return ListError.InvalidFilter;
         };
     }
@@ -111,8 +81,7 @@ pub fn run(
         filters.limit = n;
     }
 
-    // Get issues
-    const issues = try store.list(filters);
+    const issues = try ctx.store.list(filters);
     defer {
         for (issues) |*issue| {
             var i = issue.*;
@@ -121,7 +90,6 @@ pub fn run(
         allocator.free(issues);
     }
 
-    // Output
     if (global.json) {
         var compact_issues = try allocator.alloc(ListResult.IssueCompact, issues.len);
         defer allocator.free(compact_issues);
@@ -137,20 +105,20 @@ pub fn run(
             };
         }
 
-        try output.printJson(ListResult{
+        try ctx.output.printJson(ListResult{
             .success = true,
             .issues = compact_issues,
             .count = issues.len,
         });
     } else {
-        try output.printIssueList(issues);
+        try ctx.output.printIssueList(issues);
         if (!global.quiet and issues.len == 0) {
-            try output.info("No issues found", .{});
+            try ctx.output.info("No issues found", .{});
         }
     }
 }
 
-fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
+fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
     if (json_mode) {
         try output.printJson(ListResult{
             .success = false,
@@ -202,13 +170,11 @@ test "run lists issues successfully" {
     const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
     defer allocator.free(issues_path);
 
-    // Create a file with one issue
     const f = try std.fs.cwd().createFile(issues_path, .{});
     defer f.close();
 
     const list_args = args.ListArgs{ .all = true };
     const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
 
-    // Should succeed (even with no issues)
     try run(list_args, global, allocator);
 }

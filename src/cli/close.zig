@@ -7,15 +7,13 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
-const storage = @import("../storage/mod.zig");
-const Output = @import("../output/mod.zig").Output;
-const OutputOptions = @import("../output/mod.zig").OutputOptions;
+const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
-const Issue = models.Issue;
 const Status = models.Status;
-const IssueStore = storage.IssueStore;
+const IssueStore = common.IssueStore;
+const CommandContext = common.CommandContext;
 
 pub const CloseError = error{
     WorkspaceNotInitialized,
@@ -38,53 +36,21 @@ pub fn run(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return CloseError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return CloseError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return CloseError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return CloseError.StorageError;
-        }
-    };
-
-    // Get issue
-    const issue_ref = store.getRef(close_args.id) orelse {
-        const msg = try std.fmt.allocPrint(allocator, "issue not found: {s}", .{close_args.id});
-        defer allocator.free(msg);
-        try outputError(&output, global.json, msg);
+    const issue_ref = ctx.store.getRef(close_args.id) orelse {
+        try common.outputNotFoundError(CloseResult, &ctx.output, global.json, close_args.id, allocator);
         return CloseError.IssueNotFound;
     };
 
-    // Check if already closed
     if (statusEql(issue_ref.status, .closed)) {
-        try outputError(&output, global.json, "issue is already closed");
+        try outputError(&ctx.output, global.json, "issue is already closed");
         return CloseError.AlreadyClosed;
     }
 
-    // Build update
     const now = std.time.timestamp();
     var updates = IssueStore.IssueUpdate{
         .status = .closed,
@@ -95,33 +61,14 @@ pub fn run(
         updates.close_reason = r;
     }
 
-    // Apply update
-    store.update(close_args.id, updates, now) catch {
-        try outputError(&output, global.json, "failed to close issue");
+    ctx.store.update(close_args.id, updates, now) catch {
+        try outputError(&ctx.output, global.json, "failed to close issue");
         return CloseError.StorageError;
     };
 
-    // Save to file
-    if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try outputError(&output, global.json, "failed to save issues");
-            return CloseError.StorageError;
-        };
-    }
+    try ctx.saveIfAutoFlush();
 
-    // Output
-    if (global.json) {
-        try output.printJson(CloseResult{
-            .success = true,
-            .id = close_args.id,
-            .action = "closed",
-        });
-    } else if (global.quiet) {
-        try output.raw(close_args.id);
-        try output.raw("\n");
-    } else {
-        try output.success("Closed issue {s}", .{close_args.id});
-    }
+    try outputSuccess(&ctx.output, global, close_args.id, "closed", "Closed issue {s}");
 }
 
 pub fn runReopen(
@@ -129,89 +76,38 @@ pub fn runReopen(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return CloseError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return CloseError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return CloseError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return CloseError.StorageError;
-        }
-    };
-
-    // Get issue
-    const issue_ref = store.getRef(reopen_args.id) orelse {
-        const msg = try std.fmt.allocPrint(allocator, "issue not found: {s}", .{reopen_args.id});
-        defer allocator.free(msg);
-        try outputError(&output, global.json, msg);
+    const issue_ref = ctx.store.getRef(reopen_args.id) orelse {
+        try common.outputNotFoundError(CloseResult, &ctx.output, global.json, reopen_args.id, allocator);
         return CloseError.IssueNotFound;
     };
 
-    // Check if not closed
     if (!statusEql(issue_ref.status, .closed)) {
-        try outputError(&output, global.json, "issue is not closed");
+        try outputError(&ctx.output, global.json, "issue is not closed");
         return CloseError.NotClosed;
     }
 
-    // Build update - use epoch 0 as sentinel to clear closed_at
     const now = std.time.timestamp();
     const updates = IssueStore.IssueUpdate{
         .status = .open,
         .closed_at = 0,
     };
 
-    // Apply update
-    store.update(reopen_args.id, updates, now) catch {
-        try outputError(&output, global.json, "failed to reopen issue");
+    ctx.store.update(reopen_args.id, updates, now) catch {
+        try outputError(&ctx.output, global.json, "failed to reopen issue");
         return CloseError.StorageError;
     };
 
-    // Save to file
-    if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try outputError(&output, global.json, "failed to save issues");
-            return CloseError.StorageError;
-        };
-    }
+    try ctx.saveIfAutoFlush();
 
-    // Output
-    if (global.json) {
-        try output.printJson(CloseResult{
-            .success = true,
-            .id = reopen_args.id,
-            .action = "reopened",
-        });
-    } else if (global.quiet) {
-        try output.raw(reopen_args.id);
-        try output.raw("\n");
-    } else {
-        try output.success("Reopened issue {s}", .{reopen_args.id});
-    }
+    try outputSuccess(&ctx.output, global, reopen_args.id, "reopened", "Reopened issue {s}");
 }
 
-fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
+fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
     if (json_mode) {
         try output.printJson(CloseResult{
             .success = false,
@@ -222,12 +118,36 @@ fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
     }
 }
 
+fn outputSuccess(
+    output: *common.Output,
+    global: args.GlobalOptions,
+    id: []const u8,
+    action: []const u8,
+    comptime fmt: []const u8,
+) !void {
+    if (global.json) {
+        try output.printJson(CloseResult{
+            .success = true,
+            .id = id,
+            .action = action,
+        });
+    } else if (global.quiet) {
+        try output.raw(id);
+        try output.raw("\n");
+    } else {
+        try output.success(fmt, .{id});
+    }
+}
+
 fn statusEql(a: Status, b: Status) bool {
     const Tag = std.meta.Tag(Status);
     const tag_a: Tag = a;
     const tag_b: Tag = b;
     if (tag_a != tag_b) return false;
-    return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
+    if (tag_a == .custom) {
+        return std.mem.eql(u8, a.custom, b.custom);
+    }
+    return true;
 }
 
 // --- Tests ---

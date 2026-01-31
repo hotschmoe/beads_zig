@@ -7,15 +7,13 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
-const storage = @import("../storage/mod.zig");
-const Output = @import("../output/mod.zig").Output;
-const OutputOptions = @import("../output/mod.zig").OutputOptions;
+const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
-const IssueStore = storage.IssueStore;
-const DependencyGraph = storage.DependencyGraph;
+const CommandContext = common.CommandContext;
+const DependencyGraph = common.DependencyGraph;
 
 pub const ReadyError = error{
     WorkspaceNotInitialized,
@@ -55,52 +53,17 @@ pub fn run(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return ReadyError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return ReadyError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return ReadyError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return ReadyError.StorageError;
-        }
-    };
-
-    // Get ready issues
-    var graph = DependencyGraph.init(&store, allocator);
-    var issues = try graph.getReadyIssues();
+    var graph = ctx.createGraph();
+    const issues = try graph.getReadyIssues();
     defer graph.freeIssues(issues);
 
-    // Apply limit
-    var display_issues = issues;
-    if (ready_args.limit) |limit| {
-        if (limit < issues.len) {
-            display_issues = issues[0..limit];
-        }
-    }
+    const display_issues = applyLimit(issues, ready_args.limit);
 
-    // Output
     if (global.json) {
         var compact_issues = try allocator.alloc(ReadyResult.IssueCompact, display_issues.len);
         defer allocator.free(compact_issues);
@@ -113,15 +76,15 @@ pub fn run(
             };
         }
 
-        try output.printJson(ReadyResult{
+        try ctx.output.printJson(ReadyResult{
             .success = true,
             .issues = compact_issues,
             .count = display_issues.len,
         });
     } else {
-        try output.printIssueList(display_issues);
+        try ctx.output.printIssueList(display_issues);
         if (!global.quiet and display_issues.len == 0) {
-            try output.info("No ready issues", .{});
+            try ctx.output.info("No ready issues", .{});
         }
     }
 }
@@ -131,52 +94,17 @@ pub fn runBlocked(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return ReadyError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return ReadyError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return ReadyError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return ReadyError.StorageError;
-        }
-    };
-
-    // Get blocked issues
-    var graph = DependencyGraph.init(&store, allocator);
-    var issues = try graph.getBlockedIssues();
+    var graph = ctx.createGraph();
+    const issues = try graph.getBlockedIssues();
     defer graph.freeIssues(issues);
 
-    // Apply limit
-    var display_issues = issues;
-    if (blocked_args.limit) |limit| {
-        if (limit < issues.len) {
-            display_issues = issues[0..limit];
-        }
-    }
+    const display_issues = applyLimit(issues, blocked_args.limit);
 
-    // Output
     if (global.json) {
         var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssue, display_issues.len);
         defer {
@@ -187,7 +115,6 @@ pub fn runBlocked(
         }
 
         for (display_issues, 0..) |issue, i| {
-            // Get blockers for this issue
             const blockers = try graph.getBlockers(issue.id);
             defer graph.freeIssues(blockers);
 
@@ -204,46 +131,41 @@ pub fn runBlocked(
             };
         }
 
-        try output.printJson(BlockedResult{
+        try ctx.output.printJson(BlockedResult{
             .success = true,
             .issues = blocked_issues,
             .count = display_issues.len,
         });
     } else {
         for (display_issues) |issue| {
-            // Get blockers
             const blockers = try graph.getBlockers(issue.id);
             defer graph.freeIssues(blockers);
 
-            // Print issue
-            try output.print("{s}  {s}\n", .{ issue.id, issue.title });
+            try ctx.output.print("{s}  {s}\n", .{ issue.id, issue.title });
 
-            // Print blockers
             if (blockers.len > 0) {
-                try output.print("  blocked by: ", .{});
+                try ctx.output.print("  blocked by: ", .{});
                 for (blockers, 0..) |blocker, j| {
-                    if (j > 0) try output.print(", ", .{});
-                    try output.print("{s}", .{blocker.id});
+                    if (j > 0) try ctx.output.print(", ", .{});
+                    try ctx.output.print("{s}", .{blocker.id});
                 }
-                try output.print("\n", .{});
+                try ctx.output.print("\n", .{});
             }
         }
 
         if (!global.quiet and display_issues.len == 0) {
-            try output.info("No blocked issues", .{});
+            try ctx.output.info("No blocked issues", .{});
         }
     }
 }
 
-fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
-    if (json_mode) {
-        try output.printJson(ReadyResult{
-            .success = false,
-            .message = message,
-        });
-    } else {
-        try output.err("{s}", .{message});
+fn applyLimit(issues: []Issue, limit: ?u32) []Issue {
+    if (limit) |n| {
+        if (n < issues.len) {
+            return issues[0..n];
+        }
     }
+    return issues;
 }
 
 // --- Tests ---

@@ -6,17 +6,15 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
-const storage = @import("../storage/mod.zig");
-const Output = @import("../output/mod.zig").Output;
-const OutputOptions = @import("../output/mod.zig").OutputOptions;
+const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
-const Issue = models.Issue;
 const Status = models.Status;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
-const IssueStore = storage.IssueStore;
+const IssueStore = common.IssueStore;
+const CommandContext = common.CommandContext;
 
 pub const UpdateError = error{
     WorkspaceNotInitialized,
@@ -37,47 +35,16 @@ pub fn run(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return UpdateError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return UpdateError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return UpdateError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return UpdateError.StorageError;
-        }
-    };
-
-    // Check if issue exists
-    if (!try store.exists(update_args.id)) {
-        const msg = try std.fmt.allocPrint(allocator, "issue not found: {s}", .{update_args.id});
-        defer allocator.free(msg);
-        try outputError(&output, global.json, msg);
+    if (!try ctx.store.exists(update_args.id)) {
+        try common.outputNotFoundError(UpdateResult, &ctx.output, global.json, update_args.id, allocator);
         return UpdateError.IssueNotFound;
     }
 
-    // Build update struct
     var updates = IssueStore.IssueUpdate{};
 
     if (update_args.title) |t| {
@@ -94,7 +61,7 @@ pub fn run(
 
     if (update_args.priority) |p| {
         updates.priority = Priority.fromString(p) catch {
-            try outputError(&output, global.json, "invalid priority value");
+            try outputError(&ctx.output, global.json, "invalid priority value");
             return UpdateError.InvalidArgument;
         };
     }
@@ -107,36 +74,28 @@ pub fn run(
         updates.assignee = a;
     }
 
-    // Apply update
     const now = std.time.timestamp();
-    store.update(update_args.id, updates, now) catch {
-        try outputError(&output, global.json, "failed to update issue");
+    ctx.store.update(update_args.id, updates, now) catch {
+        try outputError(&ctx.output, global.json, "failed to update issue");
         return UpdateError.StorageError;
     };
 
-    // Save to file
-    if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try outputError(&output, global.json, "failed to save issues");
-            return UpdateError.StorageError;
-        };
-    }
+    try ctx.saveIfAutoFlush();
 
-    // Output
     if (global.json) {
-        try output.printJson(UpdateResult{
+        try ctx.output.printJson(UpdateResult{
             .success = true,
             .id = update_args.id,
         });
     } else if (global.quiet) {
-        try output.raw(update_args.id);
-        try output.raw("\n");
+        try ctx.output.raw(update_args.id);
+        try ctx.output.raw("\n");
     } else {
-        try output.success("Updated issue {s}", .{update_args.id});
+        try ctx.output.success("Updated issue {s}", .{update_args.id});
     }
 }
 
-fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
+fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
     if (json_mode) {
         try output.printJson(UpdateResult{
             .success = false,

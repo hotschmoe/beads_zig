@@ -9,15 +9,14 @@
 const std = @import("std");
 const models = @import("../models/mod.zig");
 const storage = @import("../storage/mod.zig");
-const Output = @import("../output/mod.zig").Output;
-const OutputOptions = @import("../output/mod.zig").OutputOptions;
+const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Dependency = models.Dependency;
 const DependencyType = models.DependencyType;
-const IssueStore = storage.IssueStore;
-const DependencyGraph = storage.DependencyGraph;
+const CommandContext = common.CommandContext;
+const DependencyGraph = common.DependencyGraph;
 const DependencyGraphError = storage.DependencyGraphError;
 
 pub const DepError = error{
@@ -44,73 +43,39 @@ pub fn run(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
-            return DepError.WorkspaceNotInitialized;
-        }
-        try outputError(&output, global.json, "cannot access workspace");
-        return DepError.StorageError;
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return DepError.WorkspaceNotInitialized;
     };
+    defer ctx.deinit();
 
-    // Load issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
-            return DepError.StorageError;
-        }
-    };
-
-    var graph = DependencyGraph.init(&store, allocator);
+    var graph = ctx.createGraph();
 
     switch (dep_args.subcommand) {
-        .add => |add| try runAdd(&graph, &store, &output, add, global, allocator),
-        .remove => |remove| try runRemove(&graph, &store, &output, remove, global, allocator),
-        .list => |list| try runList(&graph, &output, list, global, allocator),
-        .tree => |tree| try runTree(&graph, &output, tree, global, allocator),
-        .cycles => try runCycles(&graph, &output, global, allocator),
+        .add => |add| try runAdd(&graph, &ctx, add, global, allocator),
+        .remove => |remove| try runRemove(&graph, &ctx, remove, global),
+        .list => |list| try runList(&graph, &ctx.output, list, global, allocator),
+        .tree => |tree| try runTree(&ctx.output, tree, global),
+        .cycles => try runCycles(&graph, &ctx.output, global, allocator),
     }
 }
 
 fn runAdd(
     graph: *DependencyGraph,
-    store: *IssueStore,
-    output: *Output,
+    ctx: *CommandContext,
     add_args: anytype,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    // Verify both issues exist
-    if (!try store.exists(add_args.child)) {
-        const msg = try std.fmt.allocPrint(allocator, "issue not found: {s}", .{add_args.child});
-        defer allocator.free(msg);
-        try outputError(output, global.json, msg);
+    if (!try ctx.store.exists(add_args.child)) {
+        try common.outputNotFoundError(DepResult, &ctx.output, global.json, add_args.child, allocator);
         return DepError.IssueNotFound;
     }
 
-    if (!try store.exists(add_args.parent)) {
-        const msg = try std.fmt.allocPrint(allocator, "issue not found: {s}", .{add_args.parent});
-        defer allocator.free(msg);
-        try outputError(output, global.json, msg);
+    if (!try ctx.store.exists(add_args.parent)) {
+        try common.outputNotFoundError(DepResult, &ctx.output, global.json, add_args.parent, allocator);
         return DepError.IssueNotFound;
     }
 
-    // Create dependency
     const now = std.time.timestamp();
     const dep = Dependency{
         .issue_id = add_args.child,
@@ -122,110 +87,83 @@ fn runAdd(
         .thread_id = null,
     };
 
-    // Add dependency
     graph.addDependency(dep) catch |err| {
-        switch (err) {
-            DependencyGraphError.SelfDependency => {
-                try outputError(output, global.json, "cannot depend on self");
-                return DepError.SelfDependency;
-            },
-            DependencyGraphError.CycleDetected => {
-                try outputError(output, global.json, "adding dependency would create a cycle");
-                return DepError.CycleDetected;
-            },
-            DependencyGraphError.IssueNotFound => {
-                try outputError(output, global.json, "issue not found");
-                return DepError.IssueNotFound;
-            },
-            else => {
-                try outputError(output, global.json, "failed to add dependency");
-                return DepError.StorageError;
-            },
-        }
+        const msg = switch (err) {
+            DependencyGraphError.SelfDependency => "cannot depend on self",
+            DependencyGraphError.CycleDetected => "adding dependency would create a cycle",
+            DependencyGraphError.IssueNotFound => "issue not found",
+            else => "failed to add dependency",
+        };
+        try outputError(&ctx.output, global.json, msg);
+
+        return switch (err) {
+            DependencyGraphError.SelfDependency => DepError.SelfDependency,
+            DependencyGraphError.CycleDetected => DepError.CycleDetected,
+            DependencyGraphError.IssueNotFound => DepError.IssueNotFound,
+            else => DepError.StorageError,
+        };
     };
 
-    // Save to file
-    if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try outputError(output, global.json, "failed to save issues");
-            return DepError.StorageError;
-        };
-    }
+    try ctx.saveIfAutoFlush();
 
-    // Output
     if (global.json) {
-        try output.printJson(DepResult{
+        try ctx.output.printJson(DepResult{
             .success = true,
             .action = "added",
             .child = add_args.child,
             .parent = add_args.parent,
         });
     } else if (!global.quiet) {
-        try output.success("Added dependency: {s} depends on {s}", .{ add_args.child, add_args.parent });
+        try ctx.output.success("Added dependency: {s} depends on {s}", .{ add_args.child, add_args.parent });
     }
 }
 
 fn runRemove(
     graph: *DependencyGraph,
-    store: *IssueStore,
-    output: *Output,
+    ctx: *CommandContext,
     remove_args: anytype,
     global: args.GlobalOptions,
-    allocator: std.mem.Allocator,
 ) !void {
-    _ = allocator;
-
-    // Remove dependency
     graph.removeDependency(remove_args.child, remove_args.parent) catch |err| {
-        switch (err) {
-            DependencyGraphError.IssueNotFound => {
-                try outputError(output, global.json, "issue not found");
-                return DepError.IssueNotFound;
-            },
-            else => {
-                try outputError(output, global.json, "failed to remove dependency");
-                return DepError.StorageError;
-            },
-        }
+        const msg = if (err == DependencyGraphError.IssueNotFound)
+            "issue not found"
+        else
+            "failed to remove dependency";
+        try outputError(&ctx.output, global.json, msg);
+
+        return if (err == DependencyGraphError.IssueNotFound)
+            DepError.IssueNotFound
+        else
+            DepError.StorageError;
     };
 
-    // Save to file
-    if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try outputError(output, global.json, "failed to save issues");
-            return DepError.StorageError;
-        };
-    }
+    try ctx.saveIfAutoFlush();
 
-    // Output
     if (global.json) {
-        try output.printJson(DepResult{
+        try ctx.output.printJson(DepResult{
             .success = true,
             .action = "removed",
             .child = remove_args.child,
             .parent = remove_args.parent,
         });
     } else if (!global.quiet) {
-        try output.success("Removed dependency: {s} no longer depends on {s}", .{ remove_args.child, remove_args.parent });
+        try ctx.output.success("Removed dependency: {s} no longer depends on {s}", .{ remove_args.child, remove_args.parent });
     }
 }
 
 fn runList(
     graph: *DependencyGraph,
-    output: *Output,
+    output: *common.Output,
     list_args: anytype,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    // Get dependencies (what this issue depends on)
     const deps = try graph.getDependencies(list_args.id);
     defer graph.freeDependencies(deps);
 
-    // Get dependents (what depends on this issue)
     const dependents = try graph.getDependents(list_args.id);
     defer graph.freeDependencies(dependents);
 
-    // Output
     if (global.json) {
         var depends_on_ids: ?[][]const u8 = null;
         var blocks_ids: ?[][]const u8 = null;
@@ -276,17 +214,12 @@ fn runList(
 }
 
 fn runTree(
-    graph: *DependencyGraph,
-    output: *Output,
+    output: *common.Output,
     tree_args: anytype,
     global: args.GlobalOptions,
-    allocator: std.mem.Allocator,
 ) !void {
-    _ = allocator;
     _ = tree_args;
-    _ = graph;
 
-    // Tree visualization not yet implemented
     if (global.json) {
         try output.printJson(DepResult{
             .success = false,
@@ -299,7 +232,7 @@ fn runTree(
 
 fn runCycles(
     graph: *DependencyGraph,
-    output: *Output,
+    output: *common.Output,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
@@ -337,7 +270,7 @@ fn runCycles(
     }
 }
 
-fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
+fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
     if (json_mode) {
         try output.printJson(DepResult{
             .success = false,
