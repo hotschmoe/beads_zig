@@ -7,17 +7,13 @@ const std = @import("std");
 const models = @import("../models/mod.zig");
 const storage = @import("../storage/mod.zig");
 const id_gen = @import("../id/mod.zig");
-const Output = @import("../output/mod.zig").Output;
-const OutputOptions = @import("../output/mod.zig").OutputOptions;
+const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
-const Status = models.Status;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
-const Rfc3339Timestamp = models.Rfc3339Timestamp;
-const OptionalRfc3339Timestamp = models.OptionalRfc3339Timestamp;
 const IssueStore = storage.IssueStore;
 const IdGenerator = id_gen.IdGenerator;
 
@@ -44,22 +40,16 @@ pub fn run(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = Output.init(allocator, OutputOptions{
-        .json = global.json,
-        .toon = global.toon,
-        .quiet = global.quiet,
-        .no_color = global.no_color,
-    });
-
+    var output = common.initOutput(allocator, global);
     const structured_output = global.isStructuredOutput();
 
     // Validate title
     if (create_args.title.len == 0) {
-        try outputError(&output, structured_output, "title cannot be empty");
+        try common.outputErrorTyped(CreateResult, &output, structured_output, "title cannot be empty");
         return CreateError.EmptyTitle;
     }
     if (create_args.title.len > 500) {
-        try outputError(&output, structured_output, "title exceeds 500 character limit");
+        try common.outputErrorTyped(CreateResult, &output, structured_output, "title exceeds 500 character limit");
         return CreateError.TitleTooLong;
     }
 
@@ -71,10 +61,10 @@ pub fn run(
     // Check if workspace is initialized
     std.fs.cwd().access(issues_path, .{}) catch |err| {
         if (err == error.FileNotFound) {
-            try outputError(&output, structured_output, "workspace not initialized. Run 'bz init' first.");
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "workspace not initialized. Run 'bz init' first.");
             return CreateError.WorkspaceNotInitialized;
         }
-        try outputError(&output, structured_output, "cannot access workspace");
+        try common.outputErrorTyped(CreateResult, &output, structured_output, "cannot access workspace");
         return CreateError.StorageError;
     };
 
@@ -84,7 +74,7 @@ pub fn run(
 
     store.loadFromFile() catch |err| {
         if (err != error.FileNotFound) {
-            try outputError(&output, structured_output, "failed to load issues");
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to load issues");
             return CreateError.StorageError;
         }
     };
@@ -92,7 +82,7 @@ pub fn run(
     // Parse optional fields
     const priority = if (create_args.priority) |p|
         Priority.fromString(p) catch {
-            try outputError(&output, structured_output, "invalid priority value");
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "invalid priority value");
             return CreateError.InvalidPriority;
         }
     else
@@ -135,7 +125,7 @@ pub fn run(
 
     // Insert into store
     store.insert(issue) catch {
-        try outputError(&output, structured_output, "failed to create issue");
+        try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to create issue");
         return CreateError.StorageError;
     };
 
@@ -147,7 +137,7 @@ pub fn run(
     // Save to file (auto-flush)
     if (!global.no_auto_flush) {
         store.saveToFile() catch {
-            try outputError(&output, structured_output, "failed to save issues");
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to save issues");
             return CreateError.StorageError;
         };
     }
@@ -186,17 +176,6 @@ pub fn runQuick(
     }
 
     try run(create_args, modified_global, allocator);
-}
-
-fn outputError(output: *Output, json_mode: bool, message: []const u8) !void {
-    if (json_mode) {
-        try output.printJson(CreateResult{
-            .success = false,
-            .message = message,
-        });
-    } else {
-        try output.err("{s}", .{message});
-    }
 }
 
 /// Parse a date string in various formats to Unix timestamp.

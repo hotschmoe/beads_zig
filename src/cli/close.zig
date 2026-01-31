@@ -47,7 +47,7 @@ pub fn run(
     };
 
     if (statusEql(issue_ref.status, .closed)) {
-        try outputError(&ctx.output, global.isStructuredOutput(), "issue is already closed");
+        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "issue is already closed");
         return CloseError.AlreadyClosed;
     }
 
@@ -62,7 +62,7 @@ pub fn run(
     }
 
     ctx.store.update(close_args.id, updates, now) catch {
-        try outputError(&ctx.output, global.isStructuredOutput(), "failed to close issue");
+        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to close issue");
         return CloseError.StorageError;
     };
 
@@ -87,7 +87,7 @@ pub fn runReopen(
     };
 
     if (!statusEql(issue_ref.status, .closed)) {
-        try outputError(&ctx.output, global.isStructuredOutput(), "issue is not closed");
+        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "issue is not closed");
         return CloseError.NotClosed;
     }
 
@@ -98,24 +98,13 @@ pub fn runReopen(
     };
 
     ctx.store.update(reopen_args.id, updates, now) catch {
-        try outputError(&ctx.output, global.isStructuredOutput(), "failed to reopen issue");
+        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to reopen issue");
         return CloseError.StorageError;
     };
 
     try ctx.saveIfAutoFlush();
 
     try outputSuccess(&ctx.output, global, reopen_args.id, "reopened", "Reopened issue {s}");
-}
-
-fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
-    if (json_mode) {
-        try output.printJson(CloseResult{
-            .success = false,
-            .message = message,
-        });
-    } else {
-        try output.err("{s}", .{message});
-    }
 }
 
 fn outputSuccess(

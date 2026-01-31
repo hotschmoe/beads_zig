@@ -62,7 +62,7 @@ pub fn run(
 
     if (update_args.priority) |p| {
         updates.priority = Priority.fromString(p) catch {
-            try outputError(&ctx.output, structured_output, "invalid priority value");
+            try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "invalid priority value");
             return UpdateError.InvalidArgument;
         };
     }
@@ -77,7 +77,7 @@ pub fn run(
 
     const now = std.time.timestamp();
     ctx.store.update(update_args.id, updates, now) catch {
-        try outputError(&ctx.output, structured_output, "failed to update issue");
+        try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "failed to update issue");
         return UpdateError.StorageError;
     };
 
@@ -93,17 +93,6 @@ pub fn run(
         try ctx.output.raw("\n");
     } else {
         try ctx.output.success("Updated issue {s}", .{update_args.id});
-    }
-}
-
-fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
-    if (json_mode) {
-        try output.printJson(UpdateResult{
-            .success = false,
-            .message = message,
-        });
-    } else {
-        try output.err("{s}", .{message});
     }
 }
 
