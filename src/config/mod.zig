@@ -10,6 +10,11 @@
 
 const std = @import("std");
 
+pub const yaml = @import("yaml.zig");
+pub const YamlValue = yaml.YamlValue;
+pub const YamlError = yaml.YamlError;
+pub const parseYaml = yaml.parse;
+
 test {
     std.testing.refAllDecls(@This());
 }

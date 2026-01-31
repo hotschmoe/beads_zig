@@ -1,0 +1,673 @@
+//! Write-Ahead Log (WAL) for beads_zig.
+//!
+//! Provides constant-time concurrent writes by appending operations to a WAL file
+//! rather than rewriting the entire main JSONL file. Operations are:
+//! - Serialized via flock before append
+//! - fsync'd before lock release for durability
+//! - Replayed on read to reconstruct current state
+//!
+//! WAL entry format (JSON lines):
+//! {"op":"add","ts":1706540000,"id":"bd-abc123","data":{...}}
+//! {"op":"close","ts":1706540001,"id":"bd-abc123","data":null}
+
+const std = @import("std");
+const fs = std.fs;
+const Issue = @import("../models/issue.zig").Issue;
+const Status = @import("../models/status.zig").Status;
+const BeadsLock = @import("lock.zig").BeadsLock;
+const IssueStore = @import("store.zig").IssueStore;
+const test_util = @import("../test_util.zig");
+
+pub const WalError = error{
+    WalCorrupted,
+    WriteError,
+    LockFailed,
+    InvalidOperation,
+    ParseError,
+    OutOfMemory,
+};
+
+/// WAL operation types.
+pub const WalOp = enum {
+    add,
+    update,
+    close,
+    reopen,
+    delete,
+    set_blocked,
+    unset_blocked,
+
+    pub fn toString(self: WalOp) []const u8 {
+        return switch (self) {
+            .add => "add",
+            .update => "update",
+            .close => "close",
+            .reopen => "reopen",
+            .delete => "delete",
+            .set_blocked => "set_blocked",
+            .unset_blocked => "unset_blocked",
+        };
+    }
+
+    pub fn fromString(s: []const u8) ?WalOp {
+        if (std.mem.eql(u8, s, "add")) return .add;
+        if (std.mem.eql(u8, s, "update")) return .update;
+        if (std.mem.eql(u8, s, "close")) return .close;
+        if (std.mem.eql(u8, s, "reopen")) return .reopen;
+        if (std.mem.eql(u8, s, "delete")) return .delete;
+        if (std.mem.eql(u8, s, "set_blocked")) return .set_blocked;
+        if (std.mem.eql(u8, s, "unset_blocked")) return .unset_blocked;
+        return null;
+    }
+};
+
+/// A single WAL entry representing one operation.
+pub const WalEntry = struct {
+    op: WalOp,
+    ts: i64, // Unix timestamp for ordering
+    id: []const u8, // Issue ID
+    data: ?Issue, // Full issue for add/update, null for status-only ops
+
+    const Self = @This();
+
+    /// Custom JSON serialization for WalEntry.
+    pub fn jsonStringify(self: Self, jws: anytype) !void {
+        try jws.beginObject();
+
+        try jws.objectField("op");
+        try jws.write(self.op.toString());
+
+        try jws.objectField("ts");
+        try jws.write(self.ts);
+
+        try jws.objectField("id");
+        try jws.write(self.id);
+
+        try jws.objectField("data");
+        if (self.data) |issue| {
+            try jws.write(issue);
+        } else {
+            try jws.write(null);
+        }
+
+        try jws.endObject();
+    }
+};
+
+/// Parsed WAL entry for replay.
+pub const ParsedWalEntry = struct {
+    op: WalOp,
+    ts: i64,
+    id: []const u8,
+    data: ?Issue,
+
+    pub fn deinit(self: *ParsedWalEntry, allocator: std.mem.Allocator) void {
+        allocator.free(self.id);
+        if (self.data) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+    }
+};
+
+/// WAL file manager for reading and writing operations.
+pub const Wal = struct {
+    wal_path: []const u8,
+    lock_path: []const u8,
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(beads_dir: []const u8, allocator: std.mem.Allocator) !Self {
+        const wal_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.wal" });
+        errdefer allocator.free(wal_path);
+
+        const lock_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.lock" });
+
+        return Self{
+            .wal_path = wal_path,
+            .lock_path = lock_path,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.wal_path);
+        self.allocator.free(self.lock_path);
+    }
+
+    /// Append an entry to the WAL under exclusive lock.
+    /// Ensures durability via fsync before releasing lock.
+    pub fn appendEntry(self: *Self, entry: WalEntry) !void {
+        var lock = BeadsLock.acquire(self.lock_path) catch return WalError.LockFailed;
+        defer lock.release();
+
+        try self.appendEntryUnlocked(entry);
+    }
+
+    /// Append entry without acquiring lock (caller must hold lock).
+    fn appendEntryUnlocked(self: *Self, entry: WalEntry) !void {
+        const dir = fs.cwd();
+
+        // Ensure parent directory exists
+        if (std.fs.path.dirname(self.wal_path)) |parent| {
+            dir.makePath(parent) catch |err| switch (err) {
+                error.PathAlreadyExists => {},
+                else => return err,
+            };
+        }
+
+        // Open or create WAL file in append mode
+        const file = dir.createFile(self.wal_path, .{
+            .truncate = false,
+        }) catch return WalError.WriteError;
+        defer file.close();
+
+        // Seek to end
+        file.seekFromEnd(0) catch return WalError.WriteError;
+
+        // Serialize entry
+        const json_bytes = std.json.Stringify.valueAlloc(self.allocator, entry, .{}) catch return WalError.WriteError;
+        defer self.allocator.free(json_bytes);
+
+        // Write entry + newline
+        file.writeAll(json_bytes) catch return WalError.WriteError;
+        file.writeAll("\n") catch return WalError.WriteError;
+
+        // fsync for durability
+        file.sync() catch return WalError.WriteError;
+    }
+
+    /// Read all WAL entries.
+    pub fn readEntries(self: *Self) ![]ParsedWalEntry {
+        const file = fs.cwd().openFile(self.wal_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return &[_]ParsedWalEntry{},
+            else => return err,
+        };
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 100 * 1024 * 1024) catch return WalError.ParseError;
+        defer self.allocator.free(content);
+
+        var entries: std.ArrayListUnmanaged(ParsedWalEntry) = .{};
+        errdefer {
+            for (entries.items) |*e| {
+                e.deinit(self.allocator);
+            }
+            entries.deinit(self.allocator);
+        }
+
+        var line_start: usize = 0;
+        for (content, 0..) |c, i| {
+            if (c == '\n') {
+                const line = content[line_start..i];
+                line_start = i + 1;
+
+                if (line.len == 0) continue;
+
+                if (self.parseEntry(line)) |entry| {
+                    try entries.append(self.allocator, entry);
+                } else |_| {
+                    // Skip malformed entries (graceful degradation)
+                    continue;
+                }
+            }
+        }
+
+        // Handle last line if no trailing newline
+        if (line_start < content.len) {
+            const line = content[line_start..];
+            if (line.len > 0) {
+                if (self.parseEntry(line)) |entry| {
+                    try entries.append(self.allocator, entry);
+                } else |_| {}
+            }
+        }
+
+        return entries.toOwnedSlice(self.allocator);
+    }
+
+    /// Parse a single WAL entry line.
+    fn parseEntry(self: *Self, line: []const u8) !ParsedWalEntry {
+        const parsed = std.json.parseFromSlice(
+            struct {
+                op: []const u8,
+                ts: i64,
+                id: []const u8,
+                data: ?Issue,
+            },
+            self.allocator,
+            line,
+            .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+        ) catch return WalError.ParseError;
+        defer parsed.deinit();
+
+        const op = WalOp.fromString(parsed.value.op) orelse return WalError.InvalidOperation;
+
+        // Clone strings since parsed will be freed
+        const id = try self.allocator.dupe(u8, parsed.value.id);
+        errdefer self.allocator.free(id);
+
+        var data: ?Issue = null;
+        if (parsed.value.data) |issue| {
+            data = try issue.clone(self.allocator);
+        }
+
+        return ParsedWalEntry{
+            .op = op,
+            .ts = parsed.value.ts,
+            .id = id,
+            .data = data,
+        };
+    }
+
+    /// Replay WAL entries onto an IssueStore.
+    /// Applies operations in timestamp order.
+    pub fn replay(self: *Self, store: *IssueStore) !void {
+        const entries = try self.readEntries();
+        defer {
+            for (entries) |*e| {
+                var entry = e.*;
+                entry.deinit(self.allocator);
+            }
+            self.allocator.free(entries);
+        }
+
+        // Sort by timestamp (sortUnstable mutates through the slice pointer)
+        std.mem.sortUnstable(ParsedWalEntry, @constCast(entries), {}, struct {
+            fn lessThan(_: void, a: ParsedWalEntry, b: ParsedWalEntry) bool {
+                return a.ts < b.ts;
+            }
+        }.lessThan);
+
+        // Apply each operation
+        for (entries) |entry| {
+            try self.applyEntry(store, entry);
+        }
+    }
+
+    /// Apply a single WAL entry to the store.
+    fn applyEntry(self: *Self, store: *IssueStore, entry: ParsedWalEntry) !void {
+        _ = self;
+        switch (entry.op) {
+            .add => {
+                if (entry.data) |issue| {
+                    // Only insert if not already present
+                    if (!store.id_index.contains(issue.id)) {
+                        store.insert(issue) catch |err| switch (err) {
+                            error.DuplicateId => {}, // Already exists, ignore
+                            else => return err,
+                        };
+                    }
+                }
+            },
+            .update => {
+                if (entry.data) |issue| {
+                    // Update or insert
+                    if (store.id_index.contains(issue.id)) {
+                        // Full replacement for simplicity
+                        const idx = store.id_index.get(issue.id).?;
+                        var old = &store.issues.items[idx];
+                        old.deinit(store.allocator);
+                        store.issues.items[idx] = try issue.clone(store.allocator);
+                    } else {
+                        store.insert(issue) catch {};
+                    }
+                }
+            },
+            .close => {
+                store.update(entry.id, .{
+                    .status = .closed,
+                    .closed_at = std.time.timestamp(),
+                }, entry.ts) catch {};
+            },
+            .reopen => {
+                store.update(entry.id, .{
+                    .status = .open,
+                }, entry.ts) catch {};
+            },
+            .delete => {
+                store.delete(entry.id, entry.ts) catch {};
+            },
+            .set_blocked => {
+                store.update(entry.id, .{ .status = .blocked }, entry.ts) catch {};
+            },
+            .unset_blocked => {
+                store.update(entry.id, .{ .status = .open }, entry.ts) catch {};
+            },
+        }
+    }
+
+    /// Get the number of entries in the WAL.
+    pub fn entryCount(self: *Self) !usize {
+        const entries = try self.readEntries();
+        defer {
+            for (entries) |*e| {
+                e.deinit(self.allocator);
+            }
+            self.allocator.free(entries);
+        }
+        return entries.len;
+    }
+
+    /// Get the size of the WAL file in bytes.
+    pub fn fileSize(self: *Self) !u64 {
+        const file = fs.cwd().openFile(self.wal_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return 0,
+            else => return err,
+        };
+        defer file.close();
+
+        const stat = try file.stat();
+        return stat.size;
+    }
+
+    /// Truncate the WAL file (used after compaction).
+    pub fn truncate(self: *Self) !void {
+        const dir = fs.cwd();
+        dir.deleteFile(self.wal_path) catch |err| switch (err) {
+            error.FileNotFound => {}, // Already empty
+            else => return err,
+        };
+    }
+
+    // Convenience methods for common operations
+
+    /// Add a new issue to the WAL.
+    pub fn addIssue(self: *Self, issue: Issue) !void {
+        try self.appendEntry(.{
+            .op = .add,
+            .ts = std.time.timestamp(),
+            .id = issue.id,
+            .data = issue,
+        });
+    }
+
+    /// Close an issue in the WAL.
+    pub fn closeIssue(self: *Self, id: []const u8) !void {
+        try self.appendEntry(.{
+            .op = .close,
+            .ts = std.time.timestamp(),
+            .id = id,
+            .data = null,
+        });
+    }
+
+    /// Reopen an issue in the WAL.
+    pub fn reopenIssue(self: *Self, id: []const u8) !void {
+        try self.appendEntry(.{
+            .op = .reopen,
+            .ts = std.time.timestamp(),
+            .id = id,
+            .data = null,
+        });
+    }
+
+    /// Update an issue in the WAL.
+    pub fn updateIssue(self: *Self, issue: Issue) !void {
+        try self.appendEntry(.{
+            .op = .update,
+            .ts = std.time.timestamp(),
+            .id = issue.id,
+            .data = issue,
+        });
+    }
+
+    /// Delete an issue in the WAL (tombstone).
+    pub fn deleteIssue(self: *Self, id: []const u8) !void {
+        try self.appendEntry(.{
+            .op = .delete,
+            .ts = std.time.timestamp(),
+            .id = id,
+            .data = null,
+        });
+    }
+
+    /// Set an issue as blocked in the WAL.
+    pub fn setBlocked(self: *Self, id: []const u8) !void {
+        try self.appendEntry(.{
+            .op = .set_blocked,
+            .ts = std.time.timestamp(),
+            .id = id,
+            .data = null,
+        });
+    }
+
+    /// Unset blocked status in the WAL.
+    pub fn unsetBlocked(self: *Self, id: []const u8) !void {
+        try self.appendEntry(.{
+            .op = .unset_blocked,
+            .ts = std.time.timestamp(),
+            .id = id,
+            .data = null,
+        });
+    }
+};
+
+// --- Tests ---
+
+test "WalOp.toString and fromString roundtrip" {
+    const ops = [_]WalOp{ .add, .update, .close, .reopen, .delete, .set_blocked, .unset_blocked };
+    for (ops) |op| {
+        const str = op.toString();
+        const parsed = WalOp.fromString(str);
+        try std.testing.expect(parsed != null);
+        try std.testing.expectEqual(op, parsed.?);
+    }
+}
+
+test "WalOp.fromString returns null for unknown" {
+    try std.testing.expect(WalOp.fromString("unknown") == null);
+    try std.testing.expect(WalOp.fromString("") == null);
+}
+
+test "Wal.init and deinit" {
+    const allocator = std.testing.allocator;
+
+    var wal = try Wal.init(".beads", allocator);
+    defer wal.deinit();
+
+    try std.testing.expectEqualStrings(".beads/beads.wal", wal.wal_path);
+    try std.testing.expectEqualStrings(".beads/beads.lock", wal.lock_path);
+}
+
+test "Wal.readEntries returns empty for missing file" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_missing");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    const entries = try wal.readEntries();
+    defer allocator.free(entries);
+
+    try std.testing.expectEqual(@as(usize, 0), entries.len);
+}
+
+test "Wal.appendEntry and readEntries roundtrip" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_roundtrip");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    const issue = Issue.init("bd-test1", "Test Issue", 1706540000);
+
+    try wal.appendEntry(.{
+        .op = .add,
+        .ts = 1706540000,
+        .id = "bd-test1",
+        .data = issue,
+    });
+
+    try wal.appendEntry(.{
+        .op = .close,
+        .ts = 1706540001,
+        .id = "bd-test1",
+        .data = null,
+    });
+
+    const entries = try wal.readEntries();
+    defer {
+        for (entries) |*e| {
+            var entry = e.*;
+            entry.deinit(allocator);
+        }
+        allocator.free(entries);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), entries.len);
+    try std.testing.expectEqual(WalOp.add, entries[0].op);
+    try std.testing.expectEqual(WalOp.close, entries[1].op);
+    try std.testing.expectEqualStrings("bd-test1", entries[0].id);
+    try std.testing.expectEqualStrings("bd-test1", entries[1].id);
+    try std.testing.expect(entries[0].data != null);
+    try std.testing.expect(entries[1].data == null);
+}
+
+test "Wal.replay applies operations to store" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_replay");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    // Create WAL with operations
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    const issue = Issue.init("bd-replay1", "Replay Test", 1706540000);
+
+    try wal.appendEntry(.{
+        .op = .add,
+        .ts = 1706540000,
+        .id = "bd-replay1",
+        .data = issue,
+    });
+
+    // Create store and replay
+    const jsonl_path = try std.fs.path.join(allocator, &.{ test_dir, "issues.jsonl" });
+    defer allocator.free(jsonl_path);
+
+    var store = IssueStore.init(allocator, jsonl_path);
+    defer store.deinit();
+
+    try wal.replay(&store);
+
+    // Verify issue was added
+    try std.testing.expect(try store.exists("bd-replay1"));
+    const retrieved = try store.get("bd-replay1");
+    try std.testing.expect(retrieved != null);
+    var r = retrieved.?;
+    defer r.deinit(allocator);
+    try std.testing.expectEqualStrings("Replay Test", r.title);
+}
+
+test "Wal.entryCount" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_count");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), try wal.entryCount());
+
+    const issue = Issue.init("bd-count1", "Count Test", 1706540000);
+    try wal.appendEntry(.{ .op = .add, .ts = 1706540000, .id = "bd-count1", .data = issue });
+
+    try std.testing.expectEqual(@as(usize, 1), try wal.entryCount());
+
+    try wal.appendEntry(.{ .op = .close, .ts = 1706540001, .id = "bd-count1", .data = null });
+
+    try std.testing.expectEqual(@as(usize, 2), try wal.entryCount());
+}
+
+test "Wal.truncate clears WAL" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_truncate");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    const issue = Issue.init("bd-trunc1", "Truncate Test", 1706540000);
+    try wal.appendEntry(.{ .op = .add, .ts = 1706540000, .id = "bd-trunc1", .data = issue });
+
+    try std.testing.expectEqual(@as(usize, 1), try wal.entryCount());
+
+    try wal.truncate();
+
+    try std.testing.expectEqual(@as(usize, 0), try wal.entryCount());
+}
+
+test "Wal convenience methods" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_convenience");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    const issue = Issue.init("bd-conv1", "Convenience Test", 1706540000);
+    try wal.addIssue(issue);
+    try wal.closeIssue("bd-conv1");
+    try wal.reopenIssue("bd-conv1");
+    try wal.setBlocked("bd-conv1");
+    try wal.unsetBlocked("bd-conv1");
+    try wal.deleteIssue("bd-conv1");
+
+    const entries = try wal.readEntries();
+    defer {
+        for (entries) |*e| {
+            var entry = e.*;
+            entry.deinit(allocator);
+        }
+        allocator.free(entries);
+    }
+
+    try std.testing.expectEqual(@as(usize, 6), entries.len);
+}
+
+test "WalEntry JSON serialization" {
+    const allocator = std.testing.allocator;
+
+    const issue = Issue.init("bd-json1", "JSON Test", 1706540000);
+    const entry = WalEntry{
+        .op = .add,
+        .ts = 1706540000,
+        .id = "bd-json1",
+        .data = issue,
+    };
+
+    const json_bytes = try std.json.Stringify.valueAlloc(allocator, entry, .{});
+    defer allocator.free(json_bytes);
+
+    try std.testing.expect(std.mem.indexOf(u8, json_bytes, "\"op\":\"add\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_bytes, "\"ts\":1706540000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_bytes, "\"id\":\"bd-json1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_bytes, "\"data\":") != null);
+}
+
+test "WalEntry JSON serialization with null data" {
+    const allocator = std.testing.allocator;
+
+    const entry = WalEntry{
+        .op = .close,
+        .ts = 1706540000,
+        .id = "bd-null1",
+        .data = null,
+    };
+
+    const json_bytes = try std.json.Stringify.valueAlloc(allocator, entry, .{});
+    defer allocator.free(json_bytes);
+
+    try std.testing.expect(std.mem.indexOf(u8, json_bytes, "\"op\":\"close\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_bytes, "\"data\":null") != null);
+}

@@ -5,6 +5,7 @@
 //! - In-memory issue storage with indexing
 //! - Dependency graph management
 //! - Dirty tracking for sync
+//! - Write-Ahead Log (WAL) for concurrent writes
 
 const std = @import("std");
 
@@ -14,6 +15,7 @@ pub const graph = @import("graph.zig");
 pub const issues = @import("issues.zig");
 pub const dependencies = @import("dependencies.zig");
 pub const lock = @import("lock.zig");
+pub const wal = @import("wal.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -31,6 +33,11 @@ pub const BeadsLock = lock.BeadsLock;
 pub const LockError = lock.LockError;
 pub const withLock = lock.withLock;
 pub const withLockContext = lock.withLockContext;
+
+pub const Wal = wal.Wal;
+pub const WalEntry = wal.WalEntry;
+pub const WalOp = wal.WalOp;
+pub const WalError = wal.WalError;
 
 test {
     std.testing.refAllDecls(@This());

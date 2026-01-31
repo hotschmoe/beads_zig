@@ -20,6 +20,14 @@ pub const ready = @import("ready.zig");
 pub const dep = @import("dep.zig");
 pub const sync = @import("sync.zig");
 pub const search = @import("search.zig");
+pub const label = @import("label.zig");
+pub const comments = @import("comments.zig");
+pub const history = @import("history.zig");
+pub const audit = @import("audit.zig");
+pub const info = @import("info.zig");
+pub const stats = @import("stats.zig");
+pub const doctor = @import("doctor.zig");
+pub const config = @import("config.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -76,6 +84,38 @@ pub const runSync = sync.run;
 pub const SearchError = search.SearchError;
 pub const SearchResult = search.SearchResult;
 pub const runSearch = search.run;
+
+pub const LabelError = label.LabelError;
+pub const LabelResult = label.LabelResult;
+pub const runLabel = label.run;
+
+pub const CommentsError = comments.CommentsError;
+pub const CommentsResult = comments.CommentsResult;
+pub const runComments = comments.run;
+
+pub const HistoryError = history.HistoryError;
+pub const HistoryResult = history.HistoryResult;
+pub const runHistory = history.run;
+
+pub const AuditError = audit.AuditError;
+pub const AuditResult = audit.AuditResult;
+pub const runAudit = audit.run;
+
+pub const InfoError = info.InfoError;
+pub const InfoResult = info.InfoResult;
+pub const runInfo = info.run;
+
+pub const StatsError = stats.StatsError;
+pub const StatsResult = stats.StatsResult;
+pub const runStats = stats.run;
+
+pub const DoctorError = doctor.DoctorError;
+pub const DoctorResult = doctor.DoctorResult;
+pub const runDoctor = doctor.run;
+
+pub const ConfigError = config.ConfigError;
+pub const ConfigResult = config.ConfigResult;
+pub const runConfig = config.run;
 
 test {
     std.testing.refAllDecls(@This());
