@@ -57,6 +57,54 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .list => |list_args| {
+            cli.runList(list_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.InvalidFilter => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .show => |show_args| {
+            cli.runShow(show_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .update => |update_args| {
+            cli.runUpdate(update_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.InvalidArgument => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .close => |close_args| {
+            cli.runClose(close_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.AlreadyClosed => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .reopen => |reopen_args| {
+            cli.runReopen(reopen_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.NotClosed => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .ready => |ready_args| {
+            cli.runReady(ready_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .blocked => |blocked_args| {
+            cli.runBlocked(blocked_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .dep => |dep_args| {
+            cli.runDep(dep_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.CycleDetected, error.SelfDependency => std.process.exit(1),
+                else => return err,
+            };
+        },
         .help => |help_args| {
             try showHelp(help_args.topic, allocator);
         },

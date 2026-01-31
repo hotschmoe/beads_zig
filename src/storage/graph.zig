@@ -257,7 +257,7 @@ pub const DependencyGraph = struct {
         try path.append(self.allocator, node);
 
         const issue = self.store.getRef(node) orelse {
-            _ = path.popOrNull();
+            _ = path.pop();
             _ = rec_stack.remove(node);
             return false;
         };
@@ -274,7 +274,7 @@ pub const DependencyGraph = struct {
         }
 
         _ = rec_stack.remove(node);
-        _ = path.popOrNull();
+        _ = path.pop();
         return false;
     }
 
