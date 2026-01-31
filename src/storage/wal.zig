@@ -13,7 +13,6 @@
 const std = @import("std");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
-const Status = @import("../models/status.zig").Status;
 const BeadsLock = @import("lock.zig").BeadsLock;
 const IssueStore = @import("store.zig").IssueStore;
 const test_util = @import("../test_util.zig");

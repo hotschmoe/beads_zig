@@ -169,8 +169,7 @@ pub const BeadsError = struct {
         };
     }
 
-    pub fn configInvalidValue(key: []const u8, reason: []const u8) Self {
-        _ = key;
+    pub fn configInvalidValue(reason: []const u8) Self {
         return .{
             .code = "E402",
             .category = .config,
@@ -180,8 +179,7 @@ pub const BeadsError = struct {
     }
 
     /// Create a validation error.
-    pub fn validationFailed(field: []const u8, reason: []const u8) Self {
-        _ = field;
+    pub fn validationFailed(reason: []const u8) Self {
         return .{
             .code = "E501",
             .category = .validation,

@@ -7,11 +7,8 @@ const std = @import("std");
 const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const test_util = @import("../test_util.zig");
 
-const Issue = models.Issue;
 const Comment = models.Comment;
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 
 pub const CommentsError = error{
@@ -181,7 +178,7 @@ fn runList(
             try ctx.output.println("Comments on {s} ({d}):", .{ id, comments.len });
             for (comments) |c| {
                 try ctx.output.print("\n", .{});
-                try ctx.output.print("[{s}] {s}:\n", .{ formatTimestamp(c.created_at), c.author });
+                try ctx.output.print("[ts:{d}] {s}:\n", .{ c.created_at, c.author });
                 try ctx.output.print("  {s}\n", .{c.body});
             }
         }
@@ -189,18 +186,7 @@ fn runList(
 }
 
 fn getDefaultActor() []const u8 {
-    if (std.process.getEnvVarOwned(std.heap.page_allocator, "USER")) |user| {
-        return user;
-    } else |_| {
-        return "unknown";
-    }
-}
-
-fn formatTimestamp(ts: i64) []const u8 {
-    // Simple timestamp formatting - just return a placeholder
-    // In production, would format to human-readable date/time
-    _ = ts;
-    return "date";
+    return std.posix.getenv("USER") orelse "unknown";
 }
 
 // --- Tests ---

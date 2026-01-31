@@ -6,13 +6,9 @@
 //! `bz label list-all` - List all labels in the project
 
 const std = @import("std");
-const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const test_util = @import("../test_util.zig");
 
-const Issue = models.Issue;
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 
 pub const LabelError = error{

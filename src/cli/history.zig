@@ -3,14 +3,9 @@
 //! `bz history <id>` - Show history/changelog for an issue
 
 const std = @import("std");
-const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const test_util = @import("../test_util.zig");
 
-const Issue = models.Issue;
-const Event = models.Event;
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 
 pub const HistoryError = error{

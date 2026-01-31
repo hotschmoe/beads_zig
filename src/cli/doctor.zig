@@ -3,7 +3,6 @@
 //! `bz doctor` - Run diagnostic checks on the workspace
 
 const std = @import("std");
-const models = @import("../models/mod.zig");
 const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");

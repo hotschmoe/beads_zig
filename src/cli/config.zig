@@ -11,7 +11,6 @@ const test_util = @import("../test_util.zig");
 
 const CommandContext = common.CommandContext;
 const ConfigArgs = args.ConfigArgs;
-const ConfigSubcommand = args.ConfigSubcommand;
 
 pub const ConfigError = error{
     WorkspaceNotInitialized,

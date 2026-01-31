@@ -3,15 +3,9 @@
 //! `bz stats` - Show project statistics
 
 const std = @import("std");
-const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const test_util = @import("../test_util.zig");
 
-const Status = models.Status;
-const Priority = models.Priority;
-const IssueType = models.IssueType;
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 
 pub const StatsError = error{
