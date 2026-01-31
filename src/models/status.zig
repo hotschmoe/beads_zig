@@ -69,6 +69,15 @@ pub const Status = union(enum) {
             else => error.UnexpectedToken,
         };
     }
+
+    /// Check equality between two Status values.
+    pub fn eql(self: Self, other: Self) bool {
+        const Tag = std.meta.Tag(Self);
+        const self_tag: Tag = self;
+        const other_tag: Tag = other;
+        if (self_tag != other_tag) return false;
+        return if (self_tag == .custom) std.mem.eql(u8, self.custom, other.custom) else true;
+    }
 };
 
 test "toString returns correct strings for known statuses" {

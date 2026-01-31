@@ -56,7 +56,7 @@ pub fn run(
     // Linear scan with substring matching
     for (ctx.store.issues.items) |issue| {
         // Skip tombstoned issues
-        if (statusEql(issue.status, .tombstone)) continue;
+        if (issue.status.eql(.tombstone)) continue;
 
         // Check title
         const title_lower = try toLower(issue.title, allocator);
@@ -168,17 +168,6 @@ fn toLower(s: []const u8, allocator: std.mem.Allocator) ![]u8 {
         result[i] = std.ascii.toLower(c);
     }
     return result;
-}
-
-fn statusEql(a: Status, b: Status) bool {
-    const Tag = std.meta.Tag(Status);
-    const tag_a: Tag = a;
-    const tag_b: Tag = b;
-    if (tag_a != tag_b) return false;
-    if (tag_a == .custom) {
-        return std.mem.eql(u8, a.custom, b.custom);
-    }
-    return true;
 }
 
 // --- Tests ---

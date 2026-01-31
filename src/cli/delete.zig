@@ -45,7 +45,7 @@ pub fn run(
         return DeleteError.IssueNotFound;
     };
 
-    if (statusEql(issue_ref.status, .tombstone)) {
+    if (issue_ref.status.eql(.tombstone)) {
         try common.outputErrorTyped(DeleteResult, &ctx.output, structured_output, "issue is already deleted");
         return DeleteError.AlreadyDeleted;
     }
@@ -75,17 +75,6 @@ pub fn run(
     } else {
         try ctx.output.success("Deleted issue {s}", .{delete_args.id});
     }
-}
-
-fn statusEql(a: Status, b: Status) bool {
-    const Tag = std.meta.Tag(Status);
-    const tag_a: Tag = a;
-    const tag_b: Tag = b;
-    if (tag_a != tag_b) return false;
-    if (tag_a == .custom) {
-        return std.mem.eql(u8, a.custom, b.custom);
-    }
-    return true;
 }
 
 // --- Tests ---

@@ -168,9 +168,7 @@ fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
     };
     defer file.close();
 
-    const content = file.readToEndAlloc(allocator, 1024 * 1024 * 10) catch |err| switch (err) {
-        else => return err,
-    };
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 10);
     defer allocator.free(content);
 
     // Check for common merge conflict markers
