@@ -51,7 +51,7 @@ pub fn run(
         .no_color = global.no_color,
     });
 
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
 
     // Validate title
     if (create_args.title.len == 0) {
@@ -179,9 +179,9 @@ pub fn runQuick(
         .priority = quick_args.priority,
     };
 
-    // Force quiet mode for q command unless structured output (--json/--toon) is specified
+    // Force quiet mode for q command unless structured output is specified
     var modified_global = global;
-    if (!global.json and !global.toon) {
+    if (!global.isStructuredOutput()) {
         modified_global.quiet = true;
     }
 

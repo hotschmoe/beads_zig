@@ -40,7 +40,7 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
     if (!try ctx.store.exists(update_args.id)) {
         try common.outputNotFoundError(UpdateResult, &ctx.output, structured_output, update_args.id, allocator);
         return UpdateError.IssueNotFound;

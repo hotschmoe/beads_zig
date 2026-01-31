@@ -39,7 +39,7 @@ pub fn run(
         .no_color = global.no_color,
     });
 
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
     const beads_dir = global.data_path orelse ".beads";
     const issues_file = "issues.jsonl";
 

@@ -66,7 +66,7 @@ fn runAdd(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
     if (!try ctx.store.exists(add_args.child)) {
         try common.outputNotFoundError(DepResult, &ctx.output, structured_output, add_args.child, allocator);
         return DepError.IssueNotFound;
@@ -125,7 +125,7 @@ fn runRemove(
     remove_args: anytype,
     global: args.GlobalOptions,
 ) !void {
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
     graph.removeDependency(remove_args.child, remove_args.parent) catch |err| {
         const msg = if (err == DependencyGraphError.IssueNotFound)
             "issue not found"
@@ -166,7 +166,7 @@ fn runList(
     const dependents = try graph.getDependents(list_args.id);
     defer graph.freeDependencies(dependents);
 
-    if (global.json or global.toon) {
+    if (global.isStructuredOutput()) {
         var depends_on_ids: ?[][]const u8 = null;
         var blocks_ids: ?[][]const u8 = null;
 
@@ -222,7 +222,7 @@ fn runTree(
 ) !void {
     _ = tree_args;
 
-    if (global.json or global.toon) {
+    if (global.isStructuredOutput()) {
         try output.printJson(DepResult{
             .success = false,
             .message = "tree command not yet implemented",
@@ -239,7 +239,7 @@ fn runCycles(
     allocator: std.mem.Allocator,
 ) !void {
     const cycles = try graph.detectCycles();
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
 
     if (cycles) |c| {
         defer graph.freeCycles(c);

@@ -17,6 +17,11 @@ pub const GlobalOptions = struct {
     lock_timeout: u32 = 5000,
     no_auto_flush: bool = false,
     no_auto_import: bool = false,
+
+    /// Returns true if structured output (JSON or TOON) is enabled.
+    pub fn isStructuredOutput(self: GlobalOptions) bool {
+        return self.json or self.toon;
+    }
 };
 
 /// All available subcommands.
@@ -1650,4 +1655,22 @@ test "Shell.fromString handles case insensitivity" {
     try std.testing.expectEqual(Shell.fish, Shell.fromString("Fish").?);
     try std.testing.expectEqual(Shell.powershell, Shell.fromString("PowerShell").?);
     try std.testing.expectEqual(Shell.powershell, Shell.fromString("ps").?);
+}
+
+test "GlobalOptions.isStructuredOutput" {
+    // Default: neither json nor toon
+    const default_opts = GlobalOptions{};
+    try std.testing.expect(!default_opts.isStructuredOutput());
+
+    // JSON mode
+    const json_opts = GlobalOptions{ .json = true };
+    try std.testing.expect(json_opts.isStructuredOutput());
+
+    // TOON mode
+    const toon_opts = GlobalOptions{ .toon = true };
+    try std.testing.expect(toon_opts.isStructuredOutput());
+
+    // Both (edge case)
+    const both_opts = GlobalOptions{ .json = true, .toon = true };
+    try std.testing.expect(both_opts.isStructuredOutput());
 }

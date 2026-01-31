@@ -60,7 +60,7 @@ pub fn run(
 
     if (list_args.priority) |p| {
         filters.priority = Priority.fromString(p) catch {
-            try outputError(&ctx.output, global.json or global.toon, "invalid priority value");
+            try outputError(&ctx.output, global.isStructuredOutput(), "invalid priority value");
             return ListError.InvalidFilter;
         };
     }
@@ -90,7 +90,7 @@ pub fn run(
         allocator.free(issues);
     }
 
-    if (global.json or global.toon) {
+    if (global.isStructuredOutput()) {
         var compact_issues = try allocator.alloc(ListResult.IssueCompact, issues.len);
         defer allocator.free(compact_issues);
 

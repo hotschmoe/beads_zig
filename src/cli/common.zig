@@ -46,14 +46,13 @@ pub const CommandContext = struct {
             return CommandError.OutOfMemory;
         };
 
-        const structured_output = global.json or global.toon;
         std.fs.cwd().access(issues_path, .{}) catch |err| {
             if (err == error.FileNotFound) {
-                outputErrorGeneric(&output, structured_output, "workspace not initialized. Run 'bz init' first.") catch {};
+                outputErrorGeneric(&output, global.isStructuredOutput(), "workspace not initialized. Run 'bz init' first.") catch {};
                 allocator.free(issues_path);
                 return null;
             }
-            outputErrorGeneric(&output, structured_output, "cannot access workspace") catch {};
+            outputErrorGeneric(&output, global.isStructuredOutput(), "cannot access workspace") catch {};
             allocator.free(issues_path);
             return CommandError.StorageError;
         };
@@ -62,7 +61,7 @@ pub const CommandContext = struct {
 
         store.loadFromFile() catch |err| {
             if (err != error.FileNotFound) {
-                outputErrorGeneric(&output, structured_output, "failed to load issues") catch {};
+                outputErrorGeneric(&output, global.isStructuredOutput(), "failed to load issues") catch {};
                 store.deinit();
                 allocator.free(issues_path);
                 return CommandError.StorageError;
@@ -88,7 +87,7 @@ pub const CommandContext = struct {
     pub fn saveIfAutoFlush(self: *CommandContext) CommandError!void {
         if (!self.global.no_auto_flush) {
             self.store.saveToFile() catch {
-                outputErrorGeneric(&self.output, self.global.json or self.global.toon, "failed to save issues") catch {};
+                outputErrorGeneric(&self.output, self.global.isStructuredOutput(), "failed to save issues") catch {};
                 return CommandError.StorageError;
             };
         }

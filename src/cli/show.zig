@@ -39,7 +39,7 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const structured_output = global.json or global.toon;
+    const structured_output = global.isStructuredOutput();
     var issue = (try ctx.store.getWithRelations(show_args.id)) orelse {
         try common.outputNotFoundError(ShowResult, &ctx.output, structured_output, show_args.id, allocator);
         return ShowError.IssueNotFound;
