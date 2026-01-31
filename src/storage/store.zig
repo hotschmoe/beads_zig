@@ -667,11 +667,11 @@ pub const IssueStore = struct {
             }
         }.lessThan);
 
-        const count = @min(max_count, candidates.items.len);
-        var suggestions = try self.allocator.alloc(IdSuggestion, count);
+        const result_count = @min(max_count, candidates.items.len);
+        var suggestions = try self.allocator.alloc(IdSuggestion, result_count);
         errdefer self.allocator.free(suggestions);
 
-        for (0..count) |i| {
+        for (0..result_count) |i| {
             suggestions[i] = .{
                 .id = try self.allocator.dupe(u8, candidates.items[i].id),
                 .title = try self.allocator.dupe(u8, candidates.items[i].title),
