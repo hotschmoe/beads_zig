@@ -59,6 +59,7 @@ pub const OutputOptions = struct {
     json: bool = false,
     toon: bool = false,
     quiet: bool = false,
+    silent: bool = false, // Suppress ALL output including errors (for tests)
     no_color: bool = false,
 };
 
@@ -66,6 +67,7 @@ pub const OutputOptions = struct {
 pub const Output = struct {
     mode: OutputMode,
     toon: bool,
+    silent: bool, // Suppress ALL output including errors (for tests)
     stdout: std.fs.File,
     stderr: std.fs.File,
     allocator: std.mem.Allocator,
@@ -80,7 +82,7 @@ pub const Output = struct {
         var mode: OutputMode = .plain;
         if (opts.json or opts.toon) {
             mode = .json;
-        } else if (opts.quiet) {
+        } else if (opts.quiet or opts.silent) {
             mode = .quiet;
         } else if (!opts.no_color and !checkNoColorEnv() and stdout.isTty()) {
             mode = .rich;
@@ -89,6 +91,7 @@ pub const Output = struct {
         return .{
             .mode = mode,
             .toon = opts.toon,
+            .silent = opts.silent,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
@@ -100,6 +103,7 @@ pub const Output = struct {
         return .{
             .mode = mode,
             .toon = false,
+            .silent = false,
             .stdout = std.fs.File.stdout(),
             .stderr = std.fs.File.stderr(),
             .allocator = allocator,
@@ -111,8 +115,21 @@ pub const Output = struct {
         return .{
             .mode = mode,
             .toon = false,
+            .silent = false,
             .stdout = stdout,
             .stderr = stderr,
+            .allocator = allocator,
+        };
+    }
+
+    /// Initialize with silent mode (suppresses ALL output including errors).
+    pub fn initSilent(allocator: std.mem.Allocator) Self {
+        return .{
+            .mode = .quiet,
+            .toon = false,
+            .silent = true,
+            .stdout = std.fs.File.stdout(),
+            .stderr = std.fs.File.stderr(),
             .allocator = allocator,
         };
     }
@@ -174,6 +191,7 @@ pub const Output = struct {
 
     /// Print an error message to stderr (red in rich mode).
     pub fn err(self: *Self, comptime fmt: []const u8, args: anytype) !void {
+        if (self.silent) return;
         if (self.mode == .rich) try self.stderr.writeAll(Color.red);
         const msg = try std.fmt.allocPrint(self.allocator, "error: " ++ fmt, args);
         defer self.allocator.free(msg);
@@ -184,7 +202,7 @@ pub const Output = struct {
 
     /// Print a warning message to stderr (yellow in rich mode).
     pub fn warn(self: *Self, comptime fmt: []const u8, args: anytype) !void {
-        if (self.mode == .quiet) return;
+        if (self.silent or self.mode == .quiet) return;
         if (self.mode == .rich) try self.stderr.writeAll(Color.yellow);
         const msg = try std.fmt.allocPrint(self.allocator, "warning: " ++ fmt, args);
         defer self.allocator.free(msg);

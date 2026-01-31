@@ -38,6 +38,7 @@ pub const CommandContext = struct {
             .json = global.json,
             .toon = global.toon,
             .quiet = global.quiet,
+            .silent = global.silent,
             .no_color = global.no_color,
         });
 
@@ -146,6 +147,7 @@ pub fn initOutput(allocator: std.mem.Allocator, global: args.GlobalOptions) Outp
         .json = global.json,
         .toon = global.toon,
         .quiet = global.quiet,
+        .silent = global.silent,
         .no_color = global.no_color,
     });
 }
@@ -154,7 +156,7 @@ pub fn initOutput(allocator: std.mem.Allocator, global: args.GlobalOptions) Outp
 
 test "CommandContext returns null for uninitialized workspace" {
     const allocator = std.testing.allocator;
-    const global = args.GlobalOptions{ .quiet = true, .data_path = "/nonexistent/path" };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const ctx = try CommandContext.init(allocator, global);
     try std.testing.expect(ctx == null);

@@ -308,7 +308,7 @@ test "run detects uninitialized workspace" {
     const dep_args = args.DepArgs{
         .subcommand = .{ .list = .{ .id = "bd-test" } },
     };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = "/nonexistent/path" };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const result = run(dep_args, global, allocator);
     try std.testing.expectError(DepError.WorkspaceNotInitialized, result);
@@ -335,7 +335,7 @@ test "runList returns empty for empty workspace" {
     const dep_args = args.DepArgs{
         .subcommand = .{ .list = .{ .id = "bd-test" } },
     };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     try run(dep_args, global, allocator);
 }

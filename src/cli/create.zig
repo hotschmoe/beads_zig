@@ -172,7 +172,7 @@ pub fn runQuick(
     // Force quiet mode for q command unless structured output is specified
     var modified_global = global;
     if (!global.isStructuredOutput()) {
-        modified_global.quiet = true;
+        modified_global.silent = true;
     }
 
     try run(create_args, modified_global, allocator);
@@ -341,7 +341,7 @@ test "run validates empty title" {
     f.close();
 
     const create_args = args.CreateArgs{ .title = "" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     const result = run(create_args, global, allocator);
     try std.testing.expectError(CreateError.EmptyTitle, result);
@@ -367,7 +367,7 @@ test "run validates title length" {
 
     const long_title = "x" ** 501;
     const create_args = args.CreateArgs{ .title = long_title };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     const result = run(create_args, global, allocator);
     try std.testing.expectError(CreateError.TitleTooLong, result);
@@ -397,7 +397,7 @@ test "run creates issue successfully" {
         .priority = "high",
         .issue_type = "bug",
     };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     try run(create_args, global, allocator);
 
@@ -416,7 +416,7 @@ test "run detects uninitialized workspace" {
     const allocator = std.testing.allocator;
 
     const create_args = args.CreateArgs{ .title = "Test" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = "/nonexistent/path" };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const result = run(create_args, global, allocator);
     try std.testing.expectError(CreateError.WorkspaceNotInitialized, result);

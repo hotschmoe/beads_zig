@@ -149,7 +149,7 @@ test "run detects uninitialized workspace" {
     const allocator = std.testing.allocator;
 
     const list_args = args.ListArgs{};
-    const global = args.GlobalOptions{ .quiet = true, .data_path = "/nonexistent/path" };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const result = run(list_args, global, allocator);
     try std.testing.expectError(ListError.WorkspaceNotInitialized, result);
@@ -174,7 +174,7 @@ test "run lists issues successfully" {
     defer f.close();
 
     const list_args = args.ListArgs{ .all = true };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     try run(list_args, global, allocator);
 }

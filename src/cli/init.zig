@@ -222,7 +222,7 @@ test "init creates workspace directory structure" {
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "test" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     run(init_args, global, allocator) catch |err| {
         std.debug.print("Init failed: {}\n", .{err});
@@ -250,7 +250,7 @@ test "init fails if already initialized" {
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "bd" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     // First init should succeed
     try run(init_args, global, allocator);
@@ -271,7 +271,7 @@ test "init respects custom prefix" {
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "proj" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     try run(init_args, global, allocator);
 
@@ -299,7 +299,7 @@ test "init creates valid metadata.json" {
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "bd" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     try run(init_args, global, allocator);
 
@@ -336,7 +336,7 @@ test "init creates .gitignore with correct entries" {
     defer allocator.free(data_path);
 
     const init_args = args.InitArgs{ .prefix = "bd" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     try run(init_args, global, allocator);
 

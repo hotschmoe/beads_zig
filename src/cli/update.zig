@@ -116,7 +116,7 @@ test "run detects uninitialized workspace" {
     const allocator = std.testing.allocator;
 
     const update_args = args.UpdateArgs{ .id = "bd-test" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = "/nonexistent/path" };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const result = run(update_args, global, allocator);
     try std.testing.expectError(UpdateError.WorkspaceNotInitialized, result);
@@ -141,7 +141,7 @@ test "run returns error for missing issue" {
     f.close();
 
     const update_args = args.UpdateArgs{ .id = "bd-nonexistent", .title = "New title" };
-    const global = args.GlobalOptions{ .quiet = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
     const result = run(update_args, global, allocator);
     try std.testing.expectError(UpdateError.IssueNotFound, result);

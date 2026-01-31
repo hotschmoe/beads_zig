@@ -10,6 +10,7 @@ pub const GlobalOptions = struct {
     json: bool = false,
     toon: bool = false,
     quiet: bool = false,
+    silent: bool = false, // Suppress ALL output including errors (for tests)
     verbose: u8 = 0,
     no_color: bool = false,
     data_path: ?[]const u8 = null,
