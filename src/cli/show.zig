@@ -119,10 +119,10 @@ pub fn run(
 
 /// Format and print a single comment.
 fn printComment(output: *common.Output, comment: Comment, allocator: std.mem.Allocator) !void {
-    const timestamp_str = formatTimestamp(comment.created_at, allocator) catch "unknown";
-    defer if (!std.mem.eql(u8, timestamp_str, "unknown")) allocator.free(timestamp_str);
+    const timestamp_str: ?[]const u8 = formatTimestamp(comment.created_at, allocator) catch null;
+    defer if (timestamp_str) |ts| allocator.free(ts);
 
-    try output.print("\n[{s}] {s}:\n", .{ timestamp_str, comment.author });
+    try output.print("\n[{s}] {s}:\n", .{ timestamp_str orelse "unknown", comment.author });
     try output.print("{s}\n", .{comment.body});
 }
 
