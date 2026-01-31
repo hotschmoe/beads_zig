@@ -15,8 +15,11 @@ pub const list = @import("list.zig");
 pub const show = @import("show.zig");
 pub const update = @import("update.zig");
 pub const close = @import("close.zig");
+pub const delete = @import("delete.zig");
 pub const ready = @import("ready.zig");
 pub const dep = @import("dep.zig");
+pub const sync = @import("sync.zig");
+pub const search = @import("search.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -53,6 +56,10 @@ pub const CloseResult = close.CloseResult;
 pub const runClose = close.run;
 pub const runReopen = close.runReopen;
 
+pub const DeleteError = delete.DeleteError;
+pub const DeleteResult = delete.DeleteResult;
+pub const runDelete = delete.run;
+
 pub const ReadyError = ready.ReadyError;
 pub const ReadyResult = ready.ReadyResult;
 pub const runReady = ready.run;
@@ -61,6 +68,14 @@ pub const runBlocked = ready.runBlocked;
 pub const DepError = dep.DepError;
 pub const DepResult = dep.DepResult;
 pub const runDep = dep.run;
+
+pub const SyncError = sync.SyncError;
+pub const SyncResult = sync.SyncResult;
+pub const runSync = sync.run;
+
+pub const SearchError = search.SearchError;
+pub const SearchResult = search.SearchResult;
+pub const runSearch = search.run;
 
 test {
     std.testing.refAllDecls(@This());

@@ -13,6 +13,7 @@ pub const store = @import("store.zig");
 pub const graph = @import("graph.zig");
 pub const issues = @import("issues.zig");
 pub const dependencies = @import("dependencies.zig");
+pub const lock = @import("lock.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -25,6 +26,11 @@ pub const DependencyGraphError = graph.DependencyGraphError;
 
 pub const DependencyStore = dependencies.DependencyStore;
 pub const DependencyStoreError = dependencies.DependencyStoreError;
+
+pub const BeadsLock = lock.BeadsLock;
+pub const LockError = lock.LockError;
+pub const withLock = lock.withLock;
+pub const withLockContext = lock.withLockContext;
 
 test {
     std.testing.refAllDecls(@This());

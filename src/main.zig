@@ -87,6 +87,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .delete => |delete_args| {
+            cli.runDelete(delete_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.AlreadyDeleted => std.process.exit(1),
+                else => return err,
+            };
+        },
         .ready => |ready_args| {
             cli.runReady(ready_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -102,6 +108,18 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         .dep => |dep_args| {
             cli.runDep(dep_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized, error.IssueNotFound, error.CycleDetected, error.SelfDependency => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .sync => |sync_args| {
+            cli.runSync(sync_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.MergeConflictDetected, error.ImportError, error.ExportError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .search => |search_args| {
+            cli.runSearch(search_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized => std.process.exit(1),
                 else => return err,
             };
         },
@@ -151,13 +169,34 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\  bz <command> [options]
             \\
             \\COMMANDS:
-            \\  init              Initialize .beads/ workspace
-            \\  create <title>    Create new issue
-            \\  list              List issues
-            \\  show <id>         Show issue details
-            \\  close <id>        Close an issue
-            \\  help              Show this help
-            \\  version           Show version
+            \\  Workspace:
+            \\    init              Initialize .beads/ workspace
+            \\    sync              Sync with JSONL file
+            \\
+            \\  Issue Management:
+            \\    create <title>    Create new issue
+            \\    q <title>         Quick capture (create + print ID only)
+            \\    show <id>         Show issue details
+            \\    update <id>       Update issue fields
+            \\    close <id>        Close an issue
+            \\    reopen <id>       Reopen a closed issue
+            \\    delete <id>       Soft delete (tombstone)
+            \\
+            \\  Queries:
+            \\    list              List issues with filters
+            \\    ready             Show actionable issues (unblocked)
+            \\    blocked           Show blocked issues
+            \\    search <query>    Full-text search
+            \\
+            \\  Dependencies:
+            \\    dep add <a> <b>   Make issue A depend on B
+            \\    dep remove <a> <b> Remove dependency
+            \\    dep list <id>     List dependencies
+            \\    dep cycles        Detect dependency cycles
+            \\
+            \\  Info:
+            \\    help              Show this help
+            \\    version           Show version
             \\
             \\GLOBAL OPTIONS:
             \\  --json            Output in JSON format
