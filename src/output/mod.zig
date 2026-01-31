@@ -57,6 +57,7 @@ pub const Color = struct {
 /// This mirrors the relevant fields from cli.args.GlobalOptions.
 pub const OutputOptions = struct {
     json: bool = false,
+    toon: bool = false,
     quiet: bool = false,
     no_color: bool = false,
 };
@@ -64,6 +65,7 @@ pub const OutputOptions = struct {
 /// Output formatter for consistent CLI output across all modes.
 pub const Output = struct {
     mode: OutputMode,
+    toon: bool,
     stdout: std.fs.File,
     stderr: std.fs.File,
     allocator: std.mem.Allocator,
@@ -76,7 +78,7 @@ pub const Output = struct {
         const stderr = std.fs.File.stderr();
 
         var mode: OutputMode = .plain;
-        if (opts.json) {
+        if (opts.json or opts.toon) {
             mode = .json;
         } else if (opts.quiet) {
             mode = .quiet;
@@ -86,6 +88,7 @@ pub const Output = struct {
 
         return .{
             .mode = mode,
+            .toon = opts.toon,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
@@ -96,6 +99,7 @@ pub const Output = struct {
     pub fn initWithMode(allocator: std.mem.Allocator, mode: OutputMode) Self {
         return .{
             .mode = mode,
+            .toon = false,
             .stdout = std.fs.File.stdout(),
             .stderr = std.fs.File.stderr(),
             .allocator = allocator,
@@ -106,6 +110,7 @@ pub const Output = struct {
     pub fn initForTesting(allocator: std.mem.Allocator, mode: OutputMode, stdout: std.fs.File, stderr: std.fs.File) Self {
         return .{
             .mode = mode,
+            .toon = false,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
@@ -205,10 +210,22 @@ pub const Output = struct {
     }
 
     /// Print raw JSON value to stdout (for JSON mode).
+    /// If toon mode is enabled, converts JSON to TOON format for reduced token usage.
     pub fn printJson(self: *Self, value: anytype) !void {
         const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, value, .{});
         defer self.allocator.free(json_bytes);
-        try self.stdout.writeAll(json_bytes);
+
+        if (self.toon) {
+            const toon = @import("toon_zig");
+            const toon_bytes = toon.jsonToToon(self.allocator, json_bytes) catch |convert_err| {
+                try self.stderr.writeAll("error: failed to convert to TOON format\n");
+                return convert_err;
+            };
+            defer self.allocator.free(toon_bytes);
+            try self.stdout.writeAll(toon_bytes);
+        } else {
+            try self.stdout.writeAll(json_bytes);
+        }
         try self.stdout.writeAll("\n");
     }
 
@@ -431,6 +448,15 @@ test "Output.init with json option" {
     const opts = OutputOptions{ .json = true };
     const output = Output.init(allocator, opts);
     try std.testing.expectEqual(OutputMode.json, output.mode);
+    try std.testing.expect(!output.toon);
+}
+
+test "Output.init with toon option" {
+    const allocator = std.testing.allocator;
+    const opts = OutputOptions{ .toon = true };
+    const output = Output.init(allocator, opts);
+    try std.testing.expectEqual(OutputMode.json, output.mode);
+    try std.testing.expect(output.toon);
 }
 
 test "Output.init with quiet option" {

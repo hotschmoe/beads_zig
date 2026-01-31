@@ -41,13 +41,14 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    const structured_output = global.json or global.toon;
     const issue_ref = ctx.store.getRef(close_args.id) orelse {
-        try common.outputNotFoundError(CloseResult, &ctx.output, global.json, close_args.id, allocator);
+        try common.outputNotFoundError(CloseResult, &ctx.output, structured_output, close_args.id, allocator);
         return CloseError.IssueNotFound;
     };
 
     if (statusEql(issue_ref.status, .closed)) {
-        try outputError(&ctx.output, global.json, "issue is already closed");
+        try outputError(&ctx.output, structured_output, "issue is already closed");
         return CloseError.AlreadyClosed;
     }
 
@@ -62,7 +63,7 @@ pub fn run(
     }
 
     ctx.store.update(close_args.id, updates, now) catch {
-        try outputError(&ctx.output, global.json, "failed to close issue");
+        try outputError(&ctx.output, structured_output, "failed to close issue");
         return CloseError.StorageError;
     };
 
@@ -81,13 +82,14 @@ pub fn runReopen(
     };
     defer ctx.deinit();
 
+    const structured_output = global.json or global.toon;
     const issue_ref = ctx.store.getRef(reopen_args.id) orelse {
-        try common.outputNotFoundError(CloseResult, &ctx.output, global.json, reopen_args.id, allocator);
+        try common.outputNotFoundError(CloseResult, &ctx.output, structured_output, reopen_args.id, allocator);
         return CloseError.IssueNotFound;
     };
 
     if (!statusEql(issue_ref.status, .closed)) {
-        try outputError(&ctx.output, global.json, "issue is not closed");
+        try outputError(&ctx.output, structured_output, "issue is not closed");
         return CloseError.NotClosed;
     }
 
@@ -98,7 +100,7 @@ pub fn runReopen(
     };
 
     ctx.store.update(reopen_args.id, updates, now) catch {
-        try outputError(&ctx.output, global.json, "failed to reopen issue");
+        try outputError(&ctx.output, structured_output, "failed to reopen issue");
         return CloseError.StorageError;
     };
 
@@ -125,7 +127,7 @@ fn outputSuccess(
     action: []const u8,
     comptime fmt: []const u8,
 ) !void {
-    if (global.json) {
+    if (global.json or global.toon) {
         try output.printJson(CloseResult{
             .success = true,
             .id = id,

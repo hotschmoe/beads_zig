@@ -36,6 +36,10 @@
             .url = "https://github.com/hotschmoe/rich_zig/archive/refs/tags/v1.1.1.tar.gz",
             .hash = "rich_zig-1.1.0-cZcAnP4JCwDrRB-w46dA_rXDaa9V65UsRtt-53A1SROO",
         },
+        .toon_zig = .{
+            .url = "https://github.com/hotschmoe/toon_zig/archive/refs/tags/v0.1.5.tar.gz",
+            .hash = "toon_zig-0.1.5-k_hmCPp2BQDaa0LBM1gdu8BTNzIdBqW8y7eH6dM99BcU",
+        },
     },
     .paths = .{
         "build.zig",

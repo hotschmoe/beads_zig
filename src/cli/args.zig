@@ -8,6 +8,7 @@ const std = @import("std");
 /// Global CLI options that apply to all commands.
 pub const GlobalOptions = struct {
     json: bool = false,
+    toon: bool = false,
     quiet: bool = false,
     verbose: u8 = 0,
     no_color: bool = false,
@@ -374,6 +375,10 @@ pub const ArgParser = struct {
 
         if (std.mem.eql(u8, arg, "--json")) {
             global.json = true;
+            return true;
+        }
+        if (std.mem.eql(u8, arg, "--toon")) {
+            global.toon = true;
             return true;
         }
         if (std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--quiet")) {
@@ -951,6 +956,15 @@ test "parse global flag --json" {
     const result = try parser.parse();
 
     try std.testing.expect(result.global.json);
+    try std.testing.expect(result.command == .list);
+}
+
+test "parse global flag --toon" {
+    const args = [_][]const u8{ "--toon", "list" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.global.toon);
     try std.testing.expect(result.command == .list);
 }
 

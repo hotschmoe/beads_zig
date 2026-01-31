@@ -4,10 +4,19 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // External dependencies
+    const toon_zig = b.dependency("toon_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Core library module
     const mod = b.addModule("beads_zig", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{ .name = "toon_zig", .module = toon_zig.module("toon_zig") },
+        },
     });
 
     // Main executable
@@ -45,6 +54,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "toon_zig", .module = toon_zig.module("toon_zig") },
+            },
         }),
     });
 

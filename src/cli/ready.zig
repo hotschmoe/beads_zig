@@ -64,7 +64,7 @@ pub fn run(
 
     const display_issues = applyLimit(issues, ready_args.limit);
 
-    if (global.json) {
+    if (global.json or global.toon) {
         var compact_issues = try allocator.alloc(ReadyResult.IssueCompact, display_issues.len);
         defer allocator.free(compact_issues);
 
@@ -105,7 +105,7 @@ pub fn runBlocked(
 
     const display_issues = applyLimit(issues, blocked_args.limit);
 
-    if (global.json) {
+    if (global.json or global.toon) {
         var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssue, display_issues.len);
         defer {
             for (blocked_issues) |bi| {

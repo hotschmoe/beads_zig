@@ -66,13 +66,14 @@ fn runAdd(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
+    const structured_output = global.json or global.toon;
     if (!try ctx.store.exists(add_args.child)) {
-        try common.outputNotFoundError(DepResult, &ctx.output, global.json, add_args.child, allocator);
+        try common.outputNotFoundError(DepResult, &ctx.output, structured_output, add_args.child, allocator);
         return DepError.IssueNotFound;
     }
 
     if (!try ctx.store.exists(add_args.parent)) {
-        try common.outputNotFoundError(DepResult, &ctx.output, global.json, add_args.parent, allocator);
+        try common.outputNotFoundError(DepResult, &ctx.output, structured_output, add_args.parent, allocator);
         return DepError.IssueNotFound;
     }
 
@@ -94,7 +95,7 @@ fn runAdd(
             DependencyGraphError.IssueNotFound => "issue not found",
             else => "failed to add dependency",
         };
-        try outputError(&ctx.output, global.json, msg);
+        try outputError(&ctx.output, structured_output, msg);
 
         return switch (err) {
             DependencyGraphError.SelfDependency => DepError.SelfDependency,
@@ -106,7 +107,7 @@ fn runAdd(
 
     try ctx.saveIfAutoFlush();
 
-    if (global.json) {
+    if (structured_output) {
         try ctx.output.printJson(DepResult{
             .success = true,
             .action = "added",
@@ -124,12 +125,13 @@ fn runRemove(
     remove_args: anytype,
     global: args.GlobalOptions,
 ) !void {
+    const structured_output = global.json or global.toon;
     graph.removeDependency(remove_args.child, remove_args.parent) catch |err| {
         const msg = if (err == DependencyGraphError.IssueNotFound)
             "issue not found"
         else
             "failed to remove dependency";
-        try outputError(&ctx.output, global.json, msg);
+        try outputError(&ctx.output, structured_output, msg);
 
         return if (err == DependencyGraphError.IssueNotFound)
             DepError.IssueNotFound
@@ -139,7 +141,7 @@ fn runRemove(
 
     try ctx.saveIfAutoFlush();
 
-    if (global.json) {
+    if (structured_output) {
         try ctx.output.printJson(DepResult{
             .success = true,
             .action = "removed",
@@ -164,7 +166,7 @@ fn runList(
     const dependents = try graph.getDependents(list_args.id);
     defer graph.freeDependencies(dependents);
 
-    if (global.json) {
+    if (global.json or global.toon) {
         var depends_on_ids: ?[][]const u8 = null;
         var blocks_ids: ?[][]const u8 = null;
 
@@ -220,7 +222,7 @@ fn runTree(
 ) !void {
     _ = tree_args;
 
-    if (global.json) {
+    if (global.json or global.toon) {
         try output.printJson(DepResult{
             .success = false,
             .message = "tree command not yet implemented",
@@ -237,11 +239,12 @@ fn runCycles(
     allocator: std.mem.Allocator,
 ) !void {
     const cycles = try graph.detectCycles();
+    const structured_output = global.json or global.toon;
 
     if (cycles) |c| {
         defer graph.freeCycles(c);
 
-        if (global.json) {
+        if (structured_output) {
             var cycle_strs = try allocator.alloc([]const u8, c.len);
             defer allocator.free(cycle_strs);
             for (c, 0..) |cycle, i| {
@@ -259,7 +262,7 @@ fn runCycles(
             }
         }
     } else {
-        if (global.json) {
+        if (structured_output) {
             try output.printJson(.{
                 .success = true,
                 .cycles_found = false,

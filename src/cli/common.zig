@@ -36,6 +36,7 @@ pub const CommandContext = struct {
     ) CommandError!?CommandContext {
         var output = Output.init(allocator, .{
             .json = global.json,
+            .toon = global.toon,
             .quiet = global.quiet,
             .no_color = global.no_color,
         });
@@ -45,13 +46,14 @@ pub const CommandContext = struct {
             return CommandError.OutOfMemory;
         };
 
+        const structured_output = global.json or global.toon;
         std.fs.cwd().access(issues_path, .{}) catch |err| {
             if (err == error.FileNotFound) {
-                outputErrorGeneric(&output, global.json, "workspace not initialized. Run 'bz init' first.") catch {};
+                outputErrorGeneric(&output, structured_output, "workspace not initialized. Run 'bz init' first.") catch {};
                 allocator.free(issues_path);
                 return null;
             }
-            outputErrorGeneric(&output, global.json, "cannot access workspace") catch {};
+            outputErrorGeneric(&output, structured_output, "cannot access workspace") catch {};
             allocator.free(issues_path);
             return CommandError.StorageError;
         };
@@ -60,7 +62,7 @@ pub const CommandContext = struct {
 
         store.loadFromFile() catch |err| {
             if (err != error.FileNotFound) {
-                outputErrorGeneric(&output, global.json, "failed to load issues") catch {};
+                outputErrorGeneric(&output, structured_output, "failed to load issues") catch {};
                 store.deinit();
                 allocator.free(issues_path);
                 return CommandError.StorageError;
@@ -86,7 +88,7 @@ pub const CommandContext = struct {
     pub fn saveIfAutoFlush(self: *CommandContext) CommandError!void {
         if (!self.global.no_auto_flush) {
             self.store.saveToFile() catch {
-                outputErrorGeneric(&self.output, self.global.json, "failed to save issues") catch {};
+                outputErrorGeneric(&self.output, self.global.json or self.global.toon, "failed to save issues") catch {};
                 return CommandError.StorageError;
             };
         }
@@ -143,6 +145,7 @@ pub fn outputNotFoundError(
 pub fn initOutput(allocator: std.mem.Allocator, global: args.GlobalOptions) Output {
     return Output.init(allocator, .{
         .json = global.json,
+        .toon = global.toon,
         .quiet = global.quiet,
         .no_color = global.no_color,
     });

@@ -34,10 +34,12 @@ pub fn run(
 ) !void {
     var output = Output.init(allocator, OutputOptions{
         .json = global.json,
+        .toon = global.toon,
         .quiet = global.quiet,
         .no_color = global.no_color,
     });
 
+    const structured_output = global.json or global.toon;
     const beads_dir = global.data_path orelse ".beads";
     const issues_file = "issues.jsonl";
 
@@ -53,7 +55,7 @@ pub fn run(
     };
 
     if (already_exists) {
-        try outputError(&output, global.json, beads_dir, init_args.prefix, "workspace already initialized");
+        try outputError(&output, structured_output, beads_dir, init_args.prefix, "workspace already initialized");
         return InitError.AlreadyInitialized;
     }
 
@@ -61,7 +63,7 @@ pub fn run(
     std.fs.cwd().makeDir(beads_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => {
-            try outputError(&output, global.json, beads_dir, init_args.prefix, "failed to create directory");
+            try outputError(&output, structured_output, beads_dir, init_args.prefix, "failed to create directory");
             return InitError.CreateDirectoryFailed;
         },
     };
@@ -70,7 +72,7 @@ pub fn run(
     const jsonl_file = std.fs.cwd().createFile(issues_path, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => null,
         else => {
-            try outputError(&output, global.json, beads_dir, init_args.prefix, "failed to create issues.jsonl");
+            try outputError(&output, structured_output, beads_dir, init_args.prefix, "failed to create issues.jsonl");
             return InitError.WriteFileFailed;
         },
     };
@@ -95,7 +97,7 @@ pub fn run(
     try writeGitignore(gitignore_path);
 
     // Success output
-    if (global.json) {
+    if (structured_output) {
         try output.printJson(InitResult{
             .success = true,
             .path = beads_dir,

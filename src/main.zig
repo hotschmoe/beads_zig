@@ -114,6 +114,7 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         else => {
             var out = output.Output.init(allocator, .{
                 .json = result.global.json,
+                .toon = result.global.toon,
                 .quiet = result.global.quiet,
                 .no_color = result.global.no_color,
             });
@@ -160,6 +161,7 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\
             \\GLOBAL OPTIONS:
             \\  --json            Output in JSON format
+            \\  --toon            Output in TOON format (LLM-optimized)
             \\  -q, --quiet       Suppress non-essential output
             \\  -v, --verbose     Increase verbosity
             \\  --no-color        Disable colors

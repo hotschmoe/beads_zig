@@ -46,17 +46,20 @@ pub fn run(
 ) !void {
     var output = Output.init(allocator, OutputOptions{
         .json = global.json,
+        .toon = global.toon,
         .quiet = global.quiet,
         .no_color = global.no_color,
     });
 
+    const structured_output = global.json or global.toon;
+
     // Validate title
     if (create_args.title.len == 0) {
-        try outputError(&output, global.json, "title cannot be empty");
+        try outputError(&output, structured_output, "title cannot be empty");
         return CreateError.EmptyTitle;
     }
     if (create_args.title.len > 500) {
-        try outputError(&output, global.json, "title exceeds 500 character limit");
+        try outputError(&output, structured_output, "title exceeds 500 character limit");
         return CreateError.TitleTooLong;
     }
 
@@ -68,10 +71,10 @@ pub fn run(
     // Check if workspace is initialized
     std.fs.cwd().access(issues_path, .{}) catch |err| {
         if (err == error.FileNotFound) {
-            try outputError(&output, global.json, "workspace not initialized. Run 'bz init' first.");
+            try outputError(&output, structured_output, "workspace not initialized. Run 'bz init' first.");
             return CreateError.WorkspaceNotInitialized;
         }
-        try outputError(&output, global.json, "cannot access workspace");
+        try outputError(&output, structured_output, "cannot access workspace");
         return CreateError.StorageError;
     };
 
@@ -81,7 +84,7 @@ pub fn run(
 
     store.loadFromFile() catch |err| {
         if (err != error.FileNotFound) {
-            try outputError(&output, global.json, "failed to load issues");
+            try outputError(&output, structured_output, "failed to load issues");
             return CreateError.StorageError;
         }
     };
@@ -89,7 +92,7 @@ pub fn run(
     // Parse optional fields
     const priority = if (create_args.priority) |p|
         Priority.fromString(p) catch {
-            try outputError(&output, global.json, "invalid priority value");
+            try outputError(&output, structured_output, "invalid priority value");
             return CreateError.InvalidPriority;
         }
     else
@@ -132,7 +135,7 @@ pub fn run(
 
     // Insert into store
     store.insert(issue) catch {
-        try outputError(&output, global.json, "failed to create issue");
+        try outputError(&output, structured_output, "failed to create issue");
         return CreateError.StorageError;
     };
 
@@ -144,13 +147,13 @@ pub fn run(
     // Save to file (auto-flush)
     if (!global.no_auto_flush) {
         store.saveToFile() catch {
-            try outputError(&output, global.json, "failed to save issues");
+            try outputError(&output, structured_output, "failed to save issues");
             return CreateError.StorageError;
         };
     }
 
     // Output result
-    if (global.json) {
+    if (structured_output) {
         try output.printJson(CreateResult{
             .success = true,
             .id = issue_id,
@@ -176,9 +179,9 @@ pub fn runQuick(
         .priority = quick_args.priority,
     };
 
-    // Force quiet mode for q command unless --json is specified
+    // Force quiet mode for q command unless structured output (--json/--toon) is specified
     var modified_global = global;
-    if (!global.json) {
+    if (!global.json and !global.toon) {
         modified_global.quiet = true;
     }
 

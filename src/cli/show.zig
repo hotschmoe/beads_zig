@@ -39,8 +39,9 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    const structured_output = global.json or global.toon;
     var issue = (try ctx.store.getWithRelations(show_args.id)) orelse {
-        try common.outputNotFoundError(ShowResult, &ctx.output, global.json, show_args.id, allocator);
+        try common.outputNotFoundError(ShowResult, &ctx.output, structured_output, show_args.id, allocator);
         return ShowError.IssueNotFound;
     };
     defer issue.deinit(allocator);
@@ -53,7 +54,7 @@ pub fn run(
     const dependents = try graph.getDependents(show_args.id);
     defer graph.freeDependencies(dependents);
 
-    if (global.json) {
+    if (structured_output) {
         var depends_on_ids: ?[][]const u8 = null;
         var blocks_ids: ?[][]const u8 = null;
 

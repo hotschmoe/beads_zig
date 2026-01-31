@@ -40,8 +40,9 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    const structured_output = global.json or global.toon;
     if (!try ctx.store.exists(update_args.id)) {
-        try common.outputNotFoundError(UpdateResult, &ctx.output, global.json, update_args.id, allocator);
+        try common.outputNotFoundError(UpdateResult, &ctx.output, structured_output, update_args.id, allocator);
         return UpdateError.IssueNotFound;
     }
 
@@ -61,7 +62,7 @@ pub fn run(
 
     if (update_args.priority) |p| {
         updates.priority = Priority.fromString(p) catch {
-            try outputError(&ctx.output, global.json, "invalid priority value");
+            try outputError(&ctx.output, structured_output, "invalid priority value");
             return UpdateError.InvalidArgument;
         };
     }
@@ -76,13 +77,13 @@ pub fn run(
 
     const now = std.time.timestamp();
     ctx.store.update(update_args.id, updates, now) catch {
-        try outputError(&ctx.output, global.json, "failed to update issue");
+        try outputError(&ctx.output, structured_output, "failed to update issue");
         return UpdateError.StorageError;
     };
 
     try ctx.saveIfAutoFlush();
 
-    if (global.json) {
+    if (structured_output) {
         try ctx.output.printJson(UpdateResult{
             .success = true,
             .id = update_args.id,
