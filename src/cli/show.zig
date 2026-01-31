@@ -11,6 +11,7 @@ const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
+const Comment = models.Comment;
 const CommandContext = common.CommandContext;
 const DependencyGraph = common.DependencyGraph;
 
@@ -99,7 +100,48 @@ pub fn run(
                 try ctx.output.print("  - {s}\n", .{dep.issue_id});
             }
         }
+
+        // Display comments if requested and present
+        if (show_args.with_comments and issue.comments.len > 0) {
+            try ctx.output.print("\n--- Comments ({d}) ---\n", .{issue.comments.len});
+            for (issue.comments) |comment| {
+                try printComment(&ctx.output, comment, allocator);
+            }
+        }
+
+        // History display placeholder (requires event storage implementation)
+        if (show_args.with_history) {
+            try ctx.output.print("\n--- History ---\n", .{});
+            try ctx.output.print("  (history not yet implemented)\n", .{});
+        }
     }
+}
+
+/// Format and print a single comment.
+fn printComment(output: *common.Output, comment: Comment, allocator: std.mem.Allocator) !void {
+    const timestamp_str = formatTimestamp(comment.created_at, allocator) catch "unknown";
+    defer if (!std.mem.eql(u8, timestamp_str, "unknown")) allocator.free(timestamp_str);
+
+    try output.print("\n[{s}] {s}:\n", .{ timestamp_str, comment.author });
+    try output.print("{s}\n", .{comment.body});
+}
+
+/// Format a Unix timestamp as a human-readable string.
+fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    });
 }
 
 // --- Tests ---
@@ -150,4 +192,30 @@ test "run returns error for missing issue" {
 
     const result = run(show_args, global, allocator);
     try std.testing.expectError(ShowError.IssueNotFound, result);
+}
+
+test "formatTimestamp formats correctly" {
+    const allocator = std.testing.allocator;
+
+    // 2024-01-29T14:53:20Z = 1706540000
+    const ts_str = try formatTimestamp(1706540000, allocator);
+    defer allocator.free(ts_str);
+
+    try std.testing.expectEqualStrings("2024-01-29 14:53:20", ts_str);
+}
+
+test "ShowArgs default values" {
+    const show_args = args.ShowArgs{ .id = "bd-test" };
+    try std.testing.expect(show_args.with_comments);
+    try std.testing.expect(!show_args.with_history);
+}
+
+test "ShowArgs with_comments can be disabled" {
+    const show_args = args.ShowArgs{ .id = "bd-test", .with_comments = false };
+    try std.testing.expect(!show_args.with_comments);
+}
+
+test "ShowArgs with_history can be enabled" {
+    const show_args = args.ShowArgs{ .id = "bd-test", .with_history = true };
+    try std.testing.expect(show_args.with_history);
 }
