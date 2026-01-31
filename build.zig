@@ -60,7 +60,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const run_mod_tests = b.addRunArtifact(mod_tests);
+    // Create run step manually to avoid IPC protocol hang (zig 0.15.x bug)
+    // See: https://github.com/ziglang/zig/issues/18111
+    const run_mod_tests = std.Build.Step.Run.create(b, "run test");
+    run_mod_tests.addArtifactArg(mod_tests);
+    run_mod_tests.stdio = .inherit;
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);

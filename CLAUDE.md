@@ -114,29 +114,19 @@ Only if all three answers are "yes" should you fix the code.
 
 **The real success metric**: Does the code further our project's vision and goals?
 
-### Running Tests Safely
-
-**Use `zig test` directly** (not `zig build test`):
+### Running Tests
 
 ```bash
-# Run all tests (recommended)
-zig test src/root.zig
+# Run all tests via build system (recommended)
+zig build test
 
-# Run specific module tests
+# Run specific module tests directly
 zig test src/storage/store.zig
 zig test src/models/issue.zig
 ```
 
-**Why not `zig build test`?**
-
-The build system test runner hangs after all tests pass due to a Zig 0.15.x issue. All 344 tests complete successfully, but the process never exits. This is a build system issue, not a code problem - the production binary works fine.
-
-If you must use `zig build test`, use a timeout:
-```bash
-timeout 60 zig build test 2>&1
-```
-
-If tests hang, kill with: `pkill -9 -f "zig.*test"` (Linux/macOS) or Task Manager (Windows).
+Note: The build.zig creates a manual Run step to avoid Zig 0.15.x IPC protocol hang.
+See https://github.com/ziglang/zig/issues/18111 for details.
 
 **Manual CLI testing** is preferred for CLI commands - test in `sandbox/` directory.
 <!-- END:testing-philosophy -->
@@ -194,7 +184,7 @@ When 5+ agents write simultaneously:
 ```bash
 zig build                  # Build
 zig build run              # Run CLI
-zig test src/root.zig      # Run tests (recommended)
+zig build test             # Run tests
 
 # Cross-compile
 zig build -Dtarget=aarch64-linux-gnu
