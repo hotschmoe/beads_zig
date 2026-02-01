@@ -7,5 +7,5 @@
     "plan_mode": true,
     "plan_phase": "executing",
     "current_plan_index": 0,
-    "planned_beads": ["bd-sso"]
+    "planned_beads": ["bd-veb", "bd-3sg", "bd-3ab", "bd-xie", "bd-2lz"]
 }
