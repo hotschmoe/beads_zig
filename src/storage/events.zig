@@ -260,36 +260,39 @@ pub const EventStore = struct {
         }
 
         // Clone strings since parsed will be freed
-        const cloned = Event{
-            .id = event.id,
-            .issue_id = self.allocator.dupe(u8, event.issue_id) catch {
-                parsed.deinit();
-                return null;
-            },
-            .event_type = event.event_type,
-            .actor = self.allocator.dupe(u8, event.actor) catch {
-                self.allocator.free(event.issue_id);
-                parsed.deinit();
-                return null;
-            },
-            .old_value = if (event.old_value) |v| self.allocator.dupe(u8, v) catch {
-                self.allocator.free(event.issue_id);
-                self.allocator.free(event.actor);
-                parsed.deinit();
-                return null;
-            } else null,
-            .new_value = if (event.new_value) |v| self.allocator.dupe(u8, v) catch {
-                self.allocator.free(event.issue_id);
-                self.allocator.free(event.actor);
-                if (event.old_value) |ov| self.allocator.free(ov);
-                parsed.deinit();
-                return null;
-            } else null,
-            .created_at = event.created_at,
+        const issue_id = self.allocator.dupe(u8, event.issue_id) catch {
+            parsed.deinit();
+            return null;
         };
+        errdefer self.allocator.free(issue_id);
+
+        const actor = self.allocator.dupe(u8, event.actor) catch {
+            parsed.deinit();
+            return null;
+        };
+        errdefer self.allocator.free(actor);
+
+        const old_value = if (event.old_value) |v| self.allocator.dupe(u8, v) catch {
+            parsed.deinit();
+            return null;
+        } else null;
+        errdefer if (old_value) |v| self.allocator.free(v);
+
+        const new_value = if (event.new_value) |v| self.allocator.dupe(u8, v) catch {
+            parsed.deinit();
+            return null;
+        } else null;
 
         parsed.deinit();
-        return cloned;
+        return Event{
+            .id = event.id,
+            .issue_id = issue_id,
+            .event_type = event.event_type,
+            .actor = actor,
+            .old_value = old_value,
+            .new_value = new_value,
+            .created_at = event.created_at,
+        };
     }
 
     /// Free an event's allocated strings.
