@@ -129,6 +129,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .epic => |epic_args| {
+            cli.runEpic(epic_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.EpicNotFound, error.IssueNotFound, error.NotAnEpic, error.EmptyTitle, error.TitleTooLong, error.InvalidPriority, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
         .sync => |sync_args| {
             cli.runSync(sync_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized, error.MergeConflictDetected, error.ImportError, error.ExportError => std.process.exit(1),
@@ -299,6 +305,12 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\    dep tree <id>     Show dependency tree (ASCII)
             \\    dep cycles        Detect dependency cycles
             \\    graph [id]        Show dependency graph (ASCII/DOT)
+            \\
+            \\  Epics:
+            \\    epic create <title>       Create a new epic
+            \\    epic add <epic> <issue>   Add issue to epic
+            \\    epic remove <epic> <issue> Remove issue from epic
+            \\    epic list <epic>          List issues in epic
             \\
             \\  Labels:
             \\    label add <id> <labels...>    Add labels to an issue

@@ -61,6 +61,9 @@ pub const Command = union(enum) {
     dep: DepArgs,
     graph: GraphArgs,
 
+    // Epics
+    epic: EpicArgs,
+
     // Labels
     label: LabelArgs,
 
@@ -217,6 +220,31 @@ pub const DeferArgs = struct {
 /// Undefer command arguments.
 pub const UndeferArgs = struct {
     id: []const u8,
+};
+
+/// Epic subcommand variants.
+pub const EpicSubcommand = union(enum) {
+    create: struct {
+        title: []const u8,
+        description: ?[]const u8 = null,
+        priority: ?[]const u8 = null,
+    },
+    add: struct {
+        epic_id: []const u8,
+        issue_id: []const u8,
+    },
+    remove: struct {
+        epic_id: []const u8,
+        issue_id: []const u8,
+    },
+    list: struct {
+        epic_id: []const u8,
+    },
+};
+
+/// Epic command arguments.
+pub const EpicArgs = struct {
+    subcommand: EpicSubcommand,
 };
 
 /// Dependency subcommand variants.
@@ -580,6 +608,11 @@ pub const ArgParser = struct {
         }
         if (std.mem.eql(u8, cmd, "graph")) {
             return .{ .graph = try self.parseGraphArgs() };
+        }
+
+        // Epics
+        if (std.mem.eql(u8, cmd, "epic") or std.mem.eql(u8, cmd, "epics")) {
+            return .{ .epic = try self.parseEpicArgs() };
         }
 
         // Labels
@@ -966,6 +999,49 @@ pub const ArgParser = struct {
         }
 
         return result;
+    }
+
+    fn parseEpicArgs(self: *Self) ParseError!EpicArgs {
+        const subcmd = self.next() orelse return error.MissingRequiredArgument;
+
+        if (std.mem.eql(u8, subcmd, "create") or std.mem.eql(u8, subcmd, "new")) {
+            var title: ?[]const u8 = null;
+            var description: ?[]const u8 = null;
+            var priority: ?[]const u8 = null;
+
+            while (self.hasNext()) {
+                if (self.consumeFlag("-d", "--description")) {
+                    description = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-p", "--priority")) {
+                    priority = self.next() orelse return error.MissingFlagValue;
+                } else if (self.peekPositional()) |_| {
+                    if (title == null) {
+                        title = self.next().?;
+                    } else break;
+                } else break;
+            }
+
+            if (title == null) return error.MissingRequiredArgument;
+            return .{ .subcommand = .{ .create = .{
+                .title = title.?,
+                .description = description,
+                .priority = priority,
+            } } };
+        }
+        if (std.mem.eql(u8, subcmd, "add")) {
+            const epic_id = self.next() orelse return error.MissingRequiredArgument;
+            const issue_id = self.next() orelse return error.MissingRequiredArgument;
+            return .{ .subcommand = .{ .add = .{ .epic_id = epic_id, .issue_id = issue_id } } };
+        }
+        if (std.mem.eql(u8, subcmd, "remove") or std.mem.eql(u8, subcmd, "rm")) {
+            const epic_id = self.next() orelse return error.MissingRequiredArgument;
+            const issue_id = self.next() orelse return error.MissingRequiredArgument;
+            return .{ .subcommand = .{ .remove = .{ .epic_id = epic_id, .issue_id = issue_id } } };
+        }
+        if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
+            return .{ .subcommand = .{ .list = .{ .epic_id = self.next() orelse return error.MissingRequiredArgument } } };
+        }
+        return error.UnknownSubcommand;
     }
 
     fn parseLabelArgs(self: *Self) ParseError!LabelArgs {
@@ -1826,6 +1902,66 @@ test "command aliases work" {
         const result = try parser.parse();
         try std.testing.expect(result.command == .search);
     }
+}
+
+test "parse epic create command" {
+    const args = [_][]const u8{ "epic", "create", "Test Epic Title" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .epic);
+    const create = result.command.epic.subcommand.create;
+    try std.testing.expectEqualStrings("Test Epic Title", create.title);
+}
+
+test "parse epic create with options" {
+    const args = [_][]const u8{ "epic", "create", "My Epic", "--description", "Epic description", "--priority", "high" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .epic);
+    const create = result.command.epic.subcommand.create;
+    try std.testing.expectEqualStrings("My Epic", create.title);
+    try std.testing.expectEqualStrings("Epic description", create.description.?);
+    try std.testing.expectEqualStrings("high", create.priority.?);
+}
+
+test "parse epic add command" {
+    const args = [_][]const u8{ "epic", "add", "bd-epic1", "bd-task1" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .epic);
+    const add = result.command.epic.subcommand.add;
+    try std.testing.expectEqualStrings("bd-epic1", add.epic_id);
+    try std.testing.expectEqualStrings("bd-task1", add.issue_id);
+}
+
+test "parse epic remove command" {
+    const args = [_][]const u8{ "epic", "remove", "bd-epic1", "bd-task1" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .epic);
+    const remove = result.command.epic.subcommand.remove;
+    try std.testing.expectEqualStrings("bd-epic1", remove.epic_id);
+    try std.testing.expectEqualStrings("bd-task1", remove.issue_id);
+}
+
+test "parse epic list command" {
+    const args = [_][]const u8{ "epic", "list", "bd-epic1" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .epic);
+    try std.testing.expectEqualStrings("bd-epic1", result.command.epic.subcommand.list.epic_id);
+}
+
+test "parse epic command missing subcommand" {
+    const args = [_][]const u8{"epic"};
+    var parser = ArgParser.init(std.testing.allocator, &args);
+
+    try std.testing.expectError(error.MissingRequiredArgument, parser.parse());
 }
 
 test "Shell.fromString handles case insensitivity" {

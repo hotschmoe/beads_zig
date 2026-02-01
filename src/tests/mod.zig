@@ -5,6 +5,7 @@
 const std = @import("std");
 
 pub const cli_test = @import("cli_test.zig");
+pub const stress_test = @import("stress_test.zig");
 
 test {
     std.testing.refAllDecls(@This());

@@ -19,6 +19,7 @@ pub const delete = @import("delete.zig");
 pub const ready = @import("ready.zig");
 pub const dep = @import("dep.zig");
 pub const graph = @import("graph.zig");
+pub const epic = @import("epic.zig");
 pub const sync = @import("sync.zig");
 pub const batch = @import("batch.zig");
 pub const search = @import("search.zig");
@@ -89,6 +90,10 @@ pub const GraphError = graph.GraphError;
 pub const GraphResult = graph.GraphResult;
 pub const runGraph = graph.run;
 
+pub const EpicError = epic.EpicError;
+pub const EpicResult = epic.EpicResult;
+pub const runEpic = epic.run;
+
 pub const SyncError = sync.SyncError;
 pub const SyncResult = sync.SyncResult;
 pub const runSync = sync.run;
@@ -102,6 +107,7 @@ pub const runImportCmd = batch.runImport;
 pub const AddBatchArgs = args.AddBatchArgs;
 pub const BatchFormat = args.BatchFormat;
 pub const ImportArgs = args.ImportArgs;
+pub const EpicArgs = args.EpicArgs;
 
 pub const SearchError = search.SearchError;
 pub const SearchResult = search.SearchResult;
