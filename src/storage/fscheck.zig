@@ -39,23 +39,6 @@ pub const FsType = enum {
     }
 };
 
-// Linux filesystem magic numbers from statfs(2)
-const NFS_SUPER_MAGIC: i64 = 0x6969;
-const NFS4_SUPER_MAGIC: i64 = 0x6E667364; // "nfsd" in ASCII
-const CIFS_MAGIC_NUMBER: i64 = 0xFF534D42;
-const SMB_SUPER_MAGIC: i64 = 0x517B;
-const SMB2_MAGIC_NUMBER: i64 = 0xFE534D42;
-const CODA_SUPER_MAGIC: i64 = 0x73757245;
-const AFS_SUPER_MAGIC: i64 = 0x5346414F;
-const FUSE_SUPER_MAGIC: i64 = 0x65735546; // Could be sshfs, s3fs, etc.
-
-// Known safe local filesystems
-const EXT4_SUPER_MAGIC: i64 = 0xEF53;
-const XFS_SUPER_MAGIC: i64 = 0x58465342;
-const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
-const TMPFS_MAGIC: i64 = 0x01021994;
-const OVERLAYFS_SUPER_MAGIC: i64 = 0x794c7630;
-
 /// Check if the given path is on a network filesystem that may have
 /// unreliable flock behavior for multi-machine concurrent access.
 pub fn checkFilesystemSafety(path: []const u8) FilesystemCheck {
