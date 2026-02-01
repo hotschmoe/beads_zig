@@ -16,22 +16,18 @@ pub const JsonlError = error{
     AtomicRenameFailed,
 };
 
-/// Statistics from loading a JSONL file with corruption tracking.
+/// Result from loading a JSONL file with corruption tracking.
 pub const LoadResult = struct {
     issues: []Issue,
-    /// Number of lines successfully parsed.
-    loaded_count: usize = 0,
     /// Number of corrupt/invalid lines skipped.
     corruption_count: usize = 0,
     /// Line numbers of corrupt entries (1-indexed for user display).
     corrupt_lines: []const usize = &.{},
 
-    /// Check if any corruption was detected.
     pub fn hasCorruption(self: LoadResult) bool {
         return self.corruption_count > 0;
     }
 
-    /// Free the corrupt_lines slice.
     pub fn deinit(self: *LoadResult, allocator: std.mem.Allocator) void {
         if (self.corrupt_lines.len > 0) {
             allocator.free(self.corrupt_lines);
@@ -121,7 +117,6 @@ pub const JsonlFile = struct {
         const file = fs.cwd().openFile(self.path, .{}) catch |err| switch (err) {
             error.FileNotFound => return LoadResult{
                 .issues = &[_]Issue{},
-                .loaded_count = 0,
                 .corruption_count = 0,
             },
             else => return err,
@@ -188,13 +183,9 @@ pub const JsonlFile = struct {
             }
         }
 
-        const loaded_count = issues.items.len;
-        const corruption_count = corrupt_lines.items.len;
-
         return LoadResult{
             .issues = try issues.toOwnedSlice(self.allocator),
-            .loaded_count = loaded_count,
-            .corruption_count = corruption_count,
+            .corruption_count = corrupt_lines.items.len,
             .corrupt_lines = try corrupt_lines.toOwnedSlice(self.allocator),
         };
     }
@@ -347,7 +338,6 @@ test "readAllWithRecovery returns empty for missing file" {
     defer std.testing.allocator.free(result.issues);
 
     try std.testing.expectEqual(@as(usize, 0), result.issues.len);
-    try std.testing.expectEqual(@as(usize, 0), result.loaded_count);
     try std.testing.expectEqual(@as(usize, 0), result.corruption_count);
     try std.testing.expect(!result.hasCorruption());
 }
@@ -398,7 +388,6 @@ test "readAllWithRecovery skips corrupt lines and tracks them" {
 
     // Should have loaded 3 valid issues
     try std.testing.expectEqual(@as(usize, 3), result.issues.len);
-    try std.testing.expectEqual(@as(usize, 3), result.loaded_count);
 
     // Should have detected 2 corrupt entries
     try std.testing.expectEqual(@as(usize, 2), result.corruption_count);
@@ -442,7 +431,6 @@ test "readAllWithRecovery handles file with only corrupt entries" {
 
     // Should have no valid issues
     try std.testing.expectEqual(@as(usize, 0), result.issues.len);
-    try std.testing.expectEqual(@as(usize, 0), result.loaded_count);
 
     // All 3 lines were corrupt
     try std.testing.expectEqual(@as(usize, 3), result.corruption_count);
@@ -452,7 +440,6 @@ test "readAllWithRecovery handles file with only corrupt entries" {
 test "LoadResult.hasCorruption" {
     var result = LoadResult{
         .issues = &[_]Issue{},
-        .loaded_count = 0,
         .corruption_count = 0,
     };
     try std.testing.expect(!result.hasCorruption());

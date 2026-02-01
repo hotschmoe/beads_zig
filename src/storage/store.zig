@@ -26,19 +26,15 @@ pub const IssueStoreError = error{
 
 /// Result of loading the store with corruption tracking.
 pub const StoreLoadResult = struct {
-    /// Number of issues successfully loaded.
-    loaded_count: usize = 0,
     /// Number of corrupt JSONL entries skipped.
     jsonl_corruption_count: usize = 0,
     /// Line numbers of corrupt JSONL entries (1-indexed).
     jsonl_corrupt_lines: []const usize = &.{},
 
-    /// Check if any corruption was detected.
     pub fn hasCorruption(self: StoreLoadResult) bool {
         return self.jsonl_corruption_count > 0;
     }
 
-    /// Free allocated memory.
     pub fn deinit(self: *StoreLoadResult, allocator: std.mem.Allocator) void {
         if (self.jsonl_corrupt_lines.len > 0) {
             allocator.free(self.jsonl_corrupt_lines);
@@ -130,7 +126,6 @@ pub const IssueStore = struct {
         self.dirty = false;
 
         return StoreLoadResult{
-            .loaded_count = load_result.loaded_count,
             .jsonl_corruption_count = load_result.corruption_count,
             .jsonl_corrupt_lines = corrupt_lines,
         };
@@ -1041,7 +1036,6 @@ test "IssueStore addLabel and removeLabel" {
 
 test "StoreLoadResult.hasCorruption" {
     var result = StoreLoadResult{
-        .loaded_count = 10,
         .jsonl_corruption_count = 0,
     };
     try std.testing.expect(!result.hasCorruption());
@@ -1085,7 +1079,6 @@ test "IssueStore loadFromFileWithRecovery handles corrupt entries" {
     defer result.deinit(allocator);
 
     // Should have loaded 2 valid issues
-    try std.testing.expectEqual(@as(usize, 2), result.loaded_count);
     try std.testing.expectEqual(@as(usize, 2), store.issues.items.len);
 
     // Should have tracked 1 corrupt entry
