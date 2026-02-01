@@ -13,6 +13,7 @@ pub const OutputOptions = output_mod.OutputOptions;
 pub const IssueStore = storage.IssueStore;
 pub const DependencyGraph = storage.DependencyGraph;
 pub const EventStore = storage.EventStore;
+pub const StoreLoadResult = storage.StoreLoadResult;
 
 /// Common errors shared across CLI commands.
 pub const CommandError = error{
@@ -30,9 +31,14 @@ pub const CommandContext = struct {
     issues_path: []const u8,
     events_path: []const u8,
     global: args.GlobalOptions,
+    /// Number of corrupt entries skipped during load.
+    corruption_count: usize = 0,
+    /// Line numbers of corrupt JSONL entries (owned memory).
+    corrupt_lines: []const usize = &.{},
 
     /// Initialize a command context by loading the workspace.
     /// Returns null and outputs an error if workspace is not initialized.
+    /// Uses graceful corruption recovery: logs and skips corrupt entries.
     pub fn init(
         allocator: std.mem.Allocator,
         global: args.GlobalOptions,
@@ -68,8 +74,11 @@ pub const CommandContext = struct {
         };
 
         var store = IssueStore.init(allocator, issues_path);
+        var corruption_count: usize = 0;
+        var corrupt_lines: []const usize = &.{};
 
-        store.loadFromFile() catch |err| {
+        // Use recovery mode: log and skip corrupt entries instead of failing
+        const load_result = store.loadFromFileWithRecovery() catch |err| {
             if (err != error.FileNotFound) {
                 outputErrorGeneric(&output, global.isStructuredOutput(), "failed to load issues") catch {};
                 store.deinit();
@@ -77,7 +86,28 @@ pub const CommandContext = struct {
                 allocator.free(events_path);
                 return CommandError.StorageError;
             }
+            // File not found is OK - empty workspace
+            return CommandContext{
+                .allocator = allocator,
+                .output = output,
+                .store = store,
+                .event_store = EventStore.init(allocator, events_path),
+                .issues_path = issues_path,
+                .events_path = events_path,
+                .global = global,
+                .corruption_count = 0,
+                .corrupt_lines = &.{},
+            };
         };
+
+        corruption_count = load_result.jsonl_corruption_count;
+        corrupt_lines = load_result.jsonl_corrupt_lines;
+
+        // Warn user about corruption (unless quiet/silent mode)
+        if (corruption_count > 0 and !global.quiet and !global.silent and !global.isStructuredOutput()) {
+            output.print("warning: {d} corrupt entries skipped during load\n", .{corruption_count}) catch {};
+            output.print("         Run 'bz doctor' for details, 'bz compact' to rebuild.\n", .{}) catch {};
+        }
 
         // Initialize event store and load next ID
         var event_store = EventStore.init(allocator, events_path);
@@ -91,6 +121,8 @@ pub const CommandContext = struct {
             .issues_path = issues_path,
             .events_path = events_path,
             .global = global,
+            .corruption_count = corruption_count,
+            .corrupt_lines = corrupt_lines,
         };
     }
 
@@ -99,6 +131,14 @@ pub const CommandContext = struct {
         self.store.deinit();
         self.allocator.free(self.issues_path);
         self.allocator.free(self.events_path);
+        if (self.corrupt_lines.len > 0) {
+            self.allocator.free(self.corrupt_lines);
+        }
+    }
+
+    /// Check if corruption was detected during load.
+    pub fn hasCorruption(self: *const CommandContext) bool {
+        return self.corruption_count > 0;
     }
 
     /// Save the store to file if auto-flush is enabled.

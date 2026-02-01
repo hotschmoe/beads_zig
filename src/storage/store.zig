@@ -24,6 +24,28 @@ pub const IssueStoreError = error{
     InvalidIssue,
 };
 
+/// Result of loading the store with corruption tracking.
+pub const StoreLoadResult = struct {
+    /// Number of issues successfully loaded.
+    loaded_count: usize = 0,
+    /// Number of corrupt JSONL entries skipped.
+    jsonl_corruption_count: usize = 0,
+    /// Line numbers of corrupt JSONL entries (1-indexed).
+    jsonl_corrupt_lines: []const usize = &.{},
+
+    /// Check if any corruption was detected.
+    pub fn hasCorruption(self: StoreLoadResult) bool {
+        return self.jsonl_corruption_count > 0;
+    }
+
+    /// Free allocated memory.
+    pub fn deinit(self: *StoreLoadResult, allocator: std.mem.Allocator) void {
+        if (self.jsonl_corrupt_lines.len > 0) {
+            allocator.free(self.jsonl_corrupt_lines);
+        }
+    }
+};
+
 pub const IssueStore = struct {
     allocator: std.mem.Allocator,
     issues: std.ArrayListUnmanaged(Issue),
@@ -80,6 +102,38 @@ pub const IssueStore = struct {
         }
 
         self.dirty = false;
+    }
+
+    /// Load issues from the JSONL file with graceful corruption recovery.
+    /// Logs and skips corrupt entries instead of failing.
+    /// Returns statistics about the load including corruption count.
+    pub fn loadFromFileWithRecovery(self: *Self) !StoreLoadResult {
+        var jsonl = JsonlFile.init(self.jsonl_path, self.allocator);
+        var load_result = try jsonl.readAllWithRecovery();
+        // Take ownership of corrupt_lines before freeing issues slice
+        const corrupt_lines = load_result.corrupt_lines;
+        load_result.corrupt_lines = &.{}; // Prevent double-free
+        errdefer if (corrupt_lines.len > 0) self.allocator.free(corrupt_lines);
+
+        const loaded_issues = load_result.issues;
+        defer self.allocator.free(loaded_issues);
+
+        for (loaded_issues) |issue| {
+            const id_copy = try self.allocator.dupe(u8, issue.id);
+            errdefer self.allocator.free(id_copy);
+
+            const idx = self.issues.items.len;
+            try self.issues.append(self.allocator, issue);
+            try self.id_index.put(self.allocator, id_copy, idx);
+        }
+
+        self.dirty = false;
+
+        return StoreLoadResult{
+            .loaded_count = load_result.loaded_count,
+            .jsonl_corruption_count = load_result.corruption_count,
+            .jsonl_corrupt_lines = corrupt_lines,
+        };
     }
 
     /// Save all issues to the JSONL file.
@@ -983,4 +1037,62 @@ test "IssueStore addLabel and removeLabel" {
     }
 
     try std.testing.expectEqual(@as(usize, 1), after_remove.len);
+}
+
+test "StoreLoadResult.hasCorruption" {
+    var result = StoreLoadResult{
+        .loaded_count = 10,
+        .jsonl_corruption_count = 0,
+    };
+    try std.testing.expect(!result.hasCorruption());
+
+    result.jsonl_corruption_count = 3;
+    try std.testing.expect(result.hasCorruption());
+}
+
+test "IssueStore loadFromFileWithRecovery handles corrupt entries" {
+    const allocator = std.testing.allocator;
+    const test_util = @import("../test_util.zig");
+    const test_dir = try test_util.createTestDir(allocator, "store_recovery");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    const test_path = try std.fs.path.join(allocator, &.{ test_dir, "issues.jsonl" });
+    defer allocator.free(test_path);
+
+    // Write a file with mixed valid and corrupt entries
+    // Use full Issue JSON format (all fields required by parser)
+    {
+        const file = try std.fs.cwd().createFile(test_path, .{});
+        defer file.close();
+
+        // Valid issue
+        const valid1 = "{\"id\":\"bd-valid1\",\"content_hash\":null,\"title\":\"Valid Issue\",\"description\":null,\"design\":null,\"acceptance_criteria\":null,\"notes\":null,\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":null,\"owner\":null,\"created_at\":\"2024-01-29T10:00:00Z\",\"created_by\":null,\"updated_at\":\"2024-01-29T10:00:00Z\",\"closed_at\":null,\"close_reason\":null,\"due_at\":null,\"defer_until\":null,\"estimated_minutes\":null,\"external_ref\":null,\"source_system\":null,\"pinned\":false,\"is_template\":false,\"labels\":[],\"dependencies\":[],\"comments\":[]}\n";
+        try file.writeAll(valid1);
+
+        // Corrupt entry
+        try file.writeAll("{invalid json here}\n");
+
+        // Another valid issue
+        const valid2 = "{\"id\":\"bd-valid2\",\"content_hash\":null,\"title\":\"Another Valid Issue\",\"description\":null,\"design\":null,\"acceptance_criteria\":null,\"notes\":null,\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":null,\"owner\":null,\"created_at\":\"2024-01-29T10:00:00Z\",\"created_by\":null,\"updated_at\":\"2024-01-29T10:00:00Z\",\"closed_at\":null,\"close_reason\":null,\"due_at\":null,\"defer_until\":null,\"estimated_minutes\":null,\"external_ref\":null,\"source_system\":null,\"pinned\":false,\"is_template\":false,\"labels\":[],\"dependencies\":[],\"comments\":[]}\n";
+        try file.writeAll(valid2);
+    }
+
+    var store = IssueStore.init(allocator, test_path);
+    defer store.deinit();
+
+    var result = try store.loadFromFileWithRecovery();
+    defer result.deinit(allocator);
+
+    // Should have loaded 2 valid issues
+    try std.testing.expectEqual(@as(usize, 2), result.loaded_count);
+    try std.testing.expectEqual(@as(usize, 2), store.issues.items.len);
+
+    // Should have tracked 1 corrupt entry
+    try std.testing.expectEqual(@as(usize, 1), result.jsonl_corruption_count);
+    try std.testing.expect(result.hasCorruption());
+
+    // Verify the correct issues were loaded
+    try std.testing.expect(try store.exists("bd-valid1"));
+    try std.testing.expect(try store.exists("bd-valid2"));
 }

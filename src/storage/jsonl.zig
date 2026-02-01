@@ -16,6 +16,29 @@ pub const JsonlError = error{
     AtomicRenameFailed,
 };
 
+/// Statistics from loading a JSONL file with corruption tracking.
+pub const LoadResult = struct {
+    issues: []Issue,
+    /// Number of lines successfully parsed.
+    loaded_count: usize = 0,
+    /// Number of corrupt/invalid lines skipped.
+    corruption_count: usize = 0,
+    /// Line numbers of corrupt entries (1-indexed for user display).
+    corrupt_lines: []const usize = &.{},
+
+    /// Check if any corruption was detected.
+    pub fn hasCorruption(self: LoadResult) bool {
+        return self.corruption_count > 0;
+    }
+
+    /// Free the corrupt_lines slice.
+    pub fn deinit(self: *LoadResult, allocator: std.mem.Allocator) void {
+        if (self.corrupt_lines.len > 0) {
+            allocator.free(self.corrupt_lines);
+        }
+    }
+};
+
 pub const JsonlFile = struct {
     path: []const u8,
     allocator: std.mem.Allocator,
@@ -89,6 +112,91 @@ pub const JsonlFile = struct {
         }
 
         return issues.toOwnedSlice(self.allocator);
+    }
+
+    /// Read all issues from the JSONL file with detailed corruption tracking.
+    /// Returns a LoadResult containing issues and corruption statistics.
+    /// Logs and skips corrupt entries instead of failing.
+    pub fn readAllWithRecovery(self: *Self) !LoadResult {
+        const file = fs.cwd().openFile(self.path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return LoadResult{
+                .issues = &[_]Issue{},
+                .loaded_count = 0,
+                .corruption_count = 0,
+            },
+            else => return err,
+        };
+        defer file.close();
+
+        var issues: std.ArrayListUnmanaged(Issue) = .{};
+        var corrupt_lines: std.ArrayListUnmanaged(usize) = .{};
+        errdefer {
+            for (issues.items) |*issue| {
+                issue.deinit(self.allocator);
+            }
+            issues.deinit(self.allocator);
+            corrupt_lines.deinit(self.allocator);
+        }
+
+        // Read entire file content
+        const content = file.readToEndAlloc(self.allocator, 1024 * 1024 * 100) catch |err| switch (err) {
+            else => return err,
+        };
+        defer self.allocator.free(content);
+
+        // Parse line by line with line number tracking
+        var line_start: usize = 0;
+        var line_num: usize = 0;
+
+        for (content, 0..) |c, i| {
+            if (c == '\n') {
+                line_num += 1;
+                const line = content[line_start..i];
+                line_start = i + 1;
+
+                if (line.len == 0) continue;
+
+                if (std.json.parseFromSliceLeaky(
+                    Issue,
+                    self.allocator,
+                    line,
+                    .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+                )) |issue| {
+                    try issues.append(self.allocator, issue);
+                } else |_| {
+                    // Track corrupt line (1-indexed for user display)
+                    try corrupt_lines.append(self.allocator, line_num);
+                }
+            }
+        }
+
+        // Handle last line if no trailing newline
+        if (line_start < content.len) {
+            line_num += 1;
+            const line = content[line_start..];
+            if (line.len > 0) {
+                if (std.json.parseFromSliceLeaky(
+                    Issue,
+                    self.allocator,
+                    line,
+                    .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+                )) |issue| {
+                    try issues.append(self.allocator, issue);
+                } else |_| {
+                    try corrupt_lines.append(self.allocator, line_num);
+                }
+            }
+        }
+
+        const loaded_count = issues.items.len;
+        const corruption_count = corrupt_lines.items.len;
+
+        return LoadResult{
+            .issues = try issues.toOwnedSlice(self.allocator),
+            .loaded_count = loaded_count,
+            .corruption_count = corruption_count,
+            .corrupt_lines = try corrupt_lines.toOwnedSlice(self.allocator),
+        };
     }
 
     /// Write all issues to the JSONL file atomically.
@@ -231,4 +339,124 @@ test "JsonlFile handles empty file" {
     defer allocator.free(issues);
 
     try std.testing.expectEqual(@as(usize, 0), issues.len);
+}
+
+test "readAllWithRecovery returns empty for missing file" {
+    var jsonl = JsonlFile.init("/nonexistent/path/issues.jsonl", std.testing.allocator);
+    const result = try jsonl.readAllWithRecovery();
+    defer std.testing.allocator.free(result.issues);
+
+    try std.testing.expectEqual(@as(usize, 0), result.issues.len);
+    try std.testing.expectEqual(@as(usize, 0), result.loaded_count);
+    try std.testing.expectEqual(@as(usize, 0), result.corruption_count);
+    try std.testing.expect(!result.hasCorruption());
+}
+
+test "readAllWithRecovery skips corrupt lines and tracks them" {
+    // Use arena allocator because parseFromSliceLeaky can leak memory on parse
+    // failures (this is expected behavior - it's designed for arena allocators).
+    // The test allocator would report these leaks as errors.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const test_dir = try test_util.createTestDir(std.testing.allocator, "jsonl_corrupt");
+    defer std.testing.allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    const test_path = try std.fs.path.join(std.testing.allocator, &.{ test_dir, "corrupt.jsonl" });
+    defer std.testing.allocator.free(test_path);
+
+    // Write a file with mixed valid and corrupt entries
+    // Use full Issue JSON format (all fields required by parser)
+    {
+        const file = try fs.cwd().createFile(test_path, .{});
+        defer file.close();
+
+        // Valid issue line 1
+        const valid1 = "{\"id\":\"bd-test1\",\"content_hash\":null,\"title\":\"Valid Issue 1\",\"description\":null,\"design\":null,\"acceptance_criteria\":null,\"notes\":null,\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":null,\"owner\":null,\"created_at\":\"2024-01-29T10:00:00Z\",\"created_by\":null,\"updated_at\":\"2024-01-29T10:00:00Z\",\"closed_at\":null,\"close_reason\":null,\"due_at\":null,\"defer_until\":null,\"estimated_minutes\":null,\"external_ref\":null,\"source_system\":null,\"pinned\":false,\"is_template\":false,\"labels\":[],\"dependencies\":[],\"comments\":[]}\n";
+        try file.writeAll(valid1);
+
+        // Corrupt line 2 - invalid JSON
+        try file.writeAll("{this is not valid json}\n");
+
+        // Valid issue line 3
+        const valid2 = "{\"id\":\"bd-test2\",\"content_hash\":null,\"title\":\"Valid Issue 2\",\"description\":null,\"design\":null,\"acceptance_criteria\":null,\"notes\":null,\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":null,\"owner\":null,\"created_at\":\"2024-01-29T10:00:00Z\",\"created_by\":null,\"updated_at\":\"2024-01-29T10:00:00Z\",\"closed_at\":null,\"close_reason\":null,\"due_at\":null,\"defer_until\":null,\"estimated_minutes\":null,\"external_ref\":null,\"source_system\":null,\"pinned\":false,\"is_template\":false,\"labels\":[],\"dependencies\":[],\"comments\":[]}\n";
+        try file.writeAll(valid2);
+
+        // Corrupt line 4 - truncated JSON
+        try file.writeAll("{\"id\":\"bd-broken\",\"title\":\"Trun\n");
+
+        // Valid issue line 5
+        const valid3 = "{\"id\":\"bd-test3\",\"content_hash\":null,\"title\":\"Valid Issue 3\",\"description\":null,\"design\":null,\"acceptance_criteria\":null,\"notes\":null,\"status\":\"open\",\"priority\":2,\"issue_type\":\"task\",\"assignee\":null,\"owner\":null,\"created_at\":\"2024-01-29T10:00:00Z\",\"created_by\":null,\"updated_at\":\"2024-01-29T10:00:00Z\",\"closed_at\":null,\"close_reason\":null,\"due_at\":null,\"defer_until\":null,\"estimated_minutes\":null,\"external_ref\":null,\"source_system\":null,\"pinned\":false,\"is_template\":false,\"labels\":[],\"dependencies\":[],\"comments\":[]}\n";
+        try file.writeAll(valid3);
+    }
+
+    var jsonl = JsonlFile.init(test_path, allocator);
+    const result = try jsonl.readAllWithRecovery();
+    // No need to defer cleanup - arena handles all allocations
+
+    // Should have loaded 3 valid issues
+    try std.testing.expectEqual(@as(usize, 3), result.issues.len);
+    try std.testing.expectEqual(@as(usize, 3), result.loaded_count);
+
+    // Should have detected 2 corrupt entries
+    try std.testing.expectEqual(@as(usize, 2), result.corruption_count);
+    try std.testing.expect(result.hasCorruption());
+
+    // Corrupt lines should be 2 and 4
+    try std.testing.expectEqual(@as(usize, 2), result.corrupt_lines.len);
+    try std.testing.expectEqual(@as(usize, 2), result.corrupt_lines[0]);
+    try std.testing.expectEqual(@as(usize, 4), result.corrupt_lines[1]);
+
+    // Verify the valid issues were loaded correctly
+    try std.testing.expectEqualStrings("bd-test1", result.issues[0].id);
+    try std.testing.expectEqualStrings("bd-test2", result.issues[1].id);
+    try std.testing.expectEqualStrings("bd-test3", result.issues[2].id);
+}
+
+test "readAllWithRecovery handles file with only corrupt entries" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "jsonl_all_corrupt");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    const test_path = try std.fs.path.join(allocator, &.{ test_dir, "all_corrupt.jsonl" });
+    defer allocator.free(test_path);
+
+    // Write file with only corrupt entries
+    {
+        const file = try fs.cwd().createFile(test_path, .{});
+        defer file.close();
+        try file.writeAll("{not valid}\n");
+        try file.writeAll("also not valid\n");
+        try file.writeAll("{}\n"); // Empty object, missing required fields
+    }
+
+    var jsonl = JsonlFile.init(test_path, allocator);
+    var result = try jsonl.readAllWithRecovery();
+    defer {
+        allocator.free(result.issues);
+        result.deinit(allocator);
+    }
+
+    // Should have no valid issues
+    try std.testing.expectEqual(@as(usize, 0), result.issues.len);
+    try std.testing.expectEqual(@as(usize, 0), result.loaded_count);
+
+    // All 3 lines were corrupt
+    try std.testing.expectEqual(@as(usize, 3), result.corruption_count);
+    try std.testing.expect(result.hasCorruption());
+}
+
+test "LoadResult.hasCorruption" {
+    var result = LoadResult{
+        .issues = &[_]Issue{},
+        .loaded_count = 0,
+        .corruption_count = 0,
+    };
+    try std.testing.expect(!result.hasCorruption());
+
+    result.corruption_count = 5;
+    try std.testing.expect(result.hasCorruption());
 }

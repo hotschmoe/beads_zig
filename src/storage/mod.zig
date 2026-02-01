@@ -24,9 +24,11 @@ pub const generation = @import("generation.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
+pub const LoadResult = jsonl.LoadResult;
 
 pub const IssueStore = store.IssueStore;
 pub const IssueStoreError = store.IssueStoreError;
+pub const StoreLoadResult = store.StoreLoadResult;
 
 pub const DependencyGraph = graph.DependencyGraph;
 pub const DependencyGraphError = graph.DependencyGraphError;
