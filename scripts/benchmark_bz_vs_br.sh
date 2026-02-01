@@ -28,15 +28,32 @@ if ! command -v "$BR_PATH" &> /dev/null; then
     exit 1
 fi
 
-# Cleanup function
 cleanup() {
     rm -rf "$BZ_TEMP" "$BR_TEMP"
 }
 
-# Clean up any previous runs
-cleanup
+# Time a command and return milliseconds
+time_cmd() {
+    local start=$(date +%s%N)
+    "$@" > /dev/null 2>&1
+    local end=$(date +%s%N)
+    echo $(( (end - start) / 1000000 ))
+}
 
-# Create sandbox directories
+# Time N iterations of a command, return total milliseconds
+time_loop() {
+    local count=$1
+    shift
+    local start=$(date +%s%N)
+    for _ in $(seq 1 "$count"); do
+        "$@" > /dev/null 2>&1
+    done
+    local end=$(date +%s%N)
+    echo $(( (end - start) / 1000000 ))
+}
+
+# Initialize
+cleanup
 mkdir -p "$BZ_TEMP" "$BR_TEMP"
 
 echo "=== Beads Benchmark: bz (Zig) vs br (Rust) ==="
@@ -46,15 +63,7 @@ echo "  bz: $BZ_TEMP"
 echo "  br: $BR_TEMP"
 echo ""
 
-# Helper to time a command (returns milliseconds)
-time_cmd() {
-    local start=$(date +%s%N)
-    "$@" > /dev/null 2>&1
-    local end=$(date +%s%N)
-    echo $(( (end - start) / 1000000 ))
-}
-
-# === Step 1: Init ===
+# Step 1: Init
 echo "[1/4] Initializing repositories..."
 echo -n "  bz init: "
 cd "$BZ_TEMP"
@@ -66,29 +75,19 @@ cd "$BR_TEMP"
 br_init_ms=$(time_cmd "$BR_PATH" init)
 echo "${br_init_ms}ms"
 
-# === Step 2: Create 10 beads ===
+# Step 2: Create 10 beads
 echo "[2/4] Creating 10 beads (sequential)..."
 echo -n "  bz create x10: "
 cd "$BZ_TEMP"
-bz_create_start=$(date +%s%N)
-for i in $(seq 1 10); do
-    "$BZ_PATH" q "TestBead$i" --quiet > /dev/null 2>&1
-done
-bz_create_end=$(date +%s%N)
-bz_create_ms=$(( (bz_create_end - bz_create_start) / 1000000 ))
+bz_create_ms=$(time_loop 10 "$BZ_PATH" q "TestBead" --quiet)
 echo "${bz_create_ms}ms (avg: $((bz_create_ms / 10))ms per bead)"
 
 echo -n "  br create x10: "
 cd "$BR_TEMP"
-br_create_start=$(date +%s%N)
-for i in $(seq 1 10); do
-    "$BR_PATH" q "TestBead$i" --quiet > /dev/null 2>&1
-done
-br_create_end=$(date +%s%N)
-br_create_ms=$(( (br_create_end - br_create_start) / 1000000 ))
+br_create_ms=$(time_loop 10 "$BR_PATH" q "TestBead" --quiet)
 echo "${br_create_ms}ms (avg: $((br_create_ms / 10))ms per bead)"
 
-# === Step 3: List all beads ===
+# Step 3: List all beads
 echo "[3/4] Listing all beads..."
 echo -n "  bz list: "
 cd "$BZ_TEMP"
@@ -100,13 +99,12 @@ cd "$BR_TEMP"
 br_list_ms=$(time_cmd "$BR_PATH" list --all)
 echo "${br_list_ms}ms"
 
-# === Step 4: Cleanup ===
+# Step 4: Cleanup
 echo "[4/4] Cleaning up..."
-rm -rf "$BZ_TEMP" "$BR_TEMP"
-echo "  Removed $BZ_TEMP"
-echo "  Removed $BR_TEMP"
+cleanup
+echo "  Done"
 
-# === Summary ===
+# Summary
 echo ""
 echo "=== Summary ==="
 printf "%-20s %10s %10s\n" "Operation" "bz (Zig)" "br (Rust)"
