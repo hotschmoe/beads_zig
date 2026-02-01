@@ -29,7 +29,6 @@ const Issue = @import("../models/issue.zig").Issue;
 const BeadsLock = @import("lock.zig").BeadsLock;
 const IssueStore = @import("store.zig").IssueStore;
 const Generation = @import("generation.zig").Generation;
-const GenerationAwareLoader = @import("generation.zig").GenerationAwareLoader;
 const test_util = @import("../test_util.zig");
 
 /// Magic bytes to identify framed WAL entries: 0x000B3AD5 ("BEADS" in hex-ish)

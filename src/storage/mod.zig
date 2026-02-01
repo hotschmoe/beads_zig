@@ -55,7 +55,6 @@ pub const EventStoreError = events.EventStoreError;
 
 pub const Generation = generation.Generation;
 pub const GenerationError = generation.GenerationError;
-pub const GenerationAwareLoader = generation.GenerationAwareLoader;
 
 test {
     std.testing.refAllDecls(@This());

@@ -151,74 +151,6 @@ pub const Generation = struct {
     }
 };
 
-/// Load state with generation-based consistency checking.
-/// Retries if generation changes during read (compaction happened mid-read).
-pub const GenerationAwareLoader = struct {
-    beads_dir: []const u8,
-    allocator: std.mem.Allocator,
-    max_retries: u32 = 3,
-
-    const Self = @This();
-
-    pub fn init(beads_dir: []const u8, allocator: std.mem.Allocator) Self {
-        return .{
-            .beads_dir = beads_dir,
-            .allocator = allocator,
-        };
-    }
-
-    /// Result of a generation-aware load operation.
-    pub const LoadResult = struct {
-        generation: u64,
-        wal_path: []const u8,
-        retried: bool,
-
-        pub fn deinit(self: *LoadResult, allocator: std.mem.Allocator) void {
-            allocator.free(self.wal_path);
-        }
-    };
-
-    /// Get current generation and WAL path with retry on generation change.
-    /// Returns the generation that was successfully read without concurrent change.
-    pub fn getConsistentGeneration(self: *Self) !LoadResult {
-        var gen = Generation.init(self.beads_dir, self.allocator);
-        var retried = false;
-
-        var attempts: u32 = 0;
-        while (attempts < self.max_retries) : (attempts += 1) {
-            // Read generation before loading
-            const gen_before = try gen.read();
-            const wal_path = try gen.walPath(gen_before);
-            errdefer self.allocator.free(wal_path);
-
-            // Read generation after loading
-            const gen_after = try gen.read();
-
-            if (gen_before == gen_after) {
-                // Generation stable - return consistent state
-                return LoadResult{
-                    .generation = gen_before,
-                    .wal_path = wal_path,
-                    .retried = retried,
-                };
-            }
-
-            // Generation changed during read - retry
-            self.allocator.free(wal_path);
-            retried = true;
-        }
-
-        // Max retries exceeded - return latest generation
-        // (this should be very rare, only under extreme compaction load)
-        const final_gen = try gen.read();
-        return LoadResult{
-            .generation = final_gen,
-            .wal_path = try gen.walPath(final_gen),
-            .retried = retried,
-        };
-    }
-};
-
 // --- Tests ---
 
 test "Generation.read returns MIN_GENERATION for missing file" {
@@ -263,20 +195,3 @@ test "Generation.walPath generates correct paths" {
     try std.testing.expectEqualStrings(".beads/beads.wal.42", path2);
 }
 
-test "GenerationAwareLoader.getConsistentGeneration basic" {
-    const allocator = std.testing.allocator;
-    const test_dir = try test_util.createTestDir(allocator, "gen_loader");
-    defer allocator.free(test_dir);
-    defer test_util.cleanupTestDir(test_dir);
-
-    // Set up initial generation
-    var gen = Generation.init(test_dir, allocator);
-    try gen.write(5);
-
-    var loader = GenerationAwareLoader.init(test_dir, allocator);
-    var result = try loader.getConsistentGeneration();
-    defer result.deinit(allocator);
-
-    try std.testing.expectEqual(@as(u64, 5), result.generation);
-    try std.testing.expect(!result.retried);
-}
