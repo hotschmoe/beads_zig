@@ -1061,6 +1061,87 @@ test "random process kills during writes" {
 
 ---
 
+## External Review: LSM-Tree Framing
+
+An external architectural review provided additional perspective worth capturing.
+
+### Conceptual Model: Log-Structured Merge-Tree
+
+The Lock + WAL + Compact architecture is effectively a **custom LSM-Tree** optimized for CLI usage. While "rewriting a database engine" is usually ill-advised, our specific constraints (multiple distinct processes, high write contention, no background daemon) make this architecture superior to SQLite for this use case.
+
+### Binary WAL Format (Alternative to JSON Lines)
+
+Instead of plain JSON lines, consider a binary frame format for better crash recovery:
+
+```zig
+const WalEntryHeader = packed struct {
+    magic: u32 = 0xB3AD5, // "BEADS"
+    crc: u32,
+    len: u32,
+};
+
+pub fn append(file: std.fs.File, data: []const u8) !void {
+    const crc = std.hash.Crc32.hash(data);
+    const header = WalEntryHeader{ .crc = crc, .len = @intCast(data.len) };
+
+    var writer = file.writer();
+    try writer.writeStruct(header);
+    try writer.writeAll(data); // The JSON payload
+    try writer.writeByte('\n'); // Nice for cat/tail debugging
+}
+```
+
+Benefits:
+- Magic bytes enable quick validation of WAL integrity
+- CRC precedes payload, so we can detect truncation early
+- Length prefix enables skipping without parsing JSON
+- Still human-readable with `tail -c +13` to skip header
+
+### Critical: Separate Local Write from Remote Sync
+
+The 27s delays observed in logs came from `Auto-flush` blocking the critical path. This is the biggest UX killer.
+
+**Architecture MUST separate:**
+
+1. **Local Write Path** (inside lock, ~2ms total):
+   ```
+   bz add -> Acquire Lock -> Write Disk -> Release Lock
+   ```
+
+2. **Remote Sync Path** (outside lock, async):
+   ```
+   bz add spawns background thread OR user runs `bz sync`
+   ```
+
+**Recommendation:** Disable auto-flush by default. Make it opt-in or async-only.
+
+### Phased Implementation Strategy
+
+**Phase 1: Core Storage**
+- flock + Append-only WAL (with CRC32)
+- Ignore compaction initially
+
+**Phase 2: Compaction**
+- `bz compact` command
+- Threshold-triggered auto-compact
+
+**Phase 3: Network Sync**
+- Fix the network sync to be async
+- Disable auto-flush by default or make fully async
+
+This ordering ensures the local experience is rock-solid before adding network complexity.
+
+### Why flock Beats SQLite Here
+
+| Aspect | SQLite | flock + WAL |
+|--------|--------|-------------|
+| Lock wait | Userspace busy-wait, CPU burn | Kernel queue, process sleeps |
+| Write time | 5-50ms (B-tree, journaling) | ~1ms (append + fsync) |
+| Read contention | Readers can block writers | Readers never block |
+| Crash cleanup | Journal rollback logic | Kernel auto-releases flock |
+
+---
+
 ## Summary
 
 Your concurrent_writes.md establishes the right foundation. The key additions needed are:
