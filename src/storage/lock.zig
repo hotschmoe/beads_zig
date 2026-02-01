@@ -293,12 +293,13 @@ fn unlockPosix(file: std.fs.File) !void {
 }
 
 // Windows implementation using LockFileEx
+const LOCKFILE_EXCLUSIVE_LOCK: u32 = 0x00000002;
+const LOCKFILE_FAIL_IMMEDIATELY: u32 = 0x00000001;
+
 fn lockExclusiveWindows(file: std.fs.File) !void {
     const windows = std.os.windows;
     var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
 
-    // LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
-    const LOCKFILE_EXCLUSIVE_LOCK = 0x00000002;
     const result = windows.kernel32.LockFileEx(
         file.handle,
         LOCKFILE_EXCLUSIVE_LOCK,
@@ -317,10 +318,6 @@ fn tryLockExclusiveWindows(file: std.fs.File) !bool {
     const windows = std.os.windows;
     var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
 
-    // LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
-    // LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
-    const LOCKFILE_EXCLUSIVE_LOCK = 0x00000002;
-    const LOCKFILE_FAIL_IMMEDIATELY = 0x00000001;
     const result = windows.kernel32.LockFileEx(
         file.handle,
         LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
