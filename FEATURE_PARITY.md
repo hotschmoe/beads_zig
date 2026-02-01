@@ -222,9 +222,9 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 
 ```
 .beads/
-  beads.jsonl       # Main file (compacted state)
-  beads.wal         # Write-ahead log (recent appends)
-  beads.lock        # Lock file (flock target)
+  issues.jsonl      # Main file (compacted state)
+  issues.wal        # Write-ahead log (recent appends)
+  .beads.lock       # Lock file (flock target)
 ```
 
 #### JsonlFile (`src/storage/jsonl.zig`)
@@ -743,9 +743,9 @@ beads_zig uses Lock + WAL + Compact (no SQLite):
 
 ```
 .beads/
-  beads.jsonl   # Main file (compacted state, git-tracked)
-  beads.wal     # Write-ahead log (gitignored)
-  beads.lock    # flock target (gitignored)
+  issues.jsonl    # Main file (compacted state, git-tracked)
+  issues.wal      # Write-ahead log (gitignored)
+  .beads.lock     # flock target (gitignored)
 ```
 
 **Architecture comparison (for reference):**

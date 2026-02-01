@@ -23,9 +23,9 @@ Issues live in `.beads/` within your repository:
 
 ```
 .beads/
-  beads.jsonl   # Main storage - git-friendly diffs (tracked)
-  beads.wal     # Write-ahead log for concurrent writes (gitignored)
-  beads.lock    # Lock file for process coordination (gitignored)
+  issues.jsonl    # Main storage - git-friendly diffs (tracked)
+  issues.wal      # Write-ahead log for concurrent writes (gitignored)
+  .beads.lock     # Lock file for process coordination (gitignored)
 ```
 
 **Git is the infrastructure.** No servers, no accounts, no external dependencies. Issues travel with your code through normal push/pull operations.
@@ -51,7 +51,7 @@ Issue IDs like `bd-a3f8` are derived from random data, not sequential counters. 
 
 ### 4. Agent-First Design
 
-Every command supports `--json` output. Structured data for AI coding assistants, scripts, and tooling. The `ready` command returns actionable work with no blocked dependencies.
+Every command supports `--json` and `--toon` output. Structured data for AI coding assistants, scripts, and tooling. The `ready` command returns actionable work with no blocked dependencies.
 
 ### 5. Explicit Over Implicit
 
@@ -99,7 +99,6 @@ beads_zig never:
 ## Why Zig?
 
 - **Single static binary** - No runtime dependencies, drop into any system
-- **Small footprint** - Target: ~12KB release (vs 5-8MB for Rust version with SQLite)
 - **Fast compilation** - Seconds, not minutes
 - **No C dependencies** - Pure Zig storage layer (no SQLite, no libc on many targets)
 - **Memory safety** - Explicit allocation without garbage collection
@@ -120,7 +119,7 @@ beads_zig succeeds when:
 
 ---
 
-## Acknowledgments
+## Inspiration
 
 - **[beads](https://github.com/steveyegge/beads)** by Steve Yegge - Original vision
 - **[beads_rust](https://github.com/Dicklesworthstone/beads_rust)** by Jeffrey Emanuel - Reference implementation

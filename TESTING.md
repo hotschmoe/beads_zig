@@ -107,7 +107,7 @@ CI runs in fresh checkouts with no persistent state. Each test run starts clean.
 **Purpose**: Verify end-to-end command behavior.
 
 **Characteristics**:
-- Spawns actual `bz` process
+- Spawns actual `bz` process via `std.process.Child`
 - Uses temporary `.beads/` directories
 - Tests argument parsing, output format, exit codes
 - Slower (<1s per test)
@@ -120,9 +120,9 @@ CI runs in fresh checkouts with no persistent state. Each test run starts clean.
 - `bz sync` maintains data integrity
 - Error messages are helpful
 
-**Location**: `src/tests/cli/` or separate test binary.
+**Location**: `src/tests/cli_test.zig` - Integration tests that spawn the actual binary.
 
-### Fuzz Tests
+### Fuzz Tests (Planned)
 
 **Purpose**: Discover edge cases through random input generation.
 
@@ -138,7 +138,7 @@ CI runs in fresh checkouts with no persistent state. Each test run starts clean.
 - Base36 decoding with invalid characters
 - Argument parsing with adversarial input
 
-**Location**: Inline fuzz tests or `src/tests/fuzz/`.
+**Location**: Inline fuzz tests or `src/tests/fuzz/` (not yet implemented).
 
 ---
 
@@ -214,12 +214,12 @@ N=${1:-5}
 ITERATIONS=${2:-20}
 
 rm -rf .beads
-mkdir -p .beads
+bz init
 
 for i in $(seq 1 $N); do
     (
         for j in $(seq 1 $ITERATIONS); do
-            bz add "Agent $i Issue $j" --priority $((j % 5)) 2>&1 | grep -i "error" &
+            bz create "Agent $i Issue $j" --priority $((j % 5)) 2>&1 | grep -i "error" &
         done
         wait
     ) &
@@ -320,31 +320,17 @@ test "addDependency rejects cycles" {
 ## Running Tests
 
 ```bash
-# Run all tests (RECOMMENDED)
-zig test src/root.zig
+# Run all tests (RECOMMENDED - sets up external dependencies)
+zig build test
 
-# Run tests for a specific module
+# Run tests for a specific module (only if module has no external deps)
 zig test src/storage/store.zig
 zig test src/models/issue.zig
-
-# With verbose output
-zig test src/root.zig 2>&1 | head -100
 ```
 
-### Why `zig test` Instead of `zig build test`?
+**Note:** Use `zig build test` rather than `zig test src/root.zig` directly. The build system correctly configures external dependencies (rich_zig, toon_zig) which are required for the full test suite.
 
-The `zig build test` command has a known issue where the test process hangs after all tests pass. This appears to be a Zig 0.15.x build system issue with the test runner cleanup, not a problem with our code.
-
-**Symptoms:**
-- All tests pass (344/344)
-- Process hangs indefinitely after completion
-- Exit code 143 (SIGTERM from timeout)
-
-**Root cause:** Unknown - likely in `addRunArtifact` or test harness teardown.
-
-**Workaround:** Use `zig test src/root.zig` directly, which works perfectly on all platforms.
-
-The production binary (`zig build`) is unaffected - only the test runner has this issue.
+**Current test count:** 523 tests across all modules.
 
 ---
 

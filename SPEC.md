@@ -1,7 +1,7 @@
 # SPEC.md - beads_zig Technical Specification
 
-**Version**: 0.1.0-draft
-**Status**: Draft - Pending Review
+**Version**: 0.1.0
+**Status**: Feature Complete
 **Compatibility Target**: beads_rust JSONL import (can read beads_rust exports; output format may differ)
 
 ---
@@ -27,11 +27,10 @@
 
 ```
 .beads/
-  beads.jsonl     # Main storage (git tracked)
-  beads.wal       # Write-ahead log (gitignored)
-  beads.lock      # Lock file for flock (gitignored)
+  issues.jsonl    # Main storage (git tracked)
+  issues.wal      # Write-ahead log (gitignored)
+  .beads.lock     # Lock file for flock (gitignored)
   config.yaml     # Project configuration (git tracked)
-  metadata.json   # System metadata (gitignored)
 ```
 
 ### Binary Name
@@ -268,25 +267,25 @@ pub const EventType = enum {
 beads_zig uses a pure Zig storage layer with Lock + WAL + Compact for concurrent access:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      IssueStore                              │
-│  ┌─────────────────┐    ┌─────────────────────────────────┐ │
-│  │ ArrayList(Issue)│    │ StringHashMap(usize) - ID index │ │
-│  └────────┬────────┘    └─────────────────────────────────┘ │
-│           │                                                  │
-│           ▼                                                  │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │              Lock + WAL + Compact                        │ │
-│  │  Write: flock -> append WAL -> release (~1ms)            │ │
-│  │  Read:  load main + replay WAL (lock-free)               │ │
-│  │  Compact: merge WAL into main when threshold exceeded    │ │
-│  └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-              .beads/beads.jsonl   (main file)
-              .beads/beads.wal     (write-ahead log)
-              .beads/beads.lock    (flock target)
++-------------------------------------------------------------+
+|                      IssueStore                              |
+|  +------------------+  +----------------------------------+  |
+|  | ArrayList(Issue) |  | StringHashMap(usize) - ID index |  |
+|  +--------+---------+  +----------------------------------+  |
+|           |                                                  |
+|           v                                                  |
+|  +-------------------------------------------------------+   |
+|  |              Lock + WAL + Compact                      |  |
+|  |  Write: flock -> append WAL -> fsync -> release (~1ms) |  |
+|  |  Read:  load main + replay WAL (lock-free)             |  |
+|  |  Compact: merge WAL into main when threshold exceeded  |  |
+|  +-------------------------------------------------------+   |
++-------------------------------------------------------------+
+                              |
+                              v
+              .beads/issues.jsonl   (main file)
+              .beads/issues.wal     (write-ahead log)
+              .beads/.beads.lock    (flock target)
 ```
 
 **Key Difference from beads_rust**: beads_rust uses SQLite with WAL mode, which suffers from lock contention when multiple agents write simultaneously. beads_zig uses flock-based locking with a separate WAL file, providing:
@@ -462,7 +461,7 @@ Used for deduplication during import.
 
 ## JSONL Format
 
-### Main File (`beads.jsonl`) Specification
+### Main File (`issues.jsonl`) Specification
 
 - One complete JSON object per line
 - UTF-8 encoding
@@ -478,7 +477,7 @@ Used for deduplication during import.
 {"id":"bd-def456","content_hash":"d4e5f6...","title":"Set up OAuth provider","description":null,"status":"in_progress","priority":1,"issue_type":"task","assignee":"alice@example.com",...}
 ```
 
-### WAL File (`beads.wal`) Specification
+### WAL File (`issues.wal`) Specification
 
 - One operation entry per line
 - UTF-8 encoding
@@ -847,3 +846,4 @@ Deeper hierarchies are rejected. Use labels or dependencies for complex organiza
 |---------|------|---------|
 | 0.1.0-draft | 2026-01-30 | Initial draft |
 | 0.1.1-draft | 2026-01-30 | Resolved open questions: YAML config, optional colors, import-only JSONL compat, all shell completions, 3-level hierarchy limit |
+| 0.1.0 | 2026-02-01 | Feature complete: 34 CLI commands, Lock+WAL+Compact storage, full test coverage |

@@ -117,16 +117,17 @@ Only if all three answers are "yes" should you fix the code.
 ### Running Tests
 
 ```bash
-# Run all tests via build system (recommended)
+# Run all tests via build system (RECOMMENDED)
 zig build test
 
-# Run specific module tests directly
+# Run specific module tests (only if module has no external deps)
 zig test src/storage/store.zig
 zig test src/models/issue.zig
 ```
 
-Note: The build.zig creates a manual Run step to avoid Zig 0.15.x IPC protocol hang.
-See https://github.com/ziglang/zig/issues/18111 for details.
+**Note:** Use `zig build test` rather than `zig test src/root.zig` directly. The build system configures external dependencies (rich_zig, toon_zig).
+
+**Current test count:** 523 tests across all modules.
 
 **Manual CLI testing** is preferred for CLI commands - test in `sandbox/` directory.
 <!-- END:testing-philosophy -->
@@ -144,24 +145,48 @@ we love you, Claude! do your best today
 
 ### beads_zig Architecture Overview
 
-**beads_zig is a Zig port of beads_rust with key architectural differences:**
+**beads_zig is a feature-complete Zig implementation with key architectural differences from beads_rust:**
 
 1. **No SQLite** - Pure Zig storage layer with JSONL + WAL
 2. **Lock + WAL + Compact** - Custom concurrent write handling
-3. **No C dependencies** - Single static binary (~12KB)
+3. **No C dependencies** - Single static binary
+4. **34 CLI commands** - Full feature parity
+
+### Codebase Structure (~19,421 LOC)
+
+```
+src/
+  main.zig           # CLI entry point
+  root.zig           # Library exports + test runner
+  cli/               # 26 command implementation files
+    args.zig         # Argument parsing (34 commands)
+    common.zig       # Shared context and output helpers
+  storage/
+    jsonl.zig        # JSONL file I/O (atomic writes)
+    store.zig        # In-memory IssueStore with indexing
+    graph.zig        # Dependency graph with cycle detection
+    lock.zig         # flock-based concurrent write locking
+    wal.zig          # Write-ahead log operations
+    compact.zig      # WAL compaction into main file
+  models/            # Data structures (Issue, Status, Priority, etc.)
+  id/                # Hash-based ID generation (base36)
+  config/            # YAML configuration
+  output/            # Formatting (plain, rich, json, toon, quiet)
+  errors.zig         # Structured error handling
+```
 
 ### Storage Layer
 
 ```
 .beads/
-  beads.jsonl   # Main file (compacted state, git-tracked)
-  beads.wal     # Write-ahead log (gitignored)
-  beads.lock    # flock target (gitignored)
+  issues.jsonl    # Main file (compacted state, git-tracked)
+  issues.wal      # Write-ahead log (gitignored)
+  .beads.lock     # flock target (gitignored)
 ```
 
 **Write path**: `flock(LOCK_EX) -> append WAL -> fsync -> flock(LOCK_UN)` (~1ms)
 **Read path**: `load main + replay WAL` (no lock)
-**Compaction**: Merge WAL into main when threshold exceeded
+**Compaction**: Merge WAL into main when threshold exceeded (100 entries or 100KB)
 
 ### Key Differences from beads_rust
 
@@ -170,7 +195,6 @@ we love you, Claude! do your best today
 | Storage | SQLite + WAL mode | JSONL + custom WAL |
 | Concurrency | SQLite locking (contention under load) | flock + append-only WAL |
 | Dependencies | SQLite C library | None (pure Zig) |
-| Binary size | ~5-8MB | ~12KB |
 | Lock behavior | SQLITE_BUSY retry storms | Blocking flock (no spinning) |
 
 ### Why This Matters for Agents
@@ -179,12 +203,17 @@ When 5+ agents write simultaneously:
 - SQLite: Retry storms, exponential backoff, potential timeouts
 - beads_zig: Sequential flock acquisition, ~1ms per write, no retries
 
+### Dependencies
+
+- **rich_zig** v1.1.1 - Terminal formatting/colors
+- **toon_zig** v0.1.5 - LLM-optimized output format
+
 ### Build and Test
 
 ```bash
 zig build                  # Build
 zig build run              # Run CLI
-zig build test             # Run tests
+zig build test             # Run tests (523 tests)
 
 # Cross-compile
 zig build -Dtarget=aarch64-linux-gnu
@@ -198,7 +227,7 @@ Always test in `sandbox/` directory, not project root:
 ```bash
 cd sandbox
 ../zig-out/bin/bz init
-../zig-out/bin/bz add "Test issue"
+../zig-out/bin/bz create "Test issue"
 ```
 
 The project root may have a `.beads/` for beads_rust tracking.
