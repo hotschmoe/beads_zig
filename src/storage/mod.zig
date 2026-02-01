@@ -21,6 +21,8 @@ pub const wal = @import("wal.zig");
 pub const compact = @import("compact.zig");
 pub const events = @import("events.zig");
 pub const generation = @import("generation.zig");
+pub const metrics = @import("metrics.zig");
+pub const txlog = @import("txlog.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -57,6 +59,17 @@ pub const EventStoreError = events.EventStoreError;
 
 pub const Generation = generation.Generation;
 pub const GenerationError = generation.GenerationError;
+
+pub const LockMetrics = metrics.LockMetrics;
+pub const getMetrics = metrics.getMetrics;
+pub const resetMetrics = metrics.resetMetrics;
+
+pub const TxLog = txlog.TxLog;
+pub const LogEntry = txlog.LogEntry;
+pub const LogLevel = txlog.LogLevel;
+pub const initTxLog = txlog.init;
+pub const deinitTxLog = txlog.deinit;
+pub const beginTx = txlog.begin;
 
 test {
     std.testing.refAllDecls(@This());

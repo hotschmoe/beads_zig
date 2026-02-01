@@ -86,6 +86,7 @@ pub const Command = union(enum) {
     version: void,
     schema: void,
     completions: CompletionsArgs,
+    metrics: MetricsArgs,
 
     // Help
     help: HelpArgs,
@@ -398,6 +399,11 @@ pub const CompletionsArgs = struct {
     shell: Shell,
 };
 
+/// Metrics command arguments.
+pub const MetricsArgs = struct {
+    reset: bool = false, // Reset metrics after displaying
+};
+
 /// Help command arguments.
 pub const HelpArgs = struct {
     topic: ?[]const u8 = null,
@@ -702,6 +708,9 @@ pub const ArgParser = struct {
         }
         if (std.mem.eql(u8, cmd, "completions") or std.mem.eql(u8, cmd, "completion")) {
             return .{ .completions = try self.parseCompletionsArgs() };
+        }
+        if (std.mem.eql(u8, cmd, "metrics")) {
+            return .{ .metrics = try self.parseMetricsArgs() };
         }
 
         // Help
@@ -1201,6 +1210,16 @@ pub const ArgParser = struct {
         const shell_str = self.next() orelse return error.MissingRequiredArgument;
         const shell = Shell.fromString(shell_str) orelse return error.InvalidShell;
         return .{ .shell = shell };
+    }
+
+    fn parseMetricsArgs(self: *Self) ParseError!MetricsArgs {
+        var result = MetricsArgs{};
+        while (self.hasNext()) {
+            if (self.consumeFlag("-r", "--reset")) {
+                result.reset = true;
+            } else break;
+        }
+        return result;
     }
 
     fn parseHelpArgs(self: *Self) ParseError!HelpArgs {
@@ -2130,4 +2149,31 @@ test "GlobalOptions.isStructuredOutput" {
     // Both (edge case)
     const both_opts = GlobalOptions{ .json = true, .toon = true };
     try std.testing.expect(both_opts.isStructuredOutput());
+}
+
+test "parse metrics command" {
+    const args_list = [_][]const u8{"metrics"};
+    var parser = ArgParser.init(std.testing.allocator, &args_list);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .metrics);
+    try std.testing.expect(!result.command.metrics.reset);
+}
+
+test "parse metrics command with reset flag" {
+    const args_list = [_][]const u8{ "metrics", "--reset" };
+    var parser = ArgParser.init(std.testing.allocator, &args_list);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .metrics);
+    try std.testing.expect(result.command.metrics.reset);
+}
+
+test "parse metrics command with -r flag" {
+    const args_list = [_][]const u8{ "metrics", "-r" };
+    var parser = ArgParser.init(std.testing.allocator, &args_list);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .metrics);
+    try std.testing.expect(result.command.metrics.reset);
 }

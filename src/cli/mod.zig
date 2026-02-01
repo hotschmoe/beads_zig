@@ -40,6 +40,7 @@ pub const lint = @import("lint.zig");
 pub const version = @import("version.zig");
 pub const schema = @import("schema.zig");
 pub const completions = @import("completions.zig");
+pub const metrics_cmd = @import("metrics.zig");
 pub const help = @import("help.zig");
 
 pub const ArgParser = args.ArgParser;
@@ -186,6 +187,11 @@ pub const CompletionsError = completions.CompletionsError;
 pub const CompletionsResult = completions.CompletionsResult;
 pub const runCompletions = completions.run;
 pub const Shell = completions.Shell;
+
+pub const MetricsError = metrics_cmd.MetricsError;
+pub const MetricsResult = metrics_cmd.MetricsResult;
+pub const runMetrics = metrics_cmd.run;
+pub const MetricsArgs = args.MetricsArgs;
 
 pub const HelpError = help.HelpError;
 pub const HelpResult = help.HelpResult;

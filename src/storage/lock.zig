@@ -14,6 +14,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const test_util = @import("../test_util.zig");
+const metrics = @import("metrics.zig");
+const txlog = @import("txlog.zig");
 
 pub const LockError = error{
     LockFailed,
@@ -27,6 +29,8 @@ pub const LockError = error{
 pub const BeadsLock = struct {
     file: std.fs.File,
     path: []const u8,
+    acquire_time: i128 = 0, // Timestamp when lock was acquired (for hold time tracking)
+    correlation_id: u64 = 0, // Transaction correlation ID for logging
 
     const Self = @This();
 
@@ -45,6 +49,10 @@ pub const BeadsLock = struct {
     /// If the lock holder process is dead, the lock is broken and acquired.
     /// Returns error.LockTimeout if timeout_ms elapses without acquiring.
     pub fn acquireWithStaleLockDetection(path: []const u8, timeout_ms: u64) LockError!Self {
+        const start_ns = std.time.nanoTimestamp();
+        var had_contention = false;
+        var broke_stale = false;
+
         const file = openOrCreateLockFile(path) catch return LockError.LockFailed;
         errdefer file.close();
 
@@ -53,17 +61,28 @@ pub const BeadsLock = struct {
         if (locked) {
             // Got the lock immediately - write our PID
             writePidToLockFile(file) catch {};
-            return .{ .file = file, .path = path };
+            const acquire_time = std.time.nanoTimestamp();
+            const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+            metrics.recordAcquisition(wait_ns, false);
+            return .{ .file = file, .path = path, .acquire_time = acquire_time };
         }
 
-        // Lock is held - check if holder is alive
+        // Lock is held - we have contention
+        had_contention = true;
+
+        // Check if holder is alive
         if (readPidFromLockFile(file)) |holder_pid| {
             if (!isProcessAlive(holder_pid)) {
                 // Holder is dead - force acquire by blocking
                 // The kernel will grant us the lock since the holder is gone
                 lockExclusive(file) catch return LockError.LockFailed;
                 writePidToLockFile(file) catch {};
-                return .{ .file = file, .path = path };
+                broke_stale = true;
+                metrics.recordStaleLockBroken();
+                const acquire_time = std.time.nanoTimestamp();
+                const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+                metrics.recordAcquisition(wait_ns, had_contention);
+                return .{ .file = file, .path = path, .acquire_time = acquire_time };
             }
         }
 
@@ -75,7 +94,11 @@ pub const BeadsLock = struct {
             const try_locked = tryLockExclusive(file) catch return LockError.LockFailed;
             if (try_locked) {
                 writePidToLockFile(file) catch {};
-                return .{ .file = file, .path = path };
+                const acquire_time = std.time.nanoTimestamp();
+                const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+                metrics.recordAcquisition(wait_ns, had_contention);
+                if (broke_stale) metrics.recordStaleLockBroken();
+                return .{ .file = file, .path = path, .acquire_time = acquire_time };
             }
 
             // Check if holder died while we were waiting
@@ -85,7 +108,12 @@ pub const BeadsLock = struct {
                     const dead_locked = tryLockExclusive(file) catch return LockError.LockFailed;
                     if (dead_locked) {
                         writePidToLockFile(file) catch {};
-                        return .{ .file = file, .path = path };
+                        broke_stale = true;
+                        const acquire_time = std.time.nanoTimestamp();
+                        const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+                        metrics.recordAcquisition(wait_ns, had_contention);
+                        metrics.recordStaleLockBroken();
+                        return .{ .file = file, .path = path, .acquire_time = acquire_time };
                     }
                 }
             }
@@ -94,6 +122,8 @@ pub const BeadsLock = struct {
             std.Thread.sleep(10 * std.time.ns_per_ms);
         }
 
+        // Timeout
+        metrics.recordTimeout();
         file.close();
         return LockError.LockTimeout;
     }
@@ -101,6 +131,7 @@ pub const BeadsLock = struct {
     /// Try to acquire lock without blocking.
     /// Returns null if lock is held by another process.
     pub fn tryAcquire(path: []const u8) LockError!?Self {
+        const start_ns = std.time.nanoTimestamp();
         const file = openOrCreateLockFile(path) catch return LockError.LockFailed;
         errdefer file.close();
 
@@ -112,23 +143,31 @@ pub const BeadsLock = struct {
 
         // Got the lock - write our PID
         writePidToLockFile(file) catch {};
+        const acquire_time = std.time.nanoTimestamp();
+        const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+        metrics.recordAcquisition(wait_ns, false);
 
         return .{
             .file = file,
             .path = path,
+            .acquire_time = acquire_time,
         };
     }
 
     /// Try to acquire lock, breaking stale locks from dead processes.
     /// Returns null if lock is held by a live process.
     pub fn tryAcquireBreakingStale(path: []const u8) LockError!?Self {
+        const start_ns = std.time.nanoTimestamp();
         const file = openOrCreateLockFile(path) catch return LockError.LockFailed;
         errdefer file.close();
 
         const locked = tryLockExclusive(file) catch return LockError.LockFailed;
         if (locked) {
             writePidToLockFile(file) catch {};
-            return .{ .file = file, .path = path };
+            const acquire_time = std.time.nanoTimestamp();
+            const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+            metrics.recordAcquisition(wait_ns, false);
+            return .{ .file = file, .path = path, .acquire_time = acquire_time };
         }
 
         // Lock is held - check if holder is alive
@@ -137,7 +176,11 @@ pub const BeadsLock = struct {
                 // Holder is dead - force acquire
                 lockExclusive(file) catch return LockError.LockFailed;
                 writePidToLockFile(file) catch {};
-                return .{ .file = file, .path = path };
+                metrics.recordStaleLockBroken();
+                const acquire_time = std.time.nanoTimestamp();
+                const wait_ns: u64 = @intCast(@max(0, acquire_time - start_ns));
+                metrics.recordAcquisition(wait_ns, true); // Contention (had to break stale)
+                return .{ .file = file, .path = path, .acquire_time = acquire_time };
             }
         }
 
@@ -190,6 +233,13 @@ pub const BeadsLock = struct {
 
     /// Release the lock.
     pub fn release(self: *Self) void {
+        // Record hold time metrics
+        if (self.acquire_time != 0) {
+            const now = std.time.nanoTimestamp();
+            const hold_ns: u64 = @intCast(@max(0, now - self.acquire_time));
+            metrics.recordRelease(hold_ns);
+        }
+
         // Clear PID before releasing (optional, but clean)
         self.file.seekTo(0) catch {};
         self.file.setEndPos(0) catch {};

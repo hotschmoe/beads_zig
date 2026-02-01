@@ -191,6 +191,11 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 error.WriteError => std.process.exit(1),
             };
         },
+        .metrics => |metrics_args| {
+            cli.runMetrics(metrics_args, result.global, allocator) catch |err| switch (err) {
+                error.WriteError, error.OutOfMemory => std.process.exit(1),
+            };
+        },
         .info => {
             cli.runInfo(result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
