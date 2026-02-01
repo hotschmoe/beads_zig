@@ -20,6 +20,9 @@ pub const ready = @import("ready.zig");
 pub const dep = @import("dep.zig");
 pub const sync = @import("sync.zig");
 pub const search = @import("search.zig");
+pub const stale = @import("stale.zig");
+pub const count = @import("count.zig");
+pub const defer_cmd = @import("defer.zig");
 pub const label = @import("label.zig");
 pub const comments = @import("comments.zig");
 pub const history = @import("history.zig");
@@ -28,6 +31,9 @@ pub const info = @import("info.zig");
 pub const stats = @import("stats.zig");
 pub const doctor = @import("doctor.zig");
 pub const config = @import("config.zig");
+pub const version = @import("version.zig");
+pub const schema = @import("schema.zig");
+pub const completions = @import("completions.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -85,6 +91,13 @@ pub const SearchError = search.SearchError;
 pub const SearchResult = search.SearchResult;
 pub const runSearch = search.run;
 
+pub const runStale = stale.run;
+
+pub const runCount = count.run;
+
+pub const runDefer = defer_cmd.run;
+pub const runUndefer = defer_cmd.runUndefer;
+
 pub const LabelError = label.LabelError;
 pub const LabelResult = label.LabelResult;
 pub const runLabel = label.run;
@@ -116,6 +129,20 @@ pub const runDoctor = doctor.run;
 pub const ConfigError = config.ConfigError;
 pub const ConfigResult = config.ConfigResult;
 pub const runConfig = config.run;
+
+pub const VersionError = version.VersionError;
+pub const VersionResult = version.VersionResult;
+pub const runVersion = version.run;
+pub const VERSION = version.VERSION;
+
+pub const SchemaError = schema.SchemaError;
+pub const SchemaResult = schema.SchemaResult;
+pub const runSchema = schema.run;
+
+pub const CompletionsError = completions.CompletionsError;
+pub const CompletionsResult = completions.CompletionsResult;
+pub const runCompletions = completions.run;
+pub const Shell = completions.Shell;
 
 test {
     std.testing.refAllDecls(@This());

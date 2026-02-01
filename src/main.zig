@@ -123,11 +123,47 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .stale => |stale_args| {
+            cli.runStale(stale_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .count => |count_args| {
+            cli.runCount(count_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .defer_cmd => |defer_args| {
+            cli.runDefer(defer_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.AlreadyDeferred, error.InvalidDate => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .undefer => |undefer_args| {
+            cli.runUndefer(undefer_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound => std.process.exit(1),
+                else => return err,
+            };
+        },
         .help => |help_args| {
             try showHelp(help_args.topic, allocator);
         },
         .version => {
-            try showVersion();
+            _ = cli.runVersion(result.global, allocator) catch |err| switch (err) {
+                error.WriteError => std.process.exit(1),
+            };
+        },
+        .schema => {
+            _ = cli.runSchema(result.global, allocator) catch |err| switch (err) {
+                error.WriteError, error.OutOfMemory => std.process.exit(1),
+            };
+        },
+        .completions => |comp_args| {
+            _ = cli.runCompletions(comp_args, result.global, allocator) catch |err| switch (err) {
+                error.WriteError => std.process.exit(1),
+            };
         },
         else => {
             var out = output.Output.init(allocator, .{
@@ -212,10 +248,6 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
     }
 }
 
-fn showVersion() !void {
-    const stdout = std.fs.File.stdout();
-    try stdout.writeAll("bz 0.1.0-dev (beads_zig)\n");
-}
 
 test "library imports compile" {
     // Verify all modules are accessible

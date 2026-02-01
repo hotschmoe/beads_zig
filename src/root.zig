@@ -15,6 +15,7 @@ pub const config = @import("config/mod.zig");
 pub const output = @import("output/mod.zig");
 pub const errors = @import("errors.zig");
 pub const test_util = @import("test_util.zig");
+pub const tests = @import("tests/mod.zig");
 
 test {
     // Run tests from all submodules

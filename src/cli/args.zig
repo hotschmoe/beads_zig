@@ -50,6 +50,8 @@ pub const Command = union(enum) {
     search: SearchArgs,
     stale: StaleArgs,
     count: CountArgs,
+    defer_cmd: DeferArgs,
+    undefer: UndeferArgs,
 
     // Dependencies
     dep: DepArgs,
@@ -170,6 +172,18 @@ pub const StaleArgs = struct {
 /// Count command arguments.
 pub const CountArgs = struct {
     group_by: ?[]const u8 = null,
+};
+
+/// Defer command arguments.
+pub const DeferArgs = struct {
+    id: []const u8,
+    until: ?[]const u8 = null, // RFC3339 date or relative like "+7d"
+    reason: ?[]const u8 = null,
+};
+
+/// Undefer command arguments.
+pub const UndeferArgs = struct {
+    id: []const u8,
 };
 
 /// Dependency subcommand variants.
@@ -492,6 +506,12 @@ pub const ArgParser = struct {
         if (std.mem.eql(u8, cmd, "count")) {
             return .{ .count = try self.parseCountArgs() };
         }
+        if (std.mem.eql(u8, cmd, "defer")) {
+            return .{ .defer_cmd = try self.parseDeferArgs() };
+        }
+        if (std.mem.eql(u8, cmd, "undefer")) {
+            return .{ .undefer = try self.parseUndeferArgs() };
+        }
 
         // Dependencies
         if (std.mem.eql(u8, cmd, "dep") or std.mem.eql(u8, cmd, "deps") or std.mem.eql(u8, cmd, "dependency")) {
@@ -775,6 +795,24 @@ pub const ArgParser = struct {
             } else break;
         }
         return result;
+    }
+
+    fn parseDeferArgs(self: *Self) ParseError!DeferArgs {
+        const id = self.next() orelse return error.MissingRequiredArgument;
+        var result = DeferArgs{ .id = id };
+        while (self.hasNext()) {
+            if (self.consumeFlag("-u", "--until")) {
+                result.until = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-r", "--reason")) {
+                result.reason = self.next() orelse return error.MissingFlagValue;
+            } else break;
+        }
+        return result;
+    }
+
+    fn parseUndeferArgs(self: *Self) ParseError!UndeferArgs {
+        const id = self.next() orelse return error.MissingRequiredArgument;
+        return UndeferArgs{ .id = id };
     }
 
     fn parseDepArgs(self: *Self) ParseError!DepArgs {
