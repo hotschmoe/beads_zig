@@ -12,7 +12,6 @@ const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 
-const Issue = models.Issue;
 const Status = models.Status;
 const CommandContext = common.CommandContext;
 const DependencyGraph = common.DependencyGraph;
@@ -23,20 +22,7 @@ const EdgeItem = struct { from: []const u8, to: []const u8 };
 pub const GraphError = error{
     WorkspaceNotInitialized,
     IssueNotFound,
-    StorageError,
     OutOfMemory,
-};
-
-pub const GraphNode = struct {
-    id: []const u8,
-    title: []const u8,
-    status: []const u8,
-};
-
-pub const GraphEdge = struct {
-    from: []const u8,
-    to: []const u8,
-    dep_type: []const u8,
 };
 
 pub const GraphResult = struct {
@@ -44,8 +30,6 @@ pub const GraphResult = struct {
     format: ?[]const u8 = null,
     node_count: ?usize = null,
     edge_count: ?usize = null,
-    nodes: ?[]const GraphNode = null,
-    edges: ?[]const GraphEdge = null,
     output: ?[]const u8 = null,
     message: ?[]const u8 = null,
 };
@@ -124,7 +108,7 @@ fn renderAsciiTree(
     const issue = graph.store.getRef(root_id) orelse return;
     try writer.print("{s} [{s}] - {s}\n", .{ issue.id, issue.status.toString(), truncateTitle(issue.title, 50) });
 
-    try renderAsciiSubtree(graph, writer, root_id, "", true, 1, max_depth orelse 10, &visited, allocator);
+    try renderAsciiSubtree(graph, writer, root_id, "", 1, max_depth orelse 10, &visited, allocator);
 
     if (global.isStructuredOutput()) {
         try output.printJson(GraphResult{
@@ -142,7 +126,6 @@ fn renderAsciiSubtree(
     writer: anytype,
     issue_id: []const u8,
     prefix: []const u8,
-    _: bool, // is_last - unused, kept for API symmetry
     depth: u32,
     max_depth: u32,
     visited: *std.StringHashMapUnmanaged(void),
@@ -178,7 +161,7 @@ fn renderAsciiSubtree(
                 truncateTitle(blocker.title, 40),
             });
 
-            try renderAsciiSubtree(graph, writer, dep.depends_on_id, new_prefix, is_last_dep, depth + 1, max_depth, visited, allocator);
+            try renderAsciiSubtree(graph, writer, dep.depends_on_id, new_prefix, depth + 1, max_depth, visited, allocator);
         } else {
             try writer.print("{s}{s}{s} [?] - (not found)\n", .{ prefix, connector, dep.depends_on_id });
         }
