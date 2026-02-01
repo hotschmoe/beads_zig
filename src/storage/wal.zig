@@ -24,6 +24,7 @@
 //! - Old WAL files cleaned up after successful compaction
 
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
 const BeadsLock = @import("lock.zig").BeadsLock;
@@ -31,6 +32,33 @@ const IssueStore = @import("store.zig").IssueStore;
 const Generation = @import("generation.zig").Generation;
 const walstate = @import("walstate.zig");
 const test_util = @import("../test_util.zig");
+
+/// Fsync a directory file descriptor for durability.
+/// Unlike std.posix.fsync, this handles EINVAL gracefully since some filesystems
+/// don't support fsync on directories. This is a best-effort operation.
+fn fsyncDir(fd: std.posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        // Windows: FlushFileBuffers doesn't work on directories
+        return;
+    }
+    // Call fsync directly via the system interface, ignoring errors.
+    // Some filesystems (e.g., btrfs with certain configs, NFS) may return EINVAL.
+    // This is a best-effort durability enhancement.
+    switch (builtin.os.tag) {
+        .linux => {
+            _ = std.os.linux.fsync(fd);
+        },
+        .macos, .ios, .tvos, .watchos, .visionos => {
+            _ = std.c.fsync(fd);
+        },
+        .freebsd, .openbsd, .netbsd, .dragonfly => {
+            _ = std.c.fsync(fd);
+        },
+        else => {
+            // Unsupported platform, skip
+        },
+    }
+}
 
 /// Magic bytes to identify framed WAL entries: 0x000B3AD5 ("BEADS" in hex-ish)
 pub const WAL_MAGIC: u32 = 0x000B3AD5;
@@ -382,8 +410,21 @@ pub const Wal = struct {
         file.writeAll(json_bytes) catch return WalError.WriteError;
         file.writeAll("\n") catch return WalError.WriteError;
 
-        // fsync for durability
+        // fsync file for durability
         file.sync() catch return WalError.WriteError;
+
+        // Also fsync the parent directory to ensure file metadata is durable.
+        // This ensures the file's existence and size survive an immediate system crash.
+        // See: concurrency_critique.md "Fsync Directory for Durability"
+        if (std.fs.path.dirname(self.wal_path)) |parent| {
+            if (dir.openDir(parent, .{})) |parent_dir_handle| {
+                var parent_dir = parent_dir_handle;
+                defer parent_dir.close();
+                fsyncDir(parent_dir.fd);
+            } else |_| {
+                // Parent directory should exist since we just wrote to a file in it
+            }
+        }
     }
 
     /// Read all WAL entries with generation-aware consistency checking.
