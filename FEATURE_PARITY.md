@@ -236,30 +236,30 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 - [x] Handle missing file gracefully (return empty)
 - [x] Unknown field preservation (forward compatibility)
 
-#### Concurrent Write Handling (`src/storage/lock.zig`) (bd-fw7)
+#### Concurrent Write Handling (`src/storage/lock.zig`) (bd-fw7 - DONE)
 
-- [ ] `BeadsLock` struct with flock-based locking
-- [ ] `acquire()` - Blocking exclusive lock (LOCK_EX)
-- [ ] `tryAcquire()` - Non-blocking lock attempt (LOCK_NB)
-- [ ] `acquireTimeout(ms)` - Lock with timeout
-- [ ] `release()` - Release lock (LOCK_UN)
-- [ ] `withLock(fn)` - RAII-style lock wrapper
-- [ ] Windows compatibility (LockFileEx)
+- [x] `BeadsLock` struct with flock-based locking
+- [x] `acquire()` - Blocking exclusive lock (LOCK_EX)
+- [x] `tryAcquire()` - Non-blocking lock attempt (LOCK_NB)
+- [x] `acquireTimeout(ms)` - Lock with timeout
+- [x] `release()` - Release lock (LOCK_UN)
+- [x] `withLock(fn)` - RAII-style lock wrapper
+- [x] Windows compatibility (LockFileEx)
 
-#### WAL Operations (`src/storage/wal.zig`) (bd-1sd)
+#### WAL Operations (`src/storage/wal.zig`) (bd-1sd - DONE)
 
-- [ ] `WalEntry` struct (op, timestamp, id, data)
-- [ ] `WalOp` enum (add, update, close, reopen, delete, set_blocked, unset_blocked)
-- [ ] `appendWalEntry(entry)` - Append to WAL under lock
-- [ ] `replayWal(file)` - Apply WAL entries to in-memory state
-- [ ] WAL entry serialization (JSON lines)
+- [x] `WalEntry` struct (op, timestamp, id, data)
+- [x] `WalOp` enum (add, update, close, reopen, delete, set_blocked, unset_blocked)
+- [x] `appendWalEntry(entry)` - Append to WAL under lock
+- [x] `replayWal(file)` - Apply WAL entries to in-memory state
+- [x] WAL entry serialization (JSON lines)
 
-#### Compaction (`src/storage/compact.zig`) (bd-1lc)
+#### Compaction (`src/storage/compact.zig`) (bd-1lc - DONE)
 
-- [ ] `compact()` - Merge WAL into main file atomically
-- [ ] `maybeCompact()` - Trigger compaction when WAL > threshold
-- [ ] Compaction threshold: 100 ops OR 100KB
-- [ ] Atomic main file replacement (temp + fsync + rename)
+- [x] `compact()` - Merge WAL into main file atomically
+- [x] `maybeCompact()` - Trigger compaction when WAL > threshold
+- [x] Compaction threshold: 100 ops OR 100KB
+- [x] Atomic main file replacement (temp + fsync + rename)
 
 #### IssueStore (`src/storage/store.zig`)
 
@@ -296,9 +296,9 @@ See `docs/concurrent_writes.md` for detailed design rationale.
 - [x] Self-dependency rejection
 - [x] Cycle detection on add
 
-#### Search (Future) (bd-39h)
+#### Search (bd-39h - DONE)
 
-- [ ] Linear scan substring matching (basic)
+- [x] Linear scan substring matching (basic)
 - [ ] Inverted index for full-text search (advanced)
 
 ---
@@ -348,13 +348,13 @@ With JSONL as the primary storage, sync is simplified:
 - [x] Atomic writes (temp file + fsync + rename)
 - [x] Dirty tracking for modified issues
 
-### Sync Commands (bd-10o)
+### Sync Commands (bd-10o - DONE)
 
-- [ ] `sync --flush-only` - Force save to JSONL
-- [ ] `sync --import-only` - Force reload from JSONL
-- [ ] `sync --force` - Force even if data loss possible
-- [ ] Auto-save after mutations (configurable)
-- [ ] Auto-load on startup
+- [x] `sync --flush-only` - Force save to JSONL
+- [x] `sync --import-only` - Force reload from JSONL
+- [x] `sync --force` - Force even if data loss possible
+- [x] Auto-save after mutations (configurable)
+- [x] Auto-load on startup
 
 ---
 
@@ -397,13 +397,13 @@ With JSONL as the primary storage, sync is simplified:
   - [x] `--prefix` option for issue ID prefix
   - [x] `--json` output format
   - [x] `.gitignore` for WAL/lock files
-- [ ] `bz config` - Manage configuration (bd-12h)
-  - [ ] `--list` - Show all settings
-  - [ ] `--get <key>` - Get specific value
-  - [ ] `--set <key>=<value>` - Set value
-- [ ] `bz info` - Show workspace info (bd-2lr)
-- [ ] `bz stats` / `bz status` - Project statistics (bd-2lr)
-- [ ] `bz doctor` - Run diagnostics (bd-2lr)
+- [x] `bz config` - Manage configuration (bd-12h - DONE)
+  - [x] `--list` - Show all settings
+  - [x] `--get <key>` - Get specific value
+  - [x] `--set <key>=<value>` - Set value
+- [x] `bz info` - Show workspace info (bd-2lr - DONE)
+- [x] `bz stats` / `bz status` - Project statistics (bd-2lr - DONE)
+- [x] `bz doctor` - Run diagnostics (bd-2lr - DONE)
 
 ### Issue CRUD Commands
 
@@ -419,172 +419,172 @@ With JSONL as the primary storage, sync is simplified:
   - [x] Return created ID
   - [x] `--json` output format
 - [x] `bz q <title>` - Quick capture (create + print ID only)
-- [ ] `bz show <id>` - Display issue details (bd-2e8)
-  - [ ] Full metadata
-  - [ ] Labels
-  - [ ] Dependencies
-  - [ ] Recent comments
-  - [ ] `--json` support
-- [ ] `bz update <id>` - Update issue (bd-26k)
-  - [ ] `--status`
-  - [ ] `--priority`
-  - [ ] `--title`
-  - [ ] `--description`
-  - [ ] `--assignee`
-  - [ ] `--type`
-  - [ ] Audit trail event
-- [ ] `bz close <id>` - Close issue (bd-2sz)
-  - [ ] `--reason`
-  - [ ] Set `closed_at` timestamp
-  - [ ] Audit event
-- [ ] `bz reopen <id>` - Reopen closed issue (bd-2sz)
-  - [ ] Clear `closed_at`
-  - [ ] Audit event
-- [ ] `bz delete <id>` - Soft delete (tombstone) (bd-2hi)
-  - [ ] `--reason`
-  - [ ] Set status to tombstone
-  - [ ] Audit event
+- [x] `bz show <id>` - Display issue details (bd-2e8 - DONE)
+  - [x] Full metadata
+  - [x] Labels
+  - [x] Dependencies
+  - [x] Recent comments
+  - [x] `--json` support
+- [x] `bz update <id>` - Update issue (bd-26k - DONE)
+  - [x] `--status`
+  - [x] `--priority`
+  - [x] `--title`
+  - [x] `--description`
+  - [x] `--assignee`
+  - [x] `--type`
+  - [~] Audit trail event (synthetic only)
+- [x] `bz close <id>` - Close issue (bd-2sz - DONE)
+  - [x] `--reason`
+  - [x] Set `closed_at` timestamp
+  - [~] Audit event (synthetic only)
+- [x] `bz reopen <id>` - Reopen closed issue (bd-2sz - DONE)
+  - [x] Clear `closed_at`
+  - [~] Audit event (synthetic only)
+- [x] `bz delete <id>` - Soft delete (tombstone) (bd-2hi - DONE)
+  - [x] `--reason`
+  - [x] Set status to tombstone
+  - [~] Audit event (synthetic only)
 
 ### Query Commands
 
-- [ ] `bz list` - List issues (bd-2bv)
-  - [ ] `--status` filter
-  - [ ] `--priority` filter
-  - [ ] `--type` filter
-  - [ ] `--assignee` filter
-  - [ ] `--label` filter (multiple)
-  - [ ] `--limit` and `--offset`
+- [x] `bz list` - List issues (bd-2bv - DONE)
+  - [x] `--status` filter
+  - [x] `--priority` filter
+  - [x] `--type` filter
+  - [x] `--assignee` filter
+  - [x] `--label` filter (multiple)
+  - [x] `--limit` and `--offset`
   - [ ] `--sort` (created, updated, priority)
-  - [ ] `--json` output
-- [ ] `bz ready` - Show actionable issues (bd-ke1)
-  - [ ] Open status
-  - [ ] Not blocked by dependencies
-  - [ ] Not deferred (or defer_until passed)
-  - [ ] `--limit`
-  - [ ] `--json`
-- [ ] `bz blocked` - Show blocked issues (bd-ke1)
-  - [ ] Has blocking dependencies
-  - [ ] Show what blocks each
-  - [ ] `--json`
-- [ ] `bz search <query>` - Full-text search (bd-2ui)
-  - [ ] Search title, description, notes
-  - [ ] FTS5 ranking
-  - [ ] `--json`
-- [ ] `bz stale` - Find stale issues (bd-2f0)
-  - [ ] `--days` (default 30)
-  - [ ] Not updated in N days
-  - [ ] `--json`
-- [ ] `bz count` - Count issues (bd-2f0)
-  - [ ] `--by` (status/priority/type/assignee)
-  - [ ] Grouped counts
-  - [ ] `--json`
+  - [x] `--json` output
+- [x] `bz ready` - Show actionable issues (bd-ke1 - DONE)
+  - [x] Open status
+  - [x] Not blocked by dependencies
+  - [x] Not deferred (or defer_until passed)
+  - [x] `--limit`
+  - [x] `--json`
+- [x] `bz blocked` - Show blocked issues (bd-ke1 - DONE)
+  - [x] Has blocking dependencies
+  - [x] Show what blocks each
+  - [x] `--json`
+- [x] `bz search <query>` - Full-text search (bd-2ui - DONE)
+  - [x] Search title, description, notes
+  - [~] FTS5 ranking (uses linear scan, not FTS5)
+  - [x] `--json`
+- [x] `bz stale` - Find stale issues (bd-2f0 - DONE)
+  - [x] `--days` (default 30)
+  - [x] Not updated in N days
+  - [x] `--json`
+- [x] `bz count` - Count issues (bd-2f0 - DONE)
+  - [x] `--by` (status/priority/type/assignee)
+  - [x] Grouped counts
+  - [x] `--json`
 
-### Dependency Commands (bd-177)
+### Dependency Commands (bd-177 - DONE)
 
-- [ ] `bz dep add <child> <parent>` - Add dependency
-  - [ ] `--type` (blocks/parent-child/waits-for/related/etc.)
-  - [ ] Cycle detection
-  - [ ] Audit event
-- [ ] `bz dep remove <child> <parent>` - Remove dependency
-  - [ ] Audit event
-- [ ] `bz dep list <id>` - List dependencies
-  - [ ] Show what this issue depends on
-  - [ ] Show what depends on this issue
-  - [ ] `--json`
+- [x] `bz dep add <child> <parent>` - Add dependency
+  - [x] `--type` (blocks/parent-child/waits-for/related/etc.)
+  - [x] Cycle detection
+  - [~] Audit event (synthetic only)
+- [x] `bz dep remove <child> <parent>` - Remove dependency
+  - [~] Audit event (synthetic only)
+- [x] `bz dep list <id>` - List dependencies
+  - [x] Show what this issue depends on
+  - [x] Show what depends on this issue
+  - [x] `--json`
 - [ ] `bz dep tree <id>` - Show dependency tree
   - [ ] ASCII tree visualization
   - [ ] `--json` (adjacency list)
-- [ ] `bz dep cycles` - Detect circular dependencies
-  - [ ] List all cycles found
-  - [ ] `--json`
+- [x] `bz dep cycles` - Detect circular dependencies
+  - [x] List all cycles found
+  - [x] `--json`
 
-### Label Commands (bd-2n2)
+### Label Commands (bd-2n2 - DONE)
 
-- [ ] `bz label add <id> <labels...>` - Add labels
-  - [ ] Multiple labels
-  - [ ] Audit events
-- [ ] `bz label remove <id> <labels...>` - Remove labels
-  - [ ] Multiple labels
-  - [ ] Audit events
-- [ ] `bz label list <id>` - List labels on issue
-- [ ] `bz label list-all` - List all labels in project
+- [x] `bz label add <id> <labels...>` - Add labels
+  - [x] Multiple labels
+  - [~] Audit events (synthetic only)
+- [x] `bz label remove <id> <labels...>` - Remove labels
+  - [x] Multiple labels
+  - [~] Audit events (synthetic only)
+- [x] `bz label list <id>` - List labels on issue
+- [x] `bz label list-all` - List all labels in project
 
-### Comment Commands (bd-2u2)
+### Comment Commands (bd-2u2 - DONE)
 
-- [ ] `bz comments add <id> <text>` - Add comment
-  - [ ] Auto-detect actor
-  - [ ] Audit event
-- [ ] `bz comments list <id>` - Show comments
-  - [ ] Chronological order
-  - [ ] `--json`
+- [x] `bz comments add <id> <text>` - Add comment
+  - [x] Auto-detect actor
+  - [~] Audit event (synthetic only)
+- [x] `bz comments list <id>` - Show comments
+  - [x] Chronological order
+  - [x] `--json`
 
-### Audit Commands (bd-1bf)
+### Audit Commands (bd-1bf - PARTIAL)
 
-- [ ] `bz history <id>` - Show issue history
-  - [ ] All events for issue
-  - [ ] Chronological
-  - [ ] `--json`
-- [ ] `bz audit` - Deep audit analysis
-  - [ ] All events in project
+- [x] `bz history <id>` - Show issue history
+  - [~] All events for issue (synthetic from timestamps)
+  - [x] Chronological
+  - [x] `--json`
+- [x] `bz audit` - Deep audit analysis
+  - [~] All events in project (synthetic from timestamps)
   - [ ] Filters by date/actor/type
-  - [ ] `--json`
+  - [x] `--json`
 
 ### Advanced Commands
 
-- [ ] `bz epic` - Manage epics (bd-xjc)
+- [ ] `bz epic` - Manage epics (bd-xjc - NOT IMPLEMENTED)
   - [ ] Create epic
   - [ ] Add issues to epic
   - [ ] List epic contents
-- [ ] `bz defer <id> --until <date>` - Defer issue (bd-2rh)
-  - [ ] Set `defer_until`
-  - [ ] Excluded from ready
-- [ ] `bz undefer <id>` - Remove deferral (bd-2rh)
-- [ ] `bz orphans` - Find orphaned issues (bd-2q5)
+- [x] `bz defer <id> --until <date>` - Defer issue (bd-2rh - DONE)
+  - [x] Set `defer_until`
+  - [x] Excluded from ready
+- [x] `bz undefer <id>` - Remove deferral (bd-2rh - DONE)
+- [ ] `bz orphans` - Find orphaned issues (bd-2q5 - NOT IMPLEMENTED)
   - [ ] Issues with missing parent refs
-- [ ] `bz changelog` - Generate changelog (bd-116)
+- [ ] `bz changelog` - Generate changelog (bd-116 - NOT IMPLEMENTED)
   - [ ] `--since` date
   - [ ] `--until` date
   - [ ] Grouped by type
   - [ ] Markdown output
-- [ ] `bz lint` - Validate database (bd-2q5)
+- [ ] `bz lint` - Validate database (bd-2q5 - NOT IMPLEMENTED)
   - [ ] Check consistency
   - [ ] Find invalid refs
   - [ ] `--json`
-- [ ] `bz graph` - Dependency graph (bd-sso)
-  - [ ] ASCII visualization
-  - [ ] DOT format export
+- [x] `bz graph` - Dependency graph (bd-sso - DONE)
+  - [x] ASCII visualization
+  - [x] DOT format export
 
-### Sync Commands (bd-10o)
+### Sync Commands (bd-10o - DONE)
 
-- [ ] `bz sync --flush-only` - Export to JSONL
-- [ ] `bz sync --import-only` - Import from JSONL
-- [ ] `bz sync --force` - Force sync
+- [x] `bz sync --flush-only` - Export to JSONL
+- [x] `bz sync --import-only` - Import from JSONL
+- [x] `bz sync --force` - Force sync
 
 ### System Commands
 
-- [ ] `bz version` - Show version info (bd-2a4)
-- [ ] `bz completions <shell>` - Generate shell completions (bd-1o5)
-  - [ ] bash
-  - [ ] zsh
-  - [ ] fish
+- [x] `bz version` - Show version info (bd-2a4 - DONE)
+- [x] `bz completions <shell>` - Generate shell completions (bd-1o5 - DONE)
+  - [x] bash
+  - [x] zsh
+  - [x] fish
 - [ ] `bz agents` - Manage agent instructions (if applicable)
 
 ---
 
 ## Phase 7: Configuration
 
-### Config System (`src/config/`) (bd-2dd)
+### Config System (`src/config/`) (bd-2dd - DONE)
 
-- [ ] YAML parser/writer
+- [x] YAML parser/writer
 - [ ] User config (`~/.config/beads/config.yaml`)
-- [ ] Project config (`.beads/config.yaml`)
+- [x] Project config (`.beads/config.yaml`)
 - [ ] Config merging (project overrides user)
-- [ ] Config keys:
-  - [ ] `issue_prefix` (default "bd")
+- [x] Config keys:
+  - [x] `issue_prefix` (default "bd")
   - [ ] `default_assignee`
-  - [ ] `auto_flush` (bool)
-  - [ ] `auto_import` (bool)
-  - [ ] `lock_timeout_ms`
+  - [x] `auto_flush` (bool)
+  - [x] `auto_import` (bool)
+  - [x] `lock_timeout_ms`
   - [ ] `actor_name`
 
 ### Metadata
@@ -599,14 +599,14 @@ With JSONL as the primary storage, sync is simplified:
 
 ## Phase 8: Testing
 
-### Unit Tests (bd-2uu)
+### Unit Tests (bd-2uu - DONE)
 
-- [ ] Model serialization/deserialization
-- [ ] ID generation (determinism, uniqueness)
-- [ ] Base36 encoding/decoding
-- [ ] Content hashing
-- [ ] Status/Priority/Type parsing
-- [ ] Dependency cycle detection
+- [x] Model serialization/deserialization
+- [x] ID generation (determinism, uniqueness)
+- [x] Base36 encoding/decoding
+- [x] Content hashing
+- [x] Status/Priority/Type parsing
+- [x] Dependency cycle detection
 
 ### Integration Tests
 
@@ -614,7 +614,7 @@ With JSONL as the primary storage, sync is simplified:
 - [x] IssueStore operations
 - [x] DependencyGraph cycle detection
 - [x] Ready/blocked query correctness
-- [ ] CLI command execution (bd-31b)
+- [x] CLI command execution (bd-31b - DONE)
 
 ### Fuzz Tests
 
@@ -636,33 +636,33 @@ With JSONL as the primary storage, sync is simplified:
 
 ## Phase 9: Polish
 
-### Error Handling (bd-236)
+### Error Handling (bd-236 - DONE)
 
-- [ ] Structured error types
-- [ ] User-friendly error messages
+- [x] Structured error types
+- [x] User-friendly error messages
 - [ ] Suggestions for common mistakes
-- [ ] Exit codes (0 success, 1 user error, 2 system error)
+- [x] Exit codes (0 success, 1 user error, 2 system error)
 
 ### Documentation
 
-- [ ] README with usage examples
+- [x] README with usage examples
 - [ ] Man page (if desired)
-- [ ] `--help` for all commands
-- [ ] Architecture docs (update existing)
+- [x] `--help` for all commands
+- [x] Architecture docs (update existing)
 
 ### Performance
 
-- [ ] Prepared statement caching
-- [ ] Lazy initialization
-- [ ] Blocked cache invalidation
+- [~] Prepared statement caching (N/A - no SQL)
+- [x] Lazy initialization
+- [x] Blocked cache invalidation
 - [ ] Memory pool for allocations
 
-### Cross-Platform (bd-kl5)
+### Cross-Platform (bd-kl5 - DONE)
 
-- [ ] Linux support
-- [ ] macOS support
-- [ ] Windows support
-- [ ] Path handling (std.fs.path)
+- [x] Linux support
+- [x] macOS support
+- [x] Windows support
+- [x] Path handling (std.fs.path)
 
 ---
 
