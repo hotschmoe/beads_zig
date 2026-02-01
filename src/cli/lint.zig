@@ -20,7 +20,6 @@ const id_mod = @import("../id/mod.zig");
 const orphans = @import("orphans.zig");
 
 const IssueStore = common.IssueStore;
-const DependencyGraph = storage.DependencyGraph;
 const CommandContext = common.CommandContext;
 
 pub const LintError = error{
@@ -106,7 +105,7 @@ pub fn run(
 
             for (display_issues) |issue| {
                 const icon = if (std.mem.eql(u8, issue.severity, "error"))
-                    "[ERR] "
+                    "[ERR]"
                 else if (std.mem.eql(u8, issue.severity, "warning"))
                     "[WARN]"
                 else
