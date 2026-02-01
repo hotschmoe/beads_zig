@@ -172,7 +172,9 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
             };
         },
         .help => |help_args| {
-            try showHelp(help_args.topic, allocator);
+            cli.runHelp(help_args.topic, allocator) catch {
+                std.process.exit(1);
+            };
         },
         .version => {
             _ = cli.runVersion(result.global, allocator) catch |err| switch (err) {
@@ -266,110 +268,12 @@ fn handleParseError(err: cli.ParseError, allocator: std.mem.Allocator) !void {
         cli.ParseError.InvalidArgument => try out.err("invalid argument value", .{}),
         cli.ParseError.UnknownFlag => try out.err("unknown flag", .{}),
         cli.ParseError.MissingFlagValue => try out.err("flag requires a value", .{}),
+        cli.ParseError.InvalidFlagValue => try out.err("invalid flag value", .{}),
         cli.ParseError.InvalidShell => try out.err("invalid shell type", .{}),
         cli.ParseError.UnknownSubcommand => try out.err("unknown subcommand", .{}),
     }
     std.process.exit(1);
 }
-
-fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
-    var out = output.Output.init(allocator, .{});
-    if (topic) |t| {
-        try out.println("Help for: {s}", .{t});
-        try out.println("(detailed help not yet implemented)", .{});
-    } else {
-        try out.raw(
-            \\bz - beads_zig issue tracker
-            \\
-            \\USAGE:
-            \\  bz <command> [options]
-            \\
-            \\COMMANDS:
-            \\  Workspace:
-            \\    init              Initialize .beads/ workspace
-            \\    info              Show workspace information
-            \\    stats             Show project statistics
-            \\    doctor            Run diagnostic checks
-            \\    config            Manage configuration
-            \\    sync              Sync with JSONL file
-            \\    orphans           Find issues with missing parent refs
-            \\    lint              Validate database consistency
-            \\
-            \\  Issue Management:
-            \\    create <title>    Create new issue
-            \\    q <title>         Quick capture (create + print ID only)
-            \\    show <id>         Show issue details
-            \\    update <id>       Update issue fields
-            \\    close <id>        Close an issue
-            \\    reopen <id>       Reopen a closed issue
-            \\    delete <id>       Soft delete (tombstone)
-            \\    defer <id>        Defer an issue
-            \\    undefer <id>      Remove deferral from an issue
-            \\
-            \\  Batch Operations:
-            \\    add-batch         Create issues from stdin/file (single lock)
-            \\    import <file>     Import issues from JSONL file
-            \\
-            \\  Queries:
-            \\    list              List issues (--sort created|updated|priority, --asc/--desc)
-            \\    ready             Show actionable issues (unblocked)
-            \\    blocked           Show blocked issues
-            \\    search <query>    Full-text search
-            \\    stale [--days N]  Find issues not updated recently
-            \\    count [--group-by] Count issues by group
-            \\
-            \\  Dependencies:
-            \\    dep add <a> <b>   Make issue A depend on B
-            \\    dep remove <a> <b> Remove dependency
-            \\    dep list <id>     List dependencies
-            \\    dep tree <id>     Show dependency tree (ASCII)
-            \\    dep cycles        Detect dependency cycles
-            \\    graph [id]        Show dependency graph (ASCII/DOT)
-            \\
-            \\  Epics:
-            \\    epic create <title>       Create a new epic
-            \\    epic add <epic> <issue>   Add issue to epic
-            \\    epic remove <epic> <issue> Remove issue from epic
-            \\    epic list <epic>          List issues in epic
-            \\
-            \\  Labels:
-            \\    label add <id> <labels...>    Add labels to an issue
-            \\    label remove <id> <labels...> Remove labels from an issue
-            \\    label list <id>               List labels on an issue
-            \\    label list-all                List all labels in project
-            \\
-            \\  Comments:
-            \\    comments add <id> <text>  Add comment to an issue
-            \\    comments list <id>        List comments on an issue
-            \\
-            \\  Audit:
-            \\    history <id>      Show issue history
-            \\    audit             Project-wide audit log
-            \\    changelog         Generate changelog from closed issues
-            \\
-            \\  System:
-            \\    help              Show this help
-            \\    version           Show version
-            \\    schema            Show data schema
-            \\    completions <shell>  Generate shell completions
-            \\
-            \\GLOBAL OPTIONS:
-            \\  --json            Output in JSON format
-            \\  --toon            Output in TOON format (LLM-optimized)
-            \\  -q, --quiet       Suppress non-essential output
-            \\  -v, --verbose     Increase verbosity
-            \\  --no-color        Disable colors
-            \\  --data <path>     Override .beads/ directory
-            \\  --actor <name>    Override actor name for audit
-            \\  --no-auto-flush   Skip automatic JSONL export
-            \\  --no-auto-import  Skip JSONL freshness check
-            \\
-            \\Run 'bz help <command>' for command-specific help.
-            \\
-        );
-    }
-}
-
 
 test "library imports compile" {
     // Verify all modules are accessible

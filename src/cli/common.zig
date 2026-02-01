@@ -11,6 +11,7 @@ const args = @import("args.zig");
 pub const Output = output_mod.Output;
 pub const OutputOptions = output_mod.OutputOptions;
 pub const IssueStore = storage.IssueStore;
+pub const IssueStoreError = storage.IssueStoreError;
 pub const DependencyGraph = storage.DependencyGraph;
 pub const EventStore = storage.EventStore;
 pub const StoreLoadResult = storage.StoreLoadResult;

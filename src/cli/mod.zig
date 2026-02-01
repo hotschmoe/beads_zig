@@ -40,6 +40,7 @@ pub const lint = @import("lint.zig");
 pub const version = @import("version.zig");
 pub const schema = @import("schema.zig");
 pub const completions = @import("completions.zig");
+pub const help = @import("help.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -185,6 +186,10 @@ pub const CompletionsError = completions.CompletionsError;
 pub const CompletionsResult = completions.CompletionsResult;
 pub const runCompletions = completions.run;
 pub const Shell = completions.Shell;
+
+pub const HelpError = help.HelpError;
+pub const HelpResult = help.HelpResult;
+pub const runHelp = help.run;
 
 test {
     std.testing.refAllDecls(@This());

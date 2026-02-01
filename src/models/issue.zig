@@ -144,6 +144,9 @@ pub const Issue = struct {
     pinned: bool,
     is_template: bool,
 
+    // Version for optimistic locking (incremented on every update)
+    version: u64 = 1,
+
     // Embedded relations (populated on read, not stored in issues table)
     labels: []const []const u8,
     dependencies: []const Dependency,
@@ -184,6 +187,7 @@ pub const Issue = struct {
         if (!optionalStrEql(a.source_system, b.source_system)) return false;
         if (a.pinned != b.pinned) return false;
         if (a.is_template != b.is_template) return false;
+        if (a.version != b.version) return false;
         return true;
     }
 
@@ -247,6 +251,7 @@ pub const Issue = struct {
 
         result.pinned = self.pinned;
         result.is_template = self.is_template;
+        result.version = self.version;
 
         // Clone labels
         if (self.labels.len > 0) {
@@ -388,6 +393,7 @@ pub const Issue = struct {
             .source_system = null,
             .pinned = false,
             .is_template = false,
+            .version = 1,
             .labels = &[_][]const u8{},
             .dependencies = &[_]Dependency{},
             .comments = &[_]Comment{},

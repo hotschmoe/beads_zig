@@ -131,6 +131,8 @@ pub const UpdateArgs = struct {
     priority: ?[]const u8 = null,
     assignee: ?[]const u8 = null,
     status: ?[]const u8 = null,
+    /// Expected version for optimistic locking (compare-and-swap).
+    expected_version: ?u64 = null,
 };
 
 /// Close command arguments.
@@ -461,6 +463,7 @@ pub const ParseError = error{
     InvalidArgument,
     UnknownFlag,
     MissingFlagValue,
+    InvalidFlagValue,
     InvalidShell,
     UnknownSubcommand,
 };
@@ -822,6 +825,9 @@ pub const ArgParser = struct {
                 result.assignee = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-s", "--status")) {
                 result.status = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-v", "--version")) {
+                const version_str = self.next() orelse return error.MissingFlagValue;
+                result.expected_version = std.fmt.parseInt(u64, version_str, 10) catch return error.InvalidFlagValue;
             } else if (self.peekPositional()) |_| {
                 if (!id_set) {
                     result.id = self.next().?;

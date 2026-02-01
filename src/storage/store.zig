@@ -22,6 +22,7 @@ pub const IssueStoreError = error{
     IssueNotFound,
     DuplicateId,
     InvalidIssue,
+    VersionMismatch,
 };
 
 /// Result of loading the store with corruption tracking.
@@ -211,14 +212,29 @@ pub const IssueStore = struct {
         pinned: ?bool = null,
         is_template: ?bool = null,
         content_hash: ?[]const u8 = null,
+
+        /// Expected version for optimistic locking.
+        /// If set, update will fail with VersionMismatch if issue.version != expected_version.
+        expected_version: ?u64 = null,
     };
 
     /// Update an issue with the given fields.
+    /// If updates.expected_version is set, performs optimistic locking check.
     pub fn update(self: *Self, id: []const u8, updates: IssueUpdate, now: i64) !void {
         const idx = self.id_index.get(id) orelse return IssueStoreError.IssueNotFound;
         if (idx >= self.issues.items.len) return IssueStoreError.IssueNotFound;
 
         var issue = &self.issues.items[idx];
+
+        // Optimistic locking check
+        if (updates.expected_version) |expected| {
+            if (issue.version != expected) {
+                return IssueStoreError.VersionMismatch;
+            }
+        }
+
+        // Increment version on every update
+        issue.version += 1;
 
         // Update timestamp
         issue.updated_at = Rfc3339Timestamp{ .value = now };
@@ -911,6 +927,85 @@ test "IssueStore update modifies fields" {
     try std.testing.expectEqualStrings("Updated Title", updated.title);
     try std.testing.expect(statusEql(updated.status, .in_progress));
     try std.testing.expectEqual(Priority.HIGH, updated.priority);
+}
+
+test "IssueStore update increments version" {
+    const allocator = std.testing.allocator;
+    var store = IssueStore.init(allocator, "test.jsonl");
+    defer store.deinit();
+
+    const issue = Issue.init("bd-version", "Version Test", 1706540000);
+    try store.insert(issue);
+
+    // Initial version should be 1
+    var v1 = (try store.get("bd-version")).?;
+    defer v1.deinit(allocator);
+    try std.testing.expectEqual(@as(u64, 1), v1.version);
+
+    // Update should increment version
+    try store.update("bd-version", .{ .title = "Updated" }, 1706550000);
+
+    var v2 = (try store.get("bd-version")).?;
+    defer v2.deinit(allocator);
+    try std.testing.expectEqual(@as(u64, 2), v2.version);
+
+    // Another update should increment again
+    try store.update("bd-version", .{ .title = "Updated Again" }, 1706560000);
+
+    var v3 = (try store.get("bd-version")).?;
+    defer v3.deinit(allocator);
+    try std.testing.expectEqual(@as(u64, 3), v3.version);
+}
+
+test "IssueStore update with expected_version succeeds on match" {
+    const allocator = std.testing.allocator;
+    var store = IssueStore.init(allocator, "test.jsonl");
+    defer store.deinit();
+
+    const issue = Issue.init("bd-optlock", "Optimistic Lock Test", 1706540000);
+    try store.insert(issue);
+
+    // Get current version (1)
+    var current = (try store.get("bd-optlock")).?;
+    const current_version = current.version;
+    current.deinit(allocator);
+
+    // Update with correct expected version should succeed
+    try store.update("bd-optlock", .{
+        .title = "Updated with lock",
+        .expected_version = current_version,
+    }, 1706550000);
+
+    var updated = (try store.get("bd-optlock")).?;
+    defer updated.deinit(allocator);
+    try std.testing.expectEqualStrings("Updated with lock", updated.title);
+    try std.testing.expectEqual(@as(u64, 2), updated.version);
+}
+
+test "IssueStore update with expected_version fails on mismatch" {
+    const allocator = std.testing.allocator;
+    var store = IssueStore.init(allocator, "test.jsonl");
+    defer store.deinit();
+
+    const issue = Issue.init("bd-conflict", "Conflict Test", 1706540000);
+    try store.insert(issue);
+
+    // Update once to increment version to 2
+    try store.update("bd-conflict", .{ .title = "First Update" }, 1706550000);
+
+    // Try to update with stale expected_version (1 instead of 2)
+    const result = store.update("bd-conflict", .{
+        .title = "Conflicting Update",
+        .expected_version = 1, // Stale version
+    }, 1706560000);
+
+    try std.testing.expectError(IssueStoreError.VersionMismatch, result);
+
+    // Verify original update is preserved
+    var preserved = (try store.get("bd-conflict")).?;
+    defer preserved.deinit(allocator);
+    try std.testing.expectEqualStrings("First Update", preserved.title);
+    try std.testing.expectEqual(@as(u64, 2), preserved.version);
 }
 
 test "IssueStore delete sets tombstone" {

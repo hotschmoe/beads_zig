@@ -14,6 +14,7 @@ const Status = models.Status;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
 const IssueStore = common.IssueStore;
+const IssueStoreError = common.IssueStoreError;
 const CommandContext = common.CommandContext;
 
 pub const UpdateError = error{
@@ -21,6 +22,7 @@ pub const UpdateError = error{
     IssueNotFound,
     InvalidArgument,
     StorageError,
+    VersionMismatch,
     OutOfMemory,
 };
 
@@ -75,8 +77,17 @@ pub fn run(
         updates.assignee = a;
     }
 
+    // Optimistic locking: pass expected version for compare-and-swap
+    if (update_args.expected_version) |v| {
+        updates.expected_version = v;
+    }
+
     const now = std.time.timestamp();
-    ctx.store.update(update_args.id, updates, now) catch {
+    ctx.store.update(update_args.id, updates, now) catch |err| {
+        if (err == IssueStoreError.VersionMismatch) {
+            try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "version mismatch: issue was modified by another process");
+            return UpdateError.VersionMismatch;
+        }
         try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "failed to update issue");
         return UpdateError.StorageError;
     };
