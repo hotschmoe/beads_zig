@@ -10,7 +10,6 @@
 //!   - The `bz metrics` command reports these statistics
 
 const std = @import("std");
-const builtin = @import("builtin");
 
 /// Lock contention metrics.
 /// All fields are atomic for safe concurrent access.

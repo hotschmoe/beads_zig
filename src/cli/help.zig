@@ -3,7 +3,6 @@
 //! Provides detailed per-command help with usage examples and flag references.
 
 const std = @import("std");
-const output_mod = @import("../output/mod.zig");
 
 pub const HelpError = error{
     WriteError,

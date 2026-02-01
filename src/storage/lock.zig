@@ -15,7 +15,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const test_util = @import("../test_util.zig");
 const metrics = @import("metrics.zig");
-const txlog = @import("txlog.zig");
 
 pub const LockError = error{
     LockFailed,
@@ -30,7 +29,6 @@ pub const BeadsLock = struct {
     file: std.fs.File,
     path: []const u8,
     acquire_time: i128 = 0, // Timestamp when lock was acquired (for hold time tracking)
-    correlation_id: u64 = 0, // Transaction correlation ID for logging
 
     const Self = @This();
 
