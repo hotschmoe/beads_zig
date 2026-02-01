@@ -11,9 +11,33 @@
 //!
 //! On detection, we warn the user but don't block initialization.
 //! The tool will still work for single-machine, single-user scenarios.
+//!
+//! Also provides fsyncDir for ensuring directory metadata durability after
+//! atomic rename operations.
 
 const std = @import("std");
 const builtin = @import("builtin");
+
+/// Fsync a directory file descriptor for durability.
+/// Unlike std.posix.fsync, this handles EINVAL gracefully since some filesystems
+/// don't support fsync on directories. This is a best-effort operation.
+pub fn fsyncDir(fd: std.posix.fd_t) void {
+    if (builtin.os.tag == .windows) {
+        return;
+    }
+    switch (builtin.os.tag) {
+        .linux => {
+            _ = std.os.linux.fsync(fd);
+        },
+        .macos, .ios, .tvos, .watchos, .visionos => {
+            _ = std.c.fsync(fd);
+        },
+        .freebsd, .openbsd, .netbsd, .dragonfly => {
+            _ = std.c.fsync(fd);
+        },
+        else => {},
+    }
+}
 
 pub const FilesystemCheck = struct {
     safe: bool,

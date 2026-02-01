@@ -20,7 +20,6 @@
 //! - Readers retry if generation changed during read
 
 const std = @import("std");
-const builtin = @import("builtin");
 const fs = std.fs;
 const BeadsLock = @import("lock.zig").BeadsLock;
 const Wal = @import("wal.zig").Wal;
@@ -28,34 +27,8 @@ const JsonlFile = @import("jsonl.zig").JsonlFile;
 const IssueStore = @import("store.zig").IssueStore;
 const Generation = @import("generation.zig").Generation;
 const walstate = @import("walstate.zig");
+const fscheck = @import("fscheck.zig");
 const test_util = @import("../test_util.zig");
-
-/// Fsync a directory file descriptor for durability.
-/// Unlike std.posix.fsync, this handles EINVAL gracefully since some filesystems
-/// don't support fsync on directories. This is a best-effort operation.
-fn fsyncDir(fd: std.posix.fd_t) void {
-    if (builtin.os.tag == .windows) {
-        // Windows: FlushFileBuffers doesn't work on directories
-        return;
-    }
-    // Call fsync directly via the system interface, ignoring errors.
-    // Some filesystems (e.g., btrfs with certain configs, NFS) may return EINVAL.
-    // This is a best-effort durability enhancement.
-    switch (builtin.os.tag) {
-        .linux => {
-            _ = std.os.linux.fsync(fd);
-        },
-        .macos, .ios, .tvos, .watchos, .visionos => {
-            _ = std.c.fsync(fd);
-        },
-        .freebsd, .openbsd, .netbsd, .dragonfly => {
-            _ = std.c.fsync(fd);
-        },
-        else => {
-            // Unsupported platform, skip
-        },
-    }
-}
 
 /// Copy a file if it exists. Silently skip if source doesn't exist.
 fn copyFileIfExists(dir: fs.Dir, src_path: []const u8, dst_path: []const u8) void {
@@ -437,12 +410,11 @@ pub const Compactor = struct {
         dir.rename(tmp_path, target_path) catch return CompactError.AtomicRenameFailed;
 
         // 7. Fsync directory to ensure rename is durable
-        // This ensures the file's new name survives an immediate system crash.
         if (std.fs.path.dirname(target_path)) |parent| {
             if (dir.openDir(parent, .{})) |parent_dir_handle| {
                 var parent_dir = parent_dir_handle;
                 defer parent_dir.close();
-                fsyncDir(parent_dir.fd);
+                fscheck.fsyncDir(parent_dir.fd);
             } else |_| {}
         }
     }
