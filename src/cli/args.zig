@@ -33,6 +33,8 @@ pub const Command = union(enum) {
     stats: void,
     doctor: void,
     config: ConfigArgs,
+    orphans: OrphansArgs,
+    lint: LintArgs,
 
     // Issue CRUD
     create: CreateArgs,
@@ -389,6 +391,18 @@ pub const ConfigArgs = struct {
     subcommand: ConfigSubcommand,
 };
 
+/// Orphans command arguments.
+pub const OrphansArgs = struct {
+    limit: ?u32 = null,
+    hierarchy_only: bool = false,
+    deps_only: bool = false,
+};
+
+/// Lint command arguments.
+pub const LintArgs = struct {
+    limit: ?u32 = null,
+};
+
 /// Result of parsing command-line arguments.
 pub const ParseResult = struct {
     global: GlobalOptions,
@@ -543,6 +557,12 @@ pub const ArgParser = struct {
         }
         if (std.mem.eql(u8, cmd, "config")) {
             return .{ .config = try self.parseConfigArgs() };
+        }
+        if (std.mem.eql(u8, cmd, "orphans")) {
+            return .{ .orphans = try self.parseOrphansArgs() };
+        }
+        if (std.mem.eql(u8, cmd, "lint")) {
+            return .{ .lint = try self.parseLintArgs() };
         }
 
         // Issue CRUD
@@ -1142,6 +1162,30 @@ pub const ArgParser = struct {
             return .{ .subcommand = .{ .list = {} } };
         }
         return error.UnknownSubcommand;
+    }
+
+    fn parseOrphansArgs(self: *Self) ParseError!OrphansArgs {
+        var result = OrphansArgs{};
+        while (self.hasNext()) {
+            if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else if (self.consumeFlag(null, "--hierarchy-only")) {
+                result.hierarchy_only = true;
+            } else if (self.consumeFlag(null, "--deps-only")) {
+                result.deps_only = true;
+            } else break;
+        }
+        return result;
+    }
+
+    fn parseLintArgs(self: *Self) ParseError!LintArgs {
+        var result = LintArgs{};
+        while (self.hasNext()) {
+            if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else break;
+        }
+        return result;
     }
 
     fn hasNext(self: *Self) bool {

@@ -213,6 +213,18 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .orphans => |orphans_args| {
+            cli.runOrphans(orphans_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .lint => |lint_args| {
+            cli.runLint(lint_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
         .label => |label_args| {
             cli.runLabel(label_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized, error.IssueNotFound, error.StorageError => std.process.exit(1),
@@ -274,6 +286,8 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\    doctor            Run diagnostic checks
             \\    config            Manage configuration
             \\    sync              Sync with JSONL file
+            \\    orphans           Find issues with missing parent refs
+            \\    lint              Validate database consistency
             \\
             \\  Issue Management:
             \\    create <title>    Create new issue

@@ -47,7 +47,7 @@ const BASH_COMPLETIONS =
     \\    local cur prev words cword
     \\    _init_completion || return
     \\
-    \\    local commands="init create q show update close reopen delete list ready blocked search stale count dep label comments history audit sync config info stats doctor version schema completions"
+    \\    local commands="init create q show update close reopen delete list ready blocked search stale count dep label comments history audit sync config info stats doctor orphans lint version schema completions"
     \\
     \\    if [[ $cword -eq 1 ]]; then
     \\        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -143,6 +143,8 @@ const ZSH_COMPLETIONS =
     \\        'info:Workspace info'
     \\        'stats:Project statistics'
     \\        'doctor:Run diagnostics'
+    \\        'orphans:Find orphaned issues'
+    \\        'lint:Validate database consistency'
     \\        'version:Show version'
     \\        'schema:View storage schema'
     \\        'completions:Generate shell completions'
@@ -202,7 +204,7 @@ const FISH_COMPLETIONS =
     \\# fish completion for bz (beads_zig)
     \\# Add to ~/.config/fish/completions/bz.fish
     \\
-    \\set -l commands init create q show update close reopen delete list ready blocked search stale count dep label comments history audit sync config info stats doctor version schema completions
+    \\set -l commands init create q show update close reopen delete list ready blocked search stale count dep label comments history audit sync config info stats doctor orphans lint version schema completions
     \\
     \\complete -c bz -f
     \\
@@ -231,6 +233,8 @@ const FISH_COMPLETIONS =
     \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a info -d "Workspace info"
     \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a stats -d "Statistics"
     \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a doctor -d "Diagnostics"
+    \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a orphans -d "Find orphaned issues"
+    \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a lint -d "Validate database"
     \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a version -d "Show version"
     \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a schema -d "Storage schema"
     \\complete -c bz -n "not __fish_seen_subcommand_from $commands" -a completions -d "Shell completions"
@@ -284,6 +288,8 @@ const POWERSHELL_COMPLETIONS =
     \\        @{Name='info'; Description='Workspace info'}
     \\        @{Name='stats'; Description='Statistics'}
     \\        @{Name='doctor'; Description='Diagnostics'}
+    \\        @{Name='orphans'; Description='Find orphaned issues'}
+    \\        @{Name='lint'; Description='Validate database'}
     \\        @{Name='version'; Description='Show version'}
     \\        @{Name='schema'; Description='Storage schema'}
     \\        @{Name='completions'; Description='Shell completions'}

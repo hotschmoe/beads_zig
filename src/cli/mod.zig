@@ -34,6 +34,8 @@ pub const info = @import("info.zig");
 pub const stats = @import("stats.zig");
 pub const doctor = @import("doctor.zig");
 pub const config = @import("config.zig");
+pub const orphans = @import("orphans.zig");
+pub const lint = @import("lint.zig");
 pub const version = @import("version.zig");
 pub const schema = @import("schema.zig");
 pub const completions = @import("completions.zig");
@@ -151,6 +153,17 @@ pub const runDoctor = doctor.run;
 pub const ConfigError = config.ConfigError;
 pub const ConfigResult = config.ConfigResult;
 pub const runConfig = config.run;
+
+pub const OrphansError = orphans.OrphansError;
+pub const OrphansResult = orphans.OrphansResult;
+pub const runOrphans = orphans.run;
+
+pub const LintError = lint.LintError;
+pub const LintResult = lint.LintResult;
+pub const runLint = lint.run;
+
+pub const OrphansArgs = args.OrphansArgs;
+pub const LintArgs = args.LintArgs;
 
 pub const VersionError = version.VersionError;
 pub const VersionResult = version.VersionResult;
