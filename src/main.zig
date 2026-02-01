@@ -111,6 +111,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .graph => |graph_args| {
+            cli.runGraph(graph_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound => std.process.exit(1),
+                else => return err,
+            };
+        },
         .sync => |sync_args| {
             cli.runSync(sync_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized, error.MergeConflictDetected, error.ImportError, error.ExportError => std.process.exit(1),
@@ -229,6 +235,8 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\    dep remove <a> <b> Remove dependency
             \\    dep list <id>     List dependencies
             \\    dep cycles        Detect dependency cycles
+            \\    graph [id]        Show dependency graph (ASCII)
+            \\    graph --format dot  Export graph in DOT format
             \\
             \\  Info:
             \\    help              Show this help

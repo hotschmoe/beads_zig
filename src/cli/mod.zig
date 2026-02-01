@@ -18,6 +18,7 @@ pub const close = @import("close.zig");
 pub const delete = @import("delete.zig");
 pub const ready = @import("ready.zig");
 pub const dep = @import("dep.zig");
+pub const graph = @import("graph.zig");
 pub const sync = @import("sync.zig");
 pub const search = @import("search.zig");
 pub const stale = @import("stale.zig");
@@ -82,6 +83,10 @@ pub const runBlocked = ready.runBlocked;
 pub const DepError = dep.DepError;
 pub const DepResult = dep.DepResult;
 pub const runDep = dep.run;
+
+pub const GraphError = graph.GraphError;
+pub const GraphResult = graph.GraphResult;
+pub const runGraph = graph.run;
 
 pub const SyncError = sync.SyncError;
 pub const SyncResult = sync.SyncResult;

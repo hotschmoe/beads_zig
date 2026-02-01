@@ -55,6 +55,7 @@ pub const Command = union(enum) {
 
     // Dependencies
     dep: DepArgs,
+    graph: GraphArgs,
 
     // Labels
     label: LabelArgs,
@@ -209,6 +210,26 @@ pub const DepSubcommand = union(enum) {
 /// Dependency command arguments.
 pub const DepArgs = struct {
     subcommand: DepSubcommand,
+};
+
+/// Graph command output formats.
+pub const GraphFormat = enum {
+    ascii,
+    dot,
+
+    pub fn fromString(s: []const u8) ?GraphFormat {
+        if (std.ascii.eqlIgnoreCase(s, "ascii")) return .ascii;
+        if (std.ascii.eqlIgnoreCase(s, "dot")) return .dot;
+        if (std.ascii.eqlIgnoreCase(s, "graphviz")) return .dot;
+        return null;
+    }
+};
+
+/// Graph command arguments.
+pub const GraphArgs = struct {
+    id: ?[]const u8 = null, // Optional: show graph for specific issue, otherwise show all
+    format: GraphFormat = .ascii,
+    depth: ?u32 = null, // Max depth for tree traversal
 };
 
 /// Label subcommand variants.
@@ -516,6 +537,9 @@ pub const ArgParser = struct {
         // Dependencies
         if (std.mem.eql(u8, cmd, "dep") or std.mem.eql(u8, cmd, "deps") or std.mem.eql(u8, cmd, "dependency")) {
             return .{ .dep = try self.parseDepArgs() };
+        }
+        if (std.mem.eql(u8, cmd, "graph")) {
+            return .{ .graph = try self.parseGraphArgs() };
         }
 
         // Labels
@@ -844,6 +868,25 @@ pub const ArgParser = struct {
             return .{ .subcommand = .{ .cycles = {} } };
         }
         return error.UnknownSubcommand;
+    }
+
+    fn parseGraphArgs(self: *Self) ParseError!GraphArgs {
+        var result = GraphArgs{};
+
+        while (self.hasNext()) {
+            if (self.consumeFlag("-f", "--format")) {
+                const fmt_str = self.next() orelse return error.MissingFlagValue;
+                result.format = GraphFormat.fromString(fmt_str) orelse return error.InvalidArgument;
+            } else if (self.consumeFlag("-d", "--depth")) {
+                result.depth = try self.consumeU32() orelse return error.MissingFlagValue;
+            } else if (self.peekPositional()) |_| {
+                if (result.id == null) {
+                    result.id = self.next().?;
+                } else break;
+            } else break;
+        }
+
+        return result;
     }
 
     fn parseLabelArgs(self: *Self) ParseError!LabelArgs {
