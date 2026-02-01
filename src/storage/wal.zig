@@ -24,6 +24,28 @@ pub const WalError = error{
     InvalidOperation,
     ParseError,
     OutOfMemory,
+    ReplayPartialFailure,
+};
+
+/// Statistics from WAL replay operations.
+pub const ReplayStats = struct {
+    applied: usize = 0,
+    skipped: usize = 0,
+    failed: usize = 0,
+    failure_ids: []const []const u8 = &.{},
+
+    pub fn deinit(self: *ReplayStats, allocator: std.mem.Allocator) void {
+        for (self.failure_ids) |id| {
+            allocator.free(id);
+        }
+        if (self.failure_ids.len > 0) {
+            allocator.free(self.failure_ids);
+        }
+    }
+
+    pub fn hasFailures(self: ReplayStats) bool {
+        return self.failed > 0;
+    }
 };
 
 /// WAL operation types.
@@ -262,7 +284,8 @@ pub const Wal = struct {
 
     /// Replay WAL entries onto an IssueStore.
     /// Applies operations in timestamp order.
-    pub fn replay(self: *Self, store: *IssueStore) !void {
+    /// Returns statistics about the replay including any failures.
+    pub fn replay(self: *Self, store: *IssueStore) !ReplayStats {
         const entries = try self.readEntries();
         defer {
             for (entries) |*e| {
@@ -279,14 +302,46 @@ pub const Wal = struct {
             }
         }.lessThan);
 
+        // Track replay results
+        var stats = ReplayStats{};
+        var failure_ids: std.ArrayListUnmanaged([]const u8) = .{};
+        errdefer {
+            for (failure_ids.items) |id| {
+                self.allocator.free(id);
+            }
+            failure_ids.deinit(self.allocator);
+        }
+
         // Apply each operation
         for (entries) |entry| {
-            try self.applyEntry(store, entry);
+            const result = self.applyEntry(store, entry);
+            switch (result) {
+                .applied => stats.applied += 1,
+                .skipped => stats.skipped += 1,
+                .failed => {
+                    stats.failed += 1;
+                    const id_copy = self.allocator.dupe(u8, entry.id) catch continue;
+                    failure_ids.append(self.allocator, id_copy) catch {
+                        self.allocator.free(id_copy);
+                    };
+                },
+            }
         }
+
+        stats.failure_ids = failure_ids.toOwnedSlice(self.allocator) catch &.{};
+        return stats;
     }
 
+    /// Result of applying a single WAL entry.
+    const ApplyResult = enum {
+        applied,
+        skipped,
+        failed,
+    };
+
     /// Apply a single WAL entry to the store.
-    fn applyEntry(self: *Self, store: *IssueStore, entry: ParsedWalEntry) !void {
+    /// Returns the result of the operation.
+    fn applyEntry(self: *Self, store: *IssueStore, entry: ParsedWalEntry) ApplyResult {
         _ = self;
         switch (entry.op) {
             .add => {
@@ -294,11 +349,14 @@ pub const Wal = struct {
                     // Only insert if not already present
                     if (!store.id_index.contains(issue.id)) {
                         store.insert(issue) catch |err| switch (err) {
-                            error.DuplicateId => {}, // Already exists, ignore
-                            else => return err,
+                            error.DuplicateId => return .skipped, // Already exists
+                            else => return .failed,
                         };
+                        return .applied;
                     }
+                    return .skipped; // Already exists
                 }
+                return .skipped; // No data for add op
             },
             .update => {
                 if (entry.data) |issue| {
@@ -308,31 +366,54 @@ pub const Wal = struct {
                         const idx = store.id_index.get(issue.id).?;
                         var old = &store.issues.items[idx];
                         old.deinit(store.allocator);
-                        store.issues.items[idx] = try issue.clone(store.allocator);
+                        store.issues.items[idx] = issue.clone(store.allocator) catch return .failed;
+                        return .applied;
                     } else {
-                        store.insert(issue) catch {};
+                        store.insert(issue) catch return .failed;
+                        return .applied;
                     }
                 }
+                return .skipped; // No data for update op
             },
             .close => {
                 store.update(entry.id, .{
                     .status = .closed,
                     .closed_at = std.time.timestamp(),
-                }, entry.ts) catch {};
+                }, entry.ts) catch |err| switch (err) {
+                    error.IssueNotFound => return .skipped,
+                    else => return .failed,
+                };
+                return .applied;
             },
             .reopen => {
                 store.update(entry.id, .{
                     .status = .open,
-                }, entry.ts) catch {};
+                }, entry.ts) catch |err| switch (err) {
+                    error.IssueNotFound => return .skipped,
+                    else => return .failed,
+                };
+                return .applied;
             },
             .delete => {
-                store.delete(entry.id, entry.ts) catch {};
+                store.delete(entry.id, entry.ts) catch |err| switch (err) {
+                    error.IssueNotFound => return .skipped,
+                    else => return .failed,
+                };
+                return .applied;
             },
             .set_blocked => {
-                store.update(entry.id, .{ .status = .blocked }, entry.ts) catch {};
+                store.update(entry.id, .{ .status = .blocked }, entry.ts) catch |err| switch (err) {
+                    error.IssueNotFound => return .skipped,
+                    else => return .failed,
+                };
+                return .applied;
             },
             .unset_blocked => {
-                store.update(entry.id, .{ .status = .open }, entry.ts) catch {};
+                store.update(entry.id, .{ .status = .open }, entry.ts) catch |err| switch (err) {
+                    error.IssueNotFound => return .skipped,
+                    else => return .failed,
+                };
+                return .applied;
             },
         }
     }
@@ -554,7 +635,12 @@ test "Wal.replay applies operations to store" {
     var store = IssueStore.init(allocator, jsonl_path);
     defer store.deinit();
 
-    try wal.replay(&store);
+    var stats = try wal.replay(&store);
+    defer stats.deinit(allocator);
+
+    // Verify replay succeeded
+    try std.testing.expectEqual(@as(usize, 1), stats.applied);
+    try std.testing.expectEqual(@as(usize, 0), stats.failed);
 
     // Verify issue was added
     try std.testing.expect(try store.exists("bd-replay1"));

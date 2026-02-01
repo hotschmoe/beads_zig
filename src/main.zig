@@ -171,15 +171,53 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 error.WriteError => std.process.exit(1),
             };
         },
-        else => {
-            var out = output.Output.init(allocator, .{
-                .json = result.global.json,
-                .toon = result.global.toon,
-                .quiet = result.global.quiet,
-                .no_color = result.global.no_color,
-            });
-            try out.err("command not yet implemented", .{});
-            std.process.exit(1);
+        .info => {
+            cli.runInfo(result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .stats => {
+            cli.runStats(result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .doctor => {
+            cli.runDoctor(result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .config => |config_args| {
+            cli.runConfig(config_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.ConfigNotFound, error.InvalidKey, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .label => |label_args| {
+            cli.runLabel(label_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .comments => |comments_args| {
+            cli.runComments(comments_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.EmptyCommentBody, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .history => |history_args| {
+            cli.runHistory(history_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.IssueNotFound, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .audit => |audit_args| {
+            cli.runAudit(audit_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
         },
     }
 }
@@ -213,6 +251,10 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\COMMANDS:
             \\  Workspace:
             \\    init              Initialize .beads/ workspace
+            \\    info              Show workspace information
+            \\    stats             Show project statistics
+            \\    doctor            Run diagnostic checks
+            \\    config            Manage configuration
             \\    sync              Sync with JSONL file
             \\
             \\  Issue Management:
@@ -223,24 +265,44 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\    close <id>        Close an issue
             \\    reopen <id>       Reopen a closed issue
             \\    delete <id>       Soft delete (tombstone)
+            \\    defer <id>        Defer an issue
+            \\    undefer <id>      Remove deferral from an issue
             \\
             \\  Queries:
             \\    list              List issues with filters
             \\    ready             Show actionable issues (unblocked)
             \\    blocked           Show blocked issues
             \\    search <query>    Full-text search
+            \\    stale [--days N]  Find issues not updated recently
+            \\    count [--group-by] Count issues by group
             \\
             \\  Dependencies:
             \\    dep add <a> <b>   Make issue A depend on B
             \\    dep remove <a> <b> Remove dependency
             \\    dep list <id>     List dependencies
+            \\    dep tree <id>     Show dependency tree (ASCII)
             \\    dep cycles        Detect dependency cycles
-            \\    graph [id]        Show dependency graph (ASCII)
-            \\    graph --format dot  Export graph in DOT format
+            \\    graph [id]        Show dependency graph (ASCII/DOT)
             \\
-            \\  Info:
+            \\  Labels:
+            \\    label add <id> <labels...>    Add labels to an issue
+            \\    label remove <id> <labels...> Remove labels from an issue
+            \\    label list <id>               List labels on an issue
+            \\    label list-all                List all labels in project
+            \\
+            \\  Comments:
+            \\    comments add <id> <text>  Add comment to an issue
+            \\    comments list <id>        List comments on an issue
+            \\
+            \\  Audit:
+            \\    history <id>      Show issue history
+            \\    audit             Project-wide audit log
+            \\
+            \\  System:
             \\    help              Show this help
             \\    version           Show version
+            \\    schema            Show data schema
+            \\    completions <shell>  Generate shell completions
             \\
             \\GLOBAL OPTIONS:
             \\  --json            Output in JSON format
@@ -249,6 +311,9 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\  -v, --verbose     Increase verbosity
             \\  --no-color        Disable colors
             \\  --data <path>     Override .beads/ directory
+            \\  --actor <name>    Override actor name for audit
+            \\  --no-auto-flush   Skip automatic JSONL export
+            \\  --no-auto-import  Skip JSONL freshness check
             \\
             \\Run 'bz help <command>' for command-specific help.
             \\

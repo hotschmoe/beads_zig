@@ -128,7 +128,10 @@ pub const Compactor = struct {
         var wal = try Wal.init(self.beads_dir, self.allocator);
         defer wal.deinit();
 
-        wal.replay(&store) catch return CompactError.CompactionFailed;
+        var replay_stats = wal.replay(&store) catch return CompactError.CompactionFailed;
+        defer replay_stats.deinit(self.allocator);
+        // Note: During compaction we proceed even if some replays failed,
+        // since the remaining operations should still be compacted.
 
         // 4-6. Write merged state atomically
         try self.writeAtomically(jsonl_path, store.issues.items);

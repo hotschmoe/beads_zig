@@ -54,7 +54,7 @@ pub fn run(
         .add => |add| try runAdd(&graph, &ctx, add, global, allocator),
         .remove => |remove| try runRemove(&graph, &ctx, remove, global),
         .list => |list| try runList(&graph, &ctx.output, list, global, allocator),
-        .tree => |tree| try runTree(&ctx.output, tree, global),
+        .tree => |tree| try runTree(&graph, &ctx, tree, global, allocator),
         .cycles => try runCycles(&graph, &ctx.output, global, allocator),
     }
 }
@@ -215,20 +215,203 @@ fn runList(
     }
 }
 
+/// Tree node for JSON output.
+const TreeNode = struct {
+    id: []const u8,
+    title: []const u8,
+    status: []const u8,
+    children: ?[]const TreeNode = null,
+};
+
 fn runTree(
-    output: *common.Output,
+    graph: *DependencyGraph,
+    ctx: *CommandContext,
     tree_args: anytype,
     global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
 ) !void {
-    _ = tree_args;
+    const id = tree_args.id;
+
+    // Check if issue exists
+    const issue = try ctx.store.get(id);
+    if (issue == null) {
+        try common.outputNotFoundError(DepResult, &ctx.output, global.isStructuredOutput(), id, allocator);
+        return DepError.IssueNotFound;
+    }
+    var i = issue.?;
+    defer i.deinit(allocator);
 
     if (global.isStructuredOutput()) {
-        try output.printJson(DepResult{
-            .success = false,
-            .message = "tree command not yet implemented",
+        // Build tree structure for JSON output
+        const root = try buildTreeNode(graph, ctx, id, allocator, 0, 5);
+        defer freeTreeNode(root, allocator);
+
+        try ctx.output.printJson(.{
+            .success = true,
+            .tree = root,
         });
     } else {
-        try output.info("tree command not yet implemented", .{});
+        // ASCII tree output
+        try ctx.output.println("{s} - {s} [{s}]", .{ id, i.title, i.status.toString() });
+
+        // Show what this issue depends on (upstream dependencies)
+        const deps = try graph.getDependencies(id);
+        defer graph.freeDependencies(deps);
+
+        if (deps.len > 0) {
+            try ctx.output.println("Depends on:", .{});
+            var visited: std.StringHashMapUnmanaged(void) = .{};
+            defer {
+                var it = visited.keyIterator();
+                while (it.next()) |key| allocator.free(key.*);
+                visited.deinit(allocator);
+            }
+
+            for (deps, 0..) |dep, idx| {
+                const is_last = (idx == deps.len - 1);
+                try printTreeBranch(&ctx.output, graph, ctx, dep.depends_on_id, "", is_last, &visited, allocator, 0, 5);
+            }
+        }
+
+        // Show what depends on this issue (downstream dependents)
+        const dependents = try graph.getDependents(id);
+        defer graph.freeDependencies(dependents);
+
+        if (dependents.len > 0) {
+            try ctx.output.print("\n", .{});
+            try ctx.output.println("Blocked by this:", .{});
+            for (dependents, 0..) |dep, idx| {
+                const is_last = (idx == dependents.len - 1);
+                const prefix = if (is_last) "`-- " else "|-- ";
+                const dep_issue = try ctx.store.get(dep.issue_id);
+                if (dep_issue) |di| {
+                    var d = di;
+                    defer d.deinit(allocator);
+                    try ctx.output.print("{s}{s} - {s} [{s}]\n", .{ prefix, dep.issue_id, d.title, d.status.toString() });
+                } else {
+                    try ctx.output.print("{s}{s} (not found)\n", .{ prefix, dep.issue_id });
+                }
+            }
+        }
+    }
+}
+
+fn printTreeBranch(
+    output: *common.Output,
+    graph: *DependencyGraph,
+    ctx: *CommandContext,
+    id: []const u8,
+    prefix: []const u8,
+    is_last: bool,
+    visited: *std.StringHashMapUnmanaged(void),
+    allocator: std.mem.Allocator,
+    depth: usize,
+    max_depth: usize,
+) !void {
+    // Check for cycles
+    if (visited.contains(id)) {
+        const branch = if (is_last) "`-- " else "|-- ";
+        try output.print("{s}{s}{s} (cycle)\n", .{ prefix, branch, id });
+        return;
+    }
+
+    // Depth limit
+    if (depth >= max_depth) {
+        const branch = if (is_last) "`-- " else "|-- ";
+        try output.print("{s}{s}{s} (...)\n", .{ prefix, branch, id });
+        return;
+    }
+
+    // Mark as visited
+    const id_copy = try allocator.dupe(u8, id);
+    errdefer allocator.free(id_copy);
+    try visited.put(allocator, id_copy, {});
+
+    // Get issue details
+    const issue = try ctx.store.get(id);
+    const branch = if (is_last) "`-- " else "|-- ";
+
+    if (issue) |i| {
+        var iss = i;
+        defer iss.deinit(allocator);
+        try output.print("{s}{s}{s} - {s} [{s}]\n", .{ prefix, branch, id, iss.title, iss.status.toString() });
+    } else {
+        try output.print("{s}{s}{s} (not found)\n", .{ prefix, branch, id });
+        return;
+    }
+
+    // Get dependencies of this issue
+    const deps = try graph.getDependencies(id);
+    defer graph.freeDependencies(deps);
+
+    // Build new prefix for children
+    var new_prefix_buf: [256]u8 = undefined;
+    const extension = if (is_last) "    " else "|   ";
+    const new_prefix = std.fmt.bufPrint(&new_prefix_buf, "{s}{s}", .{ prefix, extension }) catch prefix;
+
+    for (deps, 0..) |dep, idx| {
+        const child_is_last = (idx == deps.len - 1);
+        try printTreeBranch(output, graph, ctx, dep.depends_on_id, new_prefix, child_is_last, visited, allocator, depth + 1, max_depth);
+    }
+}
+
+fn buildTreeNode(
+    graph: *DependencyGraph,
+    ctx: *CommandContext,
+    id: []const u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+    max_depth: usize,
+) !TreeNode {
+    const issue = try ctx.store.get(id);
+    var title: []const u8 = "(not found)";
+    var status: []const u8 = "unknown";
+
+    if (issue) |i| {
+        var iss = i;
+        defer iss.deinit(allocator);
+        title = try allocator.dupe(u8, iss.title);
+        status = iss.status.toString();
+    }
+
+    if (depth >= max_depth) {
+        return TreeNode{
+            .id = try allocator.dupe(u8, id),
+            .title = title,
+            .status = try allocator.dupe(u8, status),
+            .children = null,
+        };
+    }
+
+    const deps = try graph.getDependencies(id);
+    defer graph.freeDependencies(deps);
+
+    var children: ?[]TreeNode = null;
+    if (deps.len > 0) {
+        var child_nodes = try allocator.alloc(TreeNode, deps.len);
+        for (deps, 0..) |dep, idx| {
+            child_nodes[idx] = try buildTreeNode(graph, ctx, dep.depends_on_id, allocator, depth + 1, max_depth);
+        }
+        children = child_nodes;
+    }
+
+    return TreeNode{
+        .id = try allocator.dupe(u8, id),
+        .title = title,
+        .status = try allocator.dupe(u8, status),
+        .children = children,
+    };
+}
+
+fn freeTreeNode(node: TreeNode, allocator: std.mem.Allocator) void {
+    allocator.free(node.id);
+    allocator.free(node.title);
+    allocator.free(node.status);
+    if (node.children) |children| {
+        for (children) |child| {
+            freeTreeNode(child, allocator);
+        }
+        allocator.free(children);
     }
 }
 

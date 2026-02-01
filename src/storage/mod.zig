@@ -40,6 +40,7 @@ pub const Wal = wal.Wal;
 pub const WalEntry = wal.WalEntry;
 pub const WalOp = wal.WalOp;
 pub const WalError = wal.WalError;
+pub const ReplayStats = wal.ReplayStats;
 
 pub const Compactor = compact.Compactor;
 pub const CompactError = compact.CompactError;
