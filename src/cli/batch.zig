@@ -263,8 +263,7 @@ pub fn runImport(
     };
     defer {
         for (imported_issues.issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
+            issue.deinit(allocator);
         }
         allocator.free(imported_issues.issues);
         if (imported_issues.corrupt_lines.len > 0) {
@@ -381,7 +380,6 @@ fn readFileContent(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
     return try file.readToEndAlloc(allocator, 100 * 1024 * 1024); // 100MB max
 }
 
-
 /// Check if a file contains git merge conflict markers.
 fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
     const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
@@ -393,10 +391,10 @@ fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
     const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 10);
     defer allocator.free(content);
 
-    if (std.mem.indexOf(u8, content, "<<<<<<<") != null) return true;
-    if (std.mem.indexOf(u8, content, "=======") != null) return true;
-    if (std.mem.indexOf(u8, content, ">>>>>>>") != null) return true;
-
+    const markers = [_][]const u8{ "<<<<<<<", "=======", ">>>>>>>" };
+    for (markers) |marker| {
+        if (std.mem.indexOf(u8, content, marker) != null) return true;
+    }
     return false;
 }
 
