@@ -1,0 +1,23 @@
+# PARSE_ERROR: I'll implement the Issue struct as specified. Let me first examine the existing model files to under
+# PARSE_ERROR: 1. All fields matching SPEC.md
+# PARSE_ERROR: 2. Validation (empty title, title > 500 chars)
+# PARSE_ERROR: 3. JSON serialization with RFC3339 timestamps
+# PARSE_ERROR: 4. Clone and deinit for memory management
+# PARSE_ERROR: 5. Equality checkI need to fix the timestamp formatting. The YearAndDay struct in Zig's standard lib
+# PARSE_ERROR: 1. **Created `src/models/issue.zig`** with:
+# PARSE_ERROR:    - `Issue` struct with all 27+ fields matching SPEC.md
+# PARSE_ERROR:    - `Rfc3339Timestamp` wrapper for serializing Unix epoch as RFC3339 strings
+# PARSE_ERROR:    - `OptionalRfc3339Timestamp` for nullable timestamp fields
+# PARSE_ERROR:    - `IssueError` for validation errors (EmptyId, EmptyTitle, TitleTooLong)
+# PARSE_ERROR:    - `validate()` - enforces title constraints (1-500 chars) and non-empty id
+# PARSE_ERROR:    - `eql()` - compares all issue fields except embedded relations
+# PARSE_ERROR:    - `clone()` - deep copies all fields including custom union variants
+# PARSE_ERROR:    - `deinit()` - frees all allocated memory
+# PARSE_ERROR:    - `init()` - creates issues with minimal required fields and sensible defaults
+# PARSE_ERROR:    - Timestamps serialize as RFC3339 format (e.g., `"2024-01-29T14:53:20Z"`)
+# PARSE_ERROR:    - All optional fields serialize as `null` when absent
+# PARSE_ERROR:    - Full roundtrip compatibility verified
+# PARSE_ERROR: 4. **Updated `src/models/mod.zig`** to export:
+# PARSE_ERROR:    - `Rfc3339Timestamp`, `OptionalRfc3339Timestamp`
+# PARSE_ERROR:    - All tests pass with `zig build test`
+# PARSE_ERROR:    - Memory safety verified (clone/deinit don't leak)

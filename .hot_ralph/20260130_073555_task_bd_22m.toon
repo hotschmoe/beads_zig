@@ -1,0 +1,19 @@
+# PARSE_ERROR: I'll implement the dependency operations for issue dependencies including cycle detection. Let me st
+# PARSE_ERROR: Let me verify that my changes compile correctly and run a targeted test for dependencies only:The bu
+# PARSE_ERROR: Let me update the todo list and commit:Now let me commit the changes:The implementation is complete.
+# PARSE_ERROR: Created `src/storage/dependencies.zig` with `DependencyStore` implementing:
+# PARSE_ERROR: - `add(dep)` - Add a dependency with self-dependency and cycle detection
+# PARSE_ERROR: - `remove(issue_id, depends_on_id)` - Remove a dependency
+# PARSE_ERROR: - `getDependencies(issue_id)` - Get what an issue depends on
+# PARSE_ERROR: - `getDependents(issue_id)` - Get what depends on an issue
+# PARSE_ERROR: - `wouldCreateCycle()` - DFS-based check before adding dependency
+# PARSE_ERROR: - `detectCycles()` - Find all cycles in the dependency graph
+# PARSE_ERROR: - `getReadyIssues()` - Open issues that are not blocked and not deferred
+# PARSE_ERROR: - `getBlockedIssues()` - Open issues with unresolved dependencies
+# PARSE_ERROR: - `getBlockers(issue_id)` - Get open issues blocking a specific issue
+# PARSE_ERROR: - `invalidateBlockedCache()` - Invalidate cache when dependencies change
+# PARSE_ERROR: - `rebuildBlockedCache()` - Rebuild entire cache from dependencies
+# PARSE_ERROR: - `getCachedBlockers()` - Get cached blocker list for an issue
+# PARSE_ERROR: - Updated `src/storage/mod.zig` to export `DependencyStore` and `DependencyStoreError`
+# PARSE_ERROR: - Dirty tracking integration for sync operations
+# PARSE_ERROR: - Comprehensive tests for all operations

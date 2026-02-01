@@ -1,0 +1,8 @@
+# PARSE_ERROR: I'll implement the content hash generation for issue deduplication. Let me start by understanding th
+# PARSE_ERROR: - Created `src/id/hash.zig` with SHA256 content hashing for issue deduplication
+# PARSE_ERROR: - Hash includes all content-relevant fields per SPEC.md: title, description, design, acceptance_crit
+# PARSE_ERROR: - Fields are separated by null bytes (`\x00`) for unambiguous parsing
+# PARSE_ERROR: - Optional fields contribute empty string when null
+# PARSE_ERROR: - Output is 64-character lowercase hex string
+# PARSE_ERROR: - Updated `src/id/mod.zig` to export the hash module and functions
+# PARSE_ERROR: - All tests pass (including determinism, field sensitivity, null handling, and output format validat

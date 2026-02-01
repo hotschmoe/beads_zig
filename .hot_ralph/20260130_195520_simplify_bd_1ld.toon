@@ -1,0 +1,19 @@
+# PARSE_ERROR: Let me read the main file that was added to understand its structure.This is a comprehensive CLI arg
+# PARSE_ERROR: 1. **Repetitive flag parsing patterns** - Many parse*Args functions have identical patterns for `--l
+# PARSE_ERROR: 2. **Repetitive required positional argument handling** - Many functions have similar patterns for p
+# PARSE_ERROR: 3. **The `_ = self.next()` pattern** - After checking with `peek()`, the code does `_ = self.next()`
+# PARSE_ERROR: Let me implement some simplifications. I'll add helper methods to reduce repetition while keeping th
+# PARSE_ERROR: 1. **Added 5 helper methods** to reduce repetition:
+# PARSE_ERROR:    - `skip()` - advance past a peeked argument
+# PARSE_ERROR:    - `consumeFlag(short, long)` - check and consume a flag in one step
+# PARSE_ERROR:    - `consumeU32()` - parse a u32 value after consuming a flag
+# PARSE_ERROR:    - `parseLimitFlag()` - common `--limit`/`-n` flag handling
+# PARSE_ERROR:    - `peekPositional()` - check if current arg is a positional (non-flag)
+# PARSE_ERROR: 2. **Refactored 14 parse*Args functions** to use the helpers:
+# PARSE_ERROR:    - `parseInitArgs`, `parseCreateArgs`, `parseQuickArgs`, `parseCloseArgs`
+# PARSE_ERROR:    - `parseUpdateArgs`, `parseListArgs`, `parseReadyArgs`, `parseBlockedArgs`
+# PARSE_ERROR:    - `parseSearchArgs`, `parseStaleArgs`, `parseCountArgs`, `parseSyncArgs`
+# PARSE_ERROR:    - `parseAuditArgs`, `parseDepArgs`, `parseLabelArgs`, `parseCommentsArgs`
+# PARSE_ERROR: 3. **Standardized variable naming** - changed `args` to `result` for consistency
+# PARSE_ERROR: - Net reduction of **130 lines** (1751 -> 1621)
+# PARSE_ERROR: - No behavior changes - purely cosmetic/structural improvements

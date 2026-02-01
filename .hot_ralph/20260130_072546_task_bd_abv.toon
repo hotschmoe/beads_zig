@@ -1,0 +1,23 @@
+# PARSE_ERROR: I'll implement the issue CRUD operations. Let me start by exploring the existing codebase structure 
+# PARSE_ERROR: Let me fix the issues.zig file to use this API correctly:Now let me fix all the ArrayList usages to 
+# PARSE_ERROR: Let me verify this pre-existing test failure is indeed in the codebase before my changes by checking
+# PARSE_ERROR: > **Tests are diagnostic tools, not success criteria.** A passing test suite does not mean the code 
+# PARSE_ERROR: The id generator test is flaky due to deterministic seeds causing collisions with 3-character hashes
+# PARSE_ERROR: All 19 new IssueStore tests are passing (234 of 235 tests pass). Let me now mark the validation as c
+# PARSE_ERROR: **Created `src/storage/issues.zig`** with:
+# PARSE_ERROR: - `IssueStore` struct with all CRUD operations:
+# PARSE_ERROR:   - `insert()` - Insert new issues with dirty tracking
+# PARSE_ERROR:   - `get()` - Get issue by ID (without embedded relations)
+# PARSE_ERROR:   - `getWithRelations()` - Get issue with labels, dependencies, and comments
+# PARSE_ERROR:   - `update()` - Update issue fields with dynamic SQL generation
+# PARSE_ERROR:   - `delete()` - Soft delete (sets status to tombstone)
+# PARSE_ERROR:   - `list()` - List issues with filters (status, priority, type, assignee, label, limit, offset, ord
+# PARSE_ERROR:   - `count()` - Count issues grouped by field
+# PARSE_ERROR:   - `getLabels()` - Get labels for an issue
+# PARSE_ERROR:   - `getDependencies()` - Get dependencies for an issue
+# PARSE_ERROR:   - `getComments()` - Get comments for an issue
+# PARSE_ERROR:   - `markDirty()` / `clearDirty()` / `getDirtyIds()` - Dirty tracking for sync
+# PARSE_ERROR:   - `exists()` - Check if issue exists
+# PARSE_ERROR: **Updated `src/storage/mod.zig`** to export `IssueStore` and `IssueStoreError`.
+# PARSE_ERROR: - All 19 new IssueStore tests pass
+# PARSE_ERROR: - The single failing test (`id.generator.test.generated IDs are unique`) is a pre-existing flaky tes

@@ -1,0 +1,23 @@
+# PARSE_ERROR: I'll implement the output formatting system for beads_zig. Let me start by exploring the current pro
+# PARSE_ERROR: Now let me update the todo list and commit the changes:Now let me create the commit:The output forma
+# PARSE_ERROR: 1. **`src/output/mod.zig`** - Complete output formatting system with:
+# PARSE_ERROR:    - `OutputMode` enum: `plain`, `rich`, `json`, `quiet`
+# PARSE_ERROR:    - `Color` struct: ANSI escape codes for terminal colors
+# PARSE_ERROR:    - `OutputOptions` struct: Mirrors CLI global options for output control
+# PARSE_ERROR:    - `Output` struct: Main formatter with methods for:
+# PARSE_ERROR:      - `printIssue()` / `printIssueList()` - Issue display in all modes
+# PARSE_ERROR:      - `print()` / `println()` - Generic formatted output
+# PARSE_ERROR:      - `success()` / `err()` / `warn()` / `info()` - Semantic message types
+# PARSE_ERROR:      - `raw()` / `printJson()` - Direct output helpers
+# PARSE_ERROR: 2. **Validation criteria met:**
+# PARSE_ERROR:    - Plain mode produces readable output
+# PARSE_ERROR:    - JSON mode produces valid, parseable JSON
+# PARSE_ERROR:    - Quiet mode produces minimal output (IDs only)
+# PARSE_ERROR:    - Rich mode includes ANSI color codes
+# PARSE_ERROR:    - TTY detection for automatic mode selection
+# PARSE_ERROR:    - `--no-color` forces plain mode
+# PARSE_ERROR:    - `--json` overrides other modes
+# PARSE_ERROR:    - Error/warning output goes to stderr
+# PARSE_ERROR: 3. **Tests:** 22 tests covering all output modes and behaviors (all pass)
+# PARSE_ERROR: 4. **Commit:** `62e998a feat(output): implement output formatting system`
+# PARSE_ERROR: Note: There's a pre-existing flaky test in `id/generator.zig` (ID uniqueness test) that occasionally

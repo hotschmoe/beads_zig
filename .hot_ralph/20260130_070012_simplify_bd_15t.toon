@@ -1,0 +1,8 @@
+# PARSE_ERROR: I'll review the recent code changes for the Base36 encoding/decoding implementation and simplify whe
+# PARSE_ERROR: Reviewed and simplified the Base36 encoding/decoding implementation. The core implementation in `src
+# PARSE_ERROR: - Clean `encode()` function with proper buffer handling
+# PARSE_ERROR: - Proper overflow checking in `decode()` using `std.math.mul` and `std.math.add`
+# PARSE_ERROR: - Clear separation between buffer-based and allocator-based APIs
+# PARSE_ERROR: - Good test coverage including edge cases
+# PARSE_ERROR: **Simplification made:** Removed 18 unnecessary `@as()` type casts in test assertions. Zig 0.15's `s
+# PARSE_ERROR: Tests pass. Committed as `40727e1`.

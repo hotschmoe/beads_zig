@@ -1,0 +1,17 @@
+# PARSE_ERROR: I'll review the recent code changes and simplify them. Let me start by examining what was modified.L
+# PARSE_ERROR: 1. **Repetitive `if/else` patterns for optional text duplication** - The `rowToIssue` function has m
+# PARSE_ERROR:    if (stmt.columnText(X)) |v| {
+# PARSE_ERROR:        issue.field = try self.allocator.dupe(u8, v);
+# PARSE_ERROR:    This can be simplified using a helper method.
+# PARSE_ERROR: 2. **Repetitive test cleanup patterns** - Many tests have identical cleanup patterns that can be ext
+# PARSE_ERROR: 3. **The `std.ArrayList` initialization pattern** - Uses empty struct initialization `.{}` which cou
+# PARSE_ERROR: 4. **Inconsistent comment deallocation in getDependencies errdefer** - Uses direct `self.allocator.f
+# PARSE_ERROR: Let me apply these simplifications.Now let me update the todo list and run the tests to verify the c
+# PARSE_ERROR: **Extracted a `dupeColumnText` helper method** - The `rowToIssue` function had 10 repetitive if/else
+# PARSE_ERROR:     issue.field = try self.allocator.dupe(u8, v);
+# PARSE_ERROR: This was replaced with a single helper:
+# PARSE_ERROR: fn dupeColumnText(self: *Self, stmt: *Statement, idx: u32) !?[]const u8 {
+# PARSE_ERROR:     return if (stmt.columnText(idx)) |text|
+# PARSE_ERROR:         try self.allocator.dupe(u8, text)
+# PARSE_ERROR: The refactored `rowToIssue` function is now organized by field category (required, optional text, en
+# PARSE_ERROR: All tests pass. Committed as `c1bf672`.

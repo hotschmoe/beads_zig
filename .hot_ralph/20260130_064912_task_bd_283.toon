@@ -1,0 +1,25 @@
+# PARSE_ERROR: I'll implement the RFC3339 timestamp utilities for JSONL compatibility. Let me start by understandin
+# PARSE_ERROR: - `Rfc3339Timestamp` and `OptionalRfc3339Timestamp` wrappers for JSON serialization
+# PARSE_ERROR: - `parseRfc3339` function (handles basic format, but doesn't handle timezone offsets or fractional s
+# PARSE_ERROR: - `yearMonthDayToEpochDay` helper
+# PARSE_ERROR: 1. A separate `timestamp.zig` module
+# PARSE_ERROR: 2. Proper `parseRfc3339` that handles timezone offsets and fractional seconds
+# PARSE_ERROR: 3. `formatRfc3339` that formats to a buffer
+# PARSE_ERROR: 4. `formatRfc3339Alloc` that allocates
+# PARSE_ERROR: 6. Comprehensive tests including edge cases
+# PARSE_ERROR: Let me create the timestamp module with the enhanced functionality.Now let me update `src/models/mod
+# PARSE_ERROR: I implemented RFC3339 timestamp utilities in `src/models/timestamp.zig` with the following features:
+# PARSE_ERROR: 1. **`parseRfc3339(s: []const u8) ?i64`** - Parses RFC3339 strings to Unix epoch seconds, returning 
+# PARSE_ERROR: 2. **`parseRfc3339Strict(s: []const u8) TimestampError!i64`** - Same but returns specific errors (`I
+# PARSE_ERROR: 3. **`formatRfc3339(timestamp: i64, buffer: []u8) TimestampError![]const u8`** - Formats Unix epoch 
+# PARSE_ERROR: 4. **`formatRfc3339Alloc(allocator, timestamp: i64) ![]u8`** - Heap-allocated version
+# PARSE_ERROR: 5. **`now() i64`** - Returns current time as Unix epoch seconds
+# PARSE_ERROR: - UTC with Z suffix: `2024-01-29T15:30:00Z`
+# PARSE_ERROR: - Explicit UTC offset: `2024-01-29T15:30:00+00:00`
+# PARSE_ERROR: - Positive timezone offset: `2024-01-29T15:30:00+05:00`
+# PARSE_ERROR: - Negative timezone offset: `2024-01-29T15:30:00-05:00`
+# PARSE_ERROR: - Fractional seconds (ignored): `2024-01-29T15:30:00.123Z`
+# PARSE_ERROR: - Basic parsing and formatting
+# PARSE_ERROR: - Invalid format/date/time rejection
+# PARSE_ERROR: - Negative timestamps (pre-1970)
+# PARSE_ERROR: All 154+ tests pass. Commit: `60733ad`

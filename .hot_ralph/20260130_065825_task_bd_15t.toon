@@ -1,0 +1,10 @@
+# PARSE_ERROR: I'll implement the Base36 encoding/decoding module for issue ID hash generation.Now I'll create the 
+# PARSE_ERROR: - Created `src/id/base36.zig` with:
+# PARSE_ERROR:   - `encode()` - Stack-based encoding to buffer (lowercase output)
+# PARSE_ERROR:   - `encodeAlloc()` - Heap-allocated encoding 
+# PARSE_ERROR:   - `decode()` - Case-insensitive decoding (accepts both upper and lowercase)
+# PARSE_ERROR:   - `encodedLength()` - Calculate encoded length without encoding
+# PARSE_ERROR:   - Proper error handling for empty input, invalid characters, and overflow
+# PARSE_ERROR:   - Comprehensive tests covering all validation criteria
+# PARSE_ERROR: - Updated `src/id/mod.zig` to export the base36 module
+# PARSE_ERROR: All tests pass with `zig build test`.

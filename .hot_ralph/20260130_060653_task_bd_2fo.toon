@@ -1,0 +1,17 @@
+# PARSE_ERROR: I'll implement the DependencyType enum and Dependency struct for tracking relationships between issu
+# PARSE_ERROR: The problem is that when I provide a custom `jsonStringify`, the default `jsonParse` won't work beca
+# PARSE_ERROR: Let me simplify this by removing the custom `jsonStringify` for `Dependency` and letting std.json ha
+# PARSE_ERROR: Implemented `DependencyType` enum and `Dependency` struct in `src/models/dependency.zig`:
+# PARSE_ERROR: **DependencyType** (`src/models/dependency.zig:10-97`):
+# PARSE_ERROR: - Union enum with 11 predefined types: `blocks`, `parent_child`, `conditional_blocks`, `waits_for`, 
+# PARSE_ERROR: - Custom type support via `custom: []const u8`
+# PARSE_ERROR: - `toString()` / `fromString()` with case-insensitive parsing
+# PARSE_ERROR: - `eql()` for equality comparison
+# PARSE_ERROR: - JSON serialization via `jsonStringify`, `jsonParse`, `jsonParseFromValue`
+# PARSE_ERROR: **Dependency** (`src/models/dependency.zig:99-130`):
+# PARSE_ERROR: - Fields: `issue_id`, `depends_on_id`, `dep_type`, `created_at`, `created_by`, `metadata`, `thread_i
+# PARSE_ERROR: - Deep equality via `eql()` method
+# PARSE_ERROR: - Automatic JSON serialization via std.json (leverages DependencyType's custom serialization)
+# PARSE_ERROR: **Exports** updated in `src/models/mod.zig:17-18`.
+# PARSE_ERROR: - 20 tests added covering toString/fromString roundtrips, case-insensitivity, JSON serialization, nu
+# PARSE_ERROR: - All 63 tests pass (`zig build test`)

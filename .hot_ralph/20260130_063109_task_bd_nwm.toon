@@ -1,0 +1,16 @@
+# PARSE_ERROR: I'll implement the Comment struct for issue comments. Let me start by examining the existing code st
+# PARSE_ERROR: - Validation tests (valid, empty body, empty author, empty issue_id, id=0)
+# PARSE_ERROR: - Equality tests (all fields, id difference, body difference, author difference)
+# PARSE_ERROR: - JSON serialization tests (roundtrip, multiline body, unicode body, expected fields, special charac
+# PARSE_ERROR: Now let me commit the changes.Implementation complete. Here's a summary of what was done:
+# PARSE_ERROR: **Created `src/models/comment.zig`:**
+# PARSE_ERROR: - `Comment` struct with fields: `id`, `issue_id`, `author`, `body`, `created_at`
+# PARSE_ERROR: - `CommentError` error type with `EmptyCommentBody`, `EmptyAuthor`, `EmptyIssueId`
+# PARSE_ERROR: - `validate()` method to check required fields are not empty
+# PARSE_ERROR: - `eql()` method for deep equality comparison
+# PARSE_ERROR: - JSON serialization works via Zig's std.json (no custom jsonStringify/jsonParse needed since all fi
+# PARSE_ERROR: **Updated `src/models/mod.zig`:**
+# PARSE_ERROR: - Exports `Comment` and `CommentError`
+# PARSE_ERROR: - Validation: valid comment, empty body/author/issue_id, id=0 for new comments
+# PARSE_ERROR: - Equality: all fields, id/body/author differences
+# PARSE_ERROR: - JSON: roundtrip, multiline body, unicode, special characters, expected fields, id=0

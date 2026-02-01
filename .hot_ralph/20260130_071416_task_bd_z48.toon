@@ -1,0 +1,18 @@
+# PARSE_ERROR: I'll implement the SQLite connection wrapper for beads_zig. Let me start by exploring the existing p
+# PARSE_ERROR: 1. Create `src/storage/sqlite.zig` with the SQLite connection wrapper
+# PARSE_ERROR: 2. Update `src/storage/mod.zig` to export the Database, Statement, and transaction
+# PARSE_ERROR: Let me also check how the build.zig handles SQLite include paths - I need to understand how to prope
+# PARSE_ERROR: Let me verify my specific tests work by looking at what happens with the sqlite filter:All 8 SQLite 
+# PARSE_ERROR: **Implemented SQLite connection wrapper** in `src/storage/sqlite.zig`:
+# PARSE_ERROR: - **Database struct**: Connection management with automatic PRAGMA configuration (WAL mode, foreign 
+# PARSE_ERROR: - **Statement struct**: Prepared statement with bind functions (`bindText`, `bindInt`, `bindInt32`, 
+# PARSE_ERROR: - **Transaction helpers**: `transaction()` (with context) and `transactionSimple()` for automatic co
+# PARSE_ERROR: - **Error handling**: `SqliteError` enum with `OpenFailed`, `PrepareFailed`, `BindFailed`, `StepFail
+# PARSE_ERROR: 1. Database open/close in-memory
+# PARSE_ERROR: 3. Statement prepare, bind, and step
+# PARSE_ERROR: 4. Bind null and columnOptionalInt
+# PARSE_ERROR: 5. Statement reset allows reuse
+# PARSE_ERROR: 6. Transaction commits on success
+# PARSE_ERROR: 7. Transaction rolls back on error
+# PARSE_ERROR: 8. PRAGMA settings applied correctly
+# PARSE_ERROR: **Note**: There's a pre-existing flaky test in `id/generator.zig` (`generated IDs are unique`) that 

@@ -1,0 +1,13 @@
+# PARSE_ERROR: The code simplification agent has completed its review and made the following improvements to the de
+# PARSE_ERROR: ### In `src/storage/dependencies.zig`:
+# PARSE_ERROR: 1. **Removed duplicated imports** - Cleaned up unused imports and added proper dependency on `IssueS
+# PARSE_ERROR: 2. **Eliminated duplicated `rowToIssue` function** (~80 lines removed) - Now delegates to `IssueStor
+# PARSE_ERROR: 3. **Simplified optional field handling** - Replaced verbose if/else blocks with a `dupeOptionalText
+# PARSE_ERROR: 4. **Removed redundant `dupeColumnText` helper** - Was duplicated from `issues.zig`
+# PARSE_ERROR: 5. **Consolidated duplicate test imports**
+# PARSE_ERROR: ### In `src/storage/issues.zig`:
+# PARSE_ERROR: - Added `collectIssuesFromStmt` public method (19 lines) to allow `DependencyStore` to reuse the can
+# PARSE_ERROR: - **Net reduction: 98 lines** (132 removed, 34 added)
+# PARSE_ERROR: - All 247 storage-related tests pass
+# PARSE_ERROR: - No functionality changes - purely code simplification
+# PARSE_ERROR: Would you like me to commit these simplification changes?

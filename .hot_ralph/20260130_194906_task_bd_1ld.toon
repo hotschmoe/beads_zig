@@ -1,0 +1,24 @@
+# PARSE_ERROR: I'll implement the CLI argument parser for beads_zig. Let me start by exploring the existing project
+# PARSE_ERROR: 1. Memory leaks in tests - the tests need to free the allocated labels slice
+# PARSE_ERROR: 2. A flaky test in id/generator.zig (unrelated to our changes)
+# PARSE_ERROR: Let me fix the memory leaks in the label tests by properly freeing the allocated memory.I need to ad
+# PARSE_ERROR: Let me run the tests multiple times to verify our implementation is solid:The test results show that
+# PARSE_ERROR: All 72 CLI argument parser tests pass consistently. Let me update the todo list and prepare the comm
+# PARSE_ERROR: ## Task Completed: Implement CLI argument parser
+# PARSE_ERROR: - **`src/cli/args.zig`** (new, 1759 lines) - Complete argument parser implementation
+# PARSE_ERROR: - **`src/cli/mod.zig`** (modified) - Exports the args module
+# PARSE_ERROR: - `GlobalOptions` - Global CLI flags (--json, -q, -v, --no-color, --data, --actor, etc.)
+# PARSE_ERROR: - `Command` - Tagged union of all subcommands
+# PARSE_ERROR: - Argument structs for each command (CreateArgs, ListArgs, DepArgs, etc.)
+# PARSE_ERROR: - `ParseResult` - Combined global options and command
+# PARSE_ERROR: - `ArgParser` - Stateful parser that consumes args array
+# PARSE_ERROR: - Workspace: init, info, stats, doctor, config
+# PARSE_ERROR: - Issue CRUD: create/add/new, q/quick, show/get/view, update/edit, close/done/finish, reopen, delete
+# PARSE_ERROR: - Query: list/ls, ready, blocked, search/find, stale, count
+# PARSE_ERROR: - Dependencies: dep (add, remove, list, tree, cycles)
+# PARSE_ERROR: - Labels: label (add, remove, list, list-all)
+# PARSE_ERROR: - Comments: comments (add, list)
+# PARSE_ERROR: - System: version, schema, completions
+# PARSE_ERROR: - 72 unit tests covering all major functionality
+# PARSE_ERROR: - Required argument validation
+# PARSE_ERROR: - `zig build test` passes (note: there's a pre-existing flaky test in id/generator.zig unrelated to 

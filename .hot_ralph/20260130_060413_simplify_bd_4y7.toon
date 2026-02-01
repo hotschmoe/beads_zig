@@ -1,0 +1,6 @@
+# PARSE_ERROR: The code-simplifier agent reviewed the IssueType enum implementation from commit 9c96f4c and found t
+# PARSE_ERROR: - Clean and consistent with the codebase patterns (follows the same structure as `status.zig`)
+# PARSE_ERROR: - Free of unnecessary complexity
+# PARSE_ERROR: - Properly documented with appropriate comments
+# PARSE_ERROR: - Well-tested with good coverage
+# PARSE_ERROR: The tests pass successfully and there are no changes to commit.
