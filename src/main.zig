@@ -93,6 +93,18 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .add_batch => |batch_args| {
+            cli.runAddBatch(batch_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError, error.InvalidInput, error.FileReadError, error.NoIssuesToAdd => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .import_cmd => |import_args| {
+            cli.runImportCmd(import_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError, error.InvalidInput, error.FileReadError => std.process.exit(1),
+                else => return err,
+            };
+        },
         .ready => |ready_args| {
             cli.runReady(ready_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -267,6 +279,10 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\    delete <id>       Soft delete (tombstone)
             \\    defer <id>        Defer an issue
             \\    undefer <id>      Remove deferral from an issue
+            \\
+            \\  Batch Operations:
+            \\    add-batch         Create issues from stdin/file (single lock)
+            \\    import <file>     Import issues from JSONL file
             \\
             \\  Queries:
             \\    list              List issues with filters

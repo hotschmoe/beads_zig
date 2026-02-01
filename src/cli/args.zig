@@ -43,6 +43,10 @@ pub const Command = union(enum) {
     reopen: ReopenArgs,
     delete: DeleteArgs,
 
+    // Batch Operations
+    add_batch: AddBatchArgs,
+    import_cmd: ImportArgs,
+
     // Query
     list: ListArgs,
     ready: ReadyArgs,
@@ -135,6 +139,34 @@ pub const ReopenArgs = struct {
 /// Delete command arguments.
 pub const DeleteArgs = struct {
     id: []const u8,
+};
+
+/// Add-batch command arguments.
+/// Creates multiple issues from stdin or a file with single lock acquisition.
+pub const AddBatchArgs = struct {
+    file: ?[]const u8 = null, // Read from file instead of stdin
+    format: BatchFormat = .titles, // Input format
+};
+
+/// Batch input format.
+pub const BatchFormat = enum {
+    titles, // One title per line
+    jsonl, // Full JSONL format (one issue per line)
+
+    pub fn fromString(s: []const u8) ?BatchFormat {
+        if (std.ascii.eqlIgnoreCase(s, "titles")) return .titles;
+        if (std.ascii.eqlIgnoreCase(s, "jsonl")) return .jsonl;
+        if (std.ascii.eqlIgnoreCase(s, "json")) return .jsonl;
+        return null;
+    }
+};
+
+/// Import command arguments.
+/// Imports issues from a JSONL file with single lock acquisition.
+pub const ImportArgs = struct {
+    file: []const u8, // Path to JSONL file (required)
+    merge: bool = false, // Merge instead of replace
+    dry_run: bool = false, // Show what would be imported without importing
 };
 
 /// List command arguments.
@@ -508,6 +540,14 @@ pub const ArgParser = struct {
             return .{ .delete = try self.parseDeleteArgs() };
         }
 
+        // Batch Operations
+        if (std.mem.eql(u8, cmd, "add-batch") or std.mem.eql(u8, cmd, "batch-add") or std.mem.eql(u8, cmd, "batch")) {
+            return .{ .add_batch = try self.parseAddBatchArgs() };
+        }
+        if (std.mem.eql(u8, cmd, "import")) {
+            return .{ .import_cmd = try self.parseImportArgs() };
+        }
+
         // Query
         if (std.mem.eql(u8, cmd, "list") or std.mem.eql(u8, cmd, "ls")) {
             return .{ .list = try self.parseListArgs() };
@@ -736,6 +776,45 @@ pub const ArgParser = struct {
     fn parseDeleteArgs(self: *Self) ParseError!DeleteArgs {
         const id = self.next() orelse return error.MissingRequiredArgument;
         return .{ .id = id };
+    }
+
+    fn parseAddBatchArgs(self: *Self) ParseError!AddBatchArgs {
+        var result = AddBatchArgs{};
+        while (self.hasNext()) {
+            if (self.consumeFlag("-f", "--file")) {
+                result.file = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--format")) {
+                const fmt_str = self.next() orelse return error.MissingFlagValue;
+                result.format = BatchFormat.fromString(fmt_str) orelse return error.InvalidArgument;
+            } else if (self.peekPositional()) |_| {
+                // Positional argument is treated as file path
+                if (result.file == null) {
+                    result.file = self.next().?;
+                } else break;
+            } else break;
+        }
+        return result;
+    }
+
+    fn parseImportArgs(self: *Self) ParseError!ImportArgs {
+        var result = ImportArgs{ .file = undefined };
+        var file_set = false;
+
+        while (self.hasNext()) {
+            if (self.consumeFlag("-m", "--merge")) {
+                result.merge = true;
+            } else if (self.consumeFlag("-n", "--dry-run")) {
+                result.dry_run = true;
+            } else if (self.peekPositional()) |_| {
+                if (!file_set) {
+                    result.file = self.next().?;
+                    file_set = true;
+                } else break;
+            } else break;
+        }
+
+        if (!file_set) return error.MissingRequiredArgument;
+        return result;
     }
 
     fn parseListArgs(self: *Self) ParseError!ListArgs {

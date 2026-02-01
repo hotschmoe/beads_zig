@@ -20,6 +20,7 @@ pub const ready = @import("ready.zig");
 pub const dep = @import("dep.zig");
 pub const graph = @import("graph.zig");
 pub const sync = @import("sync.zig");
+pub const batch = @import("batch.zig");
 pub const search = @import("search.zig");
 pub const stale = @import("stale.zig");
 pub const count = @import("count.zig");
@@ -91,6 +92,16 @@ pub const runGraph = graph.run;
 pub const SyncError = sync.SyncError;
 pub const SyncResult = sync.SyncResult;
 pub const runSync = sync.run;
+
+pub const BatchError = batch.BatchError;
+pub const BatchResult = batch.BatchResult;
+pub const ImportResult = batch.ImportResult;
+pub const runAddBatch = batch.runAddBatch;
+pub const runImportCmd = batch.runImport;
+
+pub const AddBatchArgs = args.AddBatchArgs;
+pub const BatchFormat = args.BatchFormat;
+pub const ImportArgs = args.ImportArgs;
 
 pub const SearchError = search.SearchError;
 pub const SearchResult = search.SearchResult;
