@@ -7,6 +7,7 @@
 //! - Dirty tracking for sync
 //! - Write-Ahead Log (WAL) for concurrent writes
 //! - WAL compaction for merging WAL into main file
+//! - Generation numbers for read/compact race safety
 
 const std = @import("std");
 
@@ -19,6 +20,7 @@ pub const lock = @import("lock.zig");
 pub const wal = @import("wal.zig");
 pub const compact = @import("compact.zig");
 pub const events = @import("events.zig");
+pub const generation = @import("generation.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -50,6 +52,10 @@ pub const CompactionThresholds = compact.CompactionThresholds;
 
 pub const EventStore = events.EventStore;
 pub const EventStoreError = events.EventStoreError;
+
+pub const Generation = generation.Generation;
+pub const GenerationError = generation.GenerationError;
+pub const GenerationAwareLoader = generation.GenerationAwareLoader;
 
 test {
     std.testing.refAllDecls(@This());

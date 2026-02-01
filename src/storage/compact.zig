@@ -3,15 +3,21 @@
 //! Merges WAL entries into the main JSONL file when the WAL exceeds thresholds.
 //! This consolidates state and keeps the WAL small for fast reads.
 //!
-//! Compaction flow:
+//! Compaction flow (with generation-based safety):
 //! 1. Acquire BeadsLock (exclusive)
 //! 2. Load beads.jsonl into memory
-//! 3. Replay beads.wal operations
+//! 3. Replay current generation's WAL operations
 //! 4. Write merged state to beads.jsonl.tmp
 //! 5. fsync for durability
 //! 6. Atomic rename over beads.jsonl
-//! 7. Truncate beads.wal
-//! 8. Release lock
+//! 7. Rotate to new generation (increment beads.generation, new beads.wal.N)
+//! 8. Clean up old generation WAL files
+//! 9. Release lock
+//!
+//! Generation-based rotation prevents reader/compactor races:
+//! - Old WAL file remains readable during compaction
+//! - New generation number signals readers to refresh
+//! - Readers retry if generation changed during read
 
 const std = @import("std");
 const fs = std.fs;
@@ -19,6 +25,7 @@ const BeadsLock = @import("lock.zig").BeadsLock;
 const Wal = @import("wal.zig").Wal;
 const JsonlFile = @import("jsonl.zig").JsonlFile;
 const IssueStore = @import("store.zig").IssueStore;
+const Generation = @import("generation.zig").Generation;
 const test_util = @import("../test_util.zig");
 
 pub const CompactError = error{
@@ -95,15 +102,16 @@ pub const Compactor = struct {
         return false;
     }
 
-    /// Compact WAL into main file.
-    /// 1. Acquire BeadsLock
+    /// Compact WAL into main file with generation-based safety.
+    /// 1. Acquire BeadsLock (exclusive)
     /// 2. Load beads.jsonl into memory
-    /// 3. Replay beads.wal operations
+    /// 3. Replay current generation's WAL operations
     /// 4. Write merged state to beads.jsonl.tmp
     /// 5. fsync for durability
     /// 6. Atomic rename over beads.jsonl
-    /// 7. Truncate beads.wal
-    /// 8. Release lock
+    /// 7. Rotate to new generation (creates new WAL file)
+    /// 8. Clean up old WAL files
+    /// 9. Release lock
     pub fn compact(self: *Self) !void {
         const lock_path = try std.fs.path.join(self.allocator, &.{ self.beads_dir, "beads.lock" });
         defer self.allocator.free(lock_path);
@@ -124,9 +132,11 @@ pub const Compactor = struct {
             else => return CompactError.CompactionFailed,
         };
 
-        // 3. Replay WAL operations
+        // 3. Replay WAL operations (using current generation)
         var wal = try Wal.init(self.beads_dir, self.allocator);
         defer wal.deinit();
+
+        const old_generation = wal.getGeneration();
 
         var replay_stats = wal.replay(&store) catch return CompactError.CompactionFailed;
         defer replay_stats.deinit(self.allocator);
@@ -136,8 +146,29 @@ pub const Compactor = struct {
         // 4-6. Write merged state atomically
         try self.writeAtomically(jsonl_path, store.issues.items);
 
-        // 7. Truncate WAL
-        wal.truncate() catch return CompactError.CompactionFailed;
+        // 7. Rotate to new generation (creates fresh WAL file, cleans up old ones)
+        // This is the key change: instead of truncating the old WAL (which races
+        // with readers), we rotate to a new generation. Readers will detect the
+        // generation change and retry with the new WAL file.
+        _ = wal.rotateGeneration() catch {
+            // If rotation fails, fall back to traditional truncation
+            // This maintains backwards compatibility but loses race safety
+            wal.truncate() catch return CompactError.CompactionFailed;
+            return;
+        };
+
+        // 8. Delete old generation's WAL file (safe now since generation incremented)
+        // Readers that were mid-read will retry with new generation
+        self.deleteOldWal(old_generation);
+    }
+
+    /// Delete old generation's WAL file.
+    fn deleteOldWal(self: *Self, old_gen: u64) void {
+        var gen = Generation.init(self.beads_dir, self.allocator);
+        const old_wal_path = gen.walPath(old_gen) catch return;
+        defer self.allocator.free(old_wal_path);
+
+        fs.cwd().deleteFile(old_wal_path) catch {};
     }
 
     /// Write issues to file atomically (temp file + fsync + rename).

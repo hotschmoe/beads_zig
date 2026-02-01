@@ -17,12 +17,19 @@
 //!
 //! Legacy format (plain JSON lines) is also supported for reading:
 //! {"op":"add","ts":1706540000,"id":"bd-abc123","data":{...}}
+//!
+//! Generation numbers prevent read/compact races:
+//! - Each compaction rotates to a new generation (beads.wal.N -> beads.wal.N+1)
+//! - Readers check generation before/after read and retry if changed
+//! - Old WAL files cleaned up after successful compaction
 
 const std = @import("std");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
 const BeadsLock = @import("lock.zig").BeadsLock;
 const IssueStore = @import("store.zig").IssueStore;
+const Generation = @import("generation.zig").Generation;
+const GenerationAwareLoader = @import("generation.zig").GenerationAwareLoader;
 const test_util = @import("../test_util.zig");
 
 /// Magic bytes to identify framed WAL entries: 0x000B3AD5 ("BEADS" in hex-ish)
@@ -152,31 +159,121 @@ pub const ParsedWalEntry = struct {
 };
 
 /// WAL file manager for reading and writing operations.
+/// Supports generation-based file rotation for read/compact race safety.
 pub const Wal = struct {
+    beads_dir: []const u8,
     wal_path: []const u8,
     lock_path: []const u8,
     allocator: std.mem.Allocator,
     next_seq: u64 = 1, // Next sequence number to assign
+    generation: u64 = 1, // Current generation number
+    owns_wal_path: bool = true, // Whether we allocated wal_path
 
     const Self = @This();
 
+    /// Initialize WAL with generation-aware path.
+    /// Reads current generation from disk and uses appropriate WAL file.
     pub fn init(beads_dir: []const u8, allocator: std.mem.Allocator) !Self {
-        const wal_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.wal" });
+        // Read current generation
+        var gen = Generation.init(beads_dir, allocator);
+        const current_gen = gen.read() catch 1;
+
+        // Build generation-aware WAL path
+        const wal_path = try gen.walPath(current_gen);
         errdefer allocator.free(wal_path);
 
         const lock_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.lock" });
+        errdefer allocator.free(lock_path);
+
+        const beads_dir_copy = try allocator.dupe(u8, beads_dir);
 
         return Self{
+            .beads_dir = beads_dir_copy,
             .wal_path = wal_path,
             .lock_path = lock_path,
             .allocator = allocator,
             .next_seq = 1,
+            .generation = current_gen,
+            .owns_wal_path = true,
+        };
+    }
+
+    /// Initialize WAL with a specific path (for testing or direct path usage).
+    /// Does not use generation-aware paths.
+    pub fn initWithPath(wal_path: []const u8, lock_path: []const u8, allocator: std.mem.Allocator) Self {
+        return Self{
+            .beads_dir = "",
+            .wal_path = wal_path,
+            .lock_path = lock_path,
+            .allocator = allocator,
+            .next_seq = 1,
+            .generation = 1,
+            .owns_wal_path = false,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.allocator.free(self.wal_path);
+        if (self.owns_wal_path) {
+            self.allocator.free(self.wal_path);
+        }
         self.allocator.free(self.lock_path);
+        if (self.beads_dir.len > 0) {
+            self.allocator.free(self.beads_dir);
+        }
+    }
+
+    /// Get current generation number.
+    pub fn getGeneration(self: *Self) u64 {
+        return self.generation;
+    }
+
+    /// Refresh generation from disk and update WAL path if changed.
+    /// Call this before reading to ensure we're using the latest generation.
+    pub fn refreshGeneration(self: *Self) !bool {
+        if (self.beads_dir.len == 0) return false; // Not using generation-aware paths
+
+        var gen = Generation.init(self.beads_dir, self.allocator);
+        const current_gen = gen.read() catch return false;
+
+        if (current_gen != self.generation) {
+            // Generation changed - update WAL path
+            const new_wal_path = try gen.walPath(current_gen);
+
+            if (self.owns_wal_path) {
+                self.allocator.free(self.wal_path);
+            }
+            self.wal_path = new_wal_path;
+            self.owns_wal_path = true;
+            self.generation = current_gen;
+            return true;
+        }
+        return false;
+    }
+
+    /// Rotate to a new generation (used by compactor).
+    /// Creates a new WAL file and returns the new generation number.
+    /// IMPORTANT: Caller must already hold the exclusive lock.
+    pub fn rotateGeneration(self: *Self) !u64 {
+        if (self.beads_dir.len == 0) return self.generation;
+
+        var gen = Generation.init(self.beads_dir, self.allocator);
+        // Use incrementUnlocked since caller (compact) already holds the lock
+        const new_gen = try gen.incrementUnlocked();
+
+        // Update our WAL path to the new generation
+        const new_wal_path = try gen.walPath(new_gen);
+
+        if (self.owns_wal_path) {
+            self.allocator.free(self.wal_path);
+        }
+        self.wal_path = new_wal_path;
+        self.owns_wal_path = true;
+        self.generation = new_gen;
+
+        // Clean up old generations (keep current and previous)
+        gen.cleanupOldGenerations(new_gen);
+
+        return new_gen;
     }
 
     /// Load the next sequence number from existing WAL entries.
@@ -256,10 +353,70 @@ pub const Wal = struct {
         file.sync() catch return WalError.WriteError;
     }
 
-    /// Read all WAL entries.
+    /// Read all WAL entries with generation-aware consistency checking.
     /// Supports both framed format (with CRC32) and legacy plain JSON lines.
+    /// If generation changes during read (compaction occurred), retries with new generation.
     pub fn readEntries(self: *Self) ![]ParsedWalEntry {
-        const file = fs.cwd().openFile(self.wal_path, .{}) catch |err| switch (err) {
+        // If using generation-aware paths, check for consistency
+        if (self.beads_dir.len > 0) {
+            return self.readEntriesWithGenerationCheck();
+        }
+        return self.readEntriesFromPath(self.wal_path);
+    }
+
+    /// Read entries with generation consistency checking.
+    /// Retries up to 3 times if generation changes during read.
+    fn readEntriesWithGenerationCheck(self: *Self) ![]ParsedWalEntry {
+        var gen = Generation.init(self.beads_dir, self.allocator);
+        const max_retries: u32 = 3;
+        var attempts: u32 = 0;
+
+        while (attempts < max_retries) : (attempts += 1) {
+            // Read generation before loading
+            const gen_before = gen.read() catch self.generation;
+
+            // Get WAL path for this generation
+            const wal_path = try gen.walPath(gen_before);
+            defer self.allocator.free(wal_path);
+
+            // Read entries
+            const entries = try self.readEntriesFromPath(wal_path);
+
+            // Read generation after loading
+            const gen_after = gen.read() catch gen_before;
+
+            if (gen_before == gen_after) {
+                // Generation stable - return consistent state
+                // Update our cached generation
+                if (gen_before != self.generation) {
+                    if (self.owns_wal_path) {
+                        self.allocator.free(self.wal_path);
+                    }
+                    self.wal_path = try gen.walPath(gen_before);
+                    self.owns_wal_path = true;
+                    self.generation = gen_before;
+                }
+                return entries;
+            }
+
+            // Generation changed during read - free entries and retry
+            for (entries) |*e| {
+                var entry = e.*;
+                entry.deinit(self.allocator);
+            }
+            self.allocator.free(entries);
+        }
+
+        // Max retries exceeded - return latest generation's entries
+        const final_gen = gen.read() catch self.generation;
+        const final_path = try gen.walPath(final_gen);
+        defer self.allocator.free(final_path);
+        return self.readEntriesFromPath(final_path);
+    }
+
+    /// Read entries from a specific WAL file path.
+    fn readEntriesFromPath(self: *Self, path: []const u8) ![]ParsedWalEntry {
+        const file = fs.cwd().openFile(path, .{}) catch |err| switch (err) {
             error.FileNotFound => return &[_]ParsedWalEntry{},
             else => return err,
         };
@@ -649,12 +806,70 @@ test "WalOp.fromString returns null for unknown" {
 
 test "Wal.init and deinit" {
     const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_init");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
 
-    var wal = try Wal.init(".beads", allocator);
+    var wal = try Wal.init(test_dir, allocator);
     defer wal.deinit();
 
-    try std.testing.expectEqualStrings(".beads/beads.wal", wal.wal_path);
-    try std.testing.expectEqualStrings(".beads/beads.lock", wal.lock_path);
+    // Generation-aware path (generation 1 by default)
+    try std.testing.expect(std.mem.endsWith(u8, wal.wal_path, "/beads.wal.1"));
+    try std.testing.expect(std.mem.endsWith(u8, wal.lock_path, "/beads.lock"));
+    try std.testing.expectEqual(@as(u64, 1), wal.generation);
+}
+
+test "Wal.rotateGeneration creates new generation" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_rotate");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    // Initial generation is 1
+    try std.testing.expectEqual(@as(u64, 1), wal.getGeneration());
+
+    // rotateGeneration must be called with lock held (simulates compactor behavior)
+    // Acquire lock before rotating
+    var lock = BeadsLock.acquire(wal.lock_path) catch unreachable;
+
+    // Rotate to new generation
+    const new_gen = try wal.rotateGeneration();
+    try std.testing.expectEqual(@as(u64, 2), new_gen);
+    try std.testing.expectEqual(@as(u64, 2), wal.getGeneration());
+    try std.testing.expect(std.mem.endsWith(u8, wal.wal_path, "/beads.wal.2"));
+
+    // Rotate again
+    const newer_gen = try wal.rotateGeneration();
+    try std.testing.expectEqual(@as(u64, 3), newer_gen);
+    try std.testing.expect(std.mem.endsWith(u8, wal.wal_path, "/beads.wal.3"));
+
+    lock.release();
+}
+
+test "Wal.refreshGeneration detects external changes" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "wal_refresh");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    var wal = try Wal.init(test_dir, allocator);
+    defer wal.deinit();
+
+    // Initially generation 1
+    try std.testing.expectEqual(@as(u64, 1), wal.getGeneration());
+
+    // Externally update generation (simulates another process doing compaction)
+    var gen = Generation.init(test_dir, allocator);
+    try gen.write(5);
+
+    // Refresh should detect the change
+    const changed = try wal.refreshGeneration();
+    try std.testing.expect(changed);
+    try std.testing.expectEqual(@as(u64, 5), wal.getGeneration());
+    try std.testing.expect(std.mem.endsWith(u8, wal.wal_path, "/beads.wal.5"));
 }
 
 test "Wal.readEntries returns empty for missing file" {
