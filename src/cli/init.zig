@@ -11,6 +11,7 @@ const Output = @import("../output/mod.zig").Output;
 const OutputOptions = @import("../output/mod.zig").OutputOptions;
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const storage = @import("../storage/mod.zig");
 
 pub const InitError = error{
     AlreadyInitialized,
@@ -24,6 +25,7 @@ pub const InitResult = struct {
     path: []const u8,
     prefix: []const u8,
     message: ?[]const u8 = null,
+    fs_warning: ?[]const u8 = null,
 };
 
 /// Run the init command.
@@ -96,17 +98,28 @@ pub fn run(
 
     try writeGitignore(gitignore_path);
 
+    // Check filesystem safety for concurrent access
+    const fs_check = storage.checkFilesystemSafety(beads_dir);
+    const fs_warning: ?[]const u8 = if (!fs_check.safe) fs_check.warning else null;
+
     // Success output
     if (structured_output) {
         try output.printJson(InitResult{
             .success = true,
             .path = beads_dir,
             .prefix = init_args.prefix,
+            .fs_warning = fs_warning,
         });
     } else {
         try output.success("Initialized beads workspace in {s}/", .{beads_dir});
         try output.print("  Issue prefix: {s}\n", .{init_args.prefix});
         try output.print("  Issues file: {s}/issues.jsonl\n", .{beads_dir});
+
+        // Warn user about network filesystem if detected
+        if (fs_warning) |warning| {
+            try output.print("\n", .{});
+            try output.warn("Filesystem warning: {s}", .{warning});
+        }
     }
 }
 

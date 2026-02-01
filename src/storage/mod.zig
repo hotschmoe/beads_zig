@@ -23,6 +23,8 @@ pub const events = @import("events.zig");
 pub const generation = @import("generation.zig");
 pub const metrics = @import("metrics.zig");
 pub const txlog = @import("txlog.zig");
+pub const fscheck = @import("fscheck.zig");
+pub const walstate = @import("walstate.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -70,6 +72,15 @@ pub const LogLevel = txlog.LogLevel;
 pub const initTxLog = txlog.init;
 pub const deinitTxLog = txlog.deinit;
 pub const beginTx = txlog.begin;
+
+pub const FilesystemCheck = fscheck.FilesystemCheck;
+pub const FsType = fscheck.FsType;
+pub const checkFilesystemSafety = fscheck.checkFilesystemSafety;
+
+pub const WalState = walstate.WalState;
+pub const WalStateStats = walstate.WalStateStats;
+pub const getGlobalWalState = walstate.getGlobalState;
+pub const resetGlobalWalState = walstate.resetGlobalState;
 
 test {
     std.testing.refAllDecls(@This());
