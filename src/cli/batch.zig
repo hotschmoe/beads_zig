@@ -15,8 +15,6 @@ const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
-const Priority = models.Priority;
-const IssueType = models.IssueType;
 const IssueStore = storage.IssueStore;
 const JsonlFile = storage.JsonlFile;
 const IdGenerator = id_gen.IdGenerator;
@@ -105,11 +103,11 @@ pub fn runAddBatch(
     };
 
     // Get config prefix
-    const prefix = try getConfigPrefix(allocator, beads_dir);
+    const prefix = try common.getConfigPrefix(allocator, beads_dir);
     defer allocator.free(prefix);
 
     // Get actor
-    const actor = global.actor orelse getDefaultActor();
+    const actor = global.actor orelse common.getDefaultActor();
 
     const now = std.time.timestamp();
     var generator = IdGenerator.init(prefix);
@@ -396,60 +394,6 @@ fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
         if (std.mem.indexOf(u8, content, marker) != null) return true;
     }
     return false;
-}
-
-/// Get the default actor name from environment.
-fn getDefaultActor() ?[]const u8 {
-    const builtin = @import("builtin");
-    if (builtin.os.tag == .windows) return null;
-    return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
-}
-
-/// Read the ID prefix from config.yaml, defaulting to "bd".
-fn getConfigPrefix(allocator: std.mem.Allocator, beads_dir: []const u8) ![]u8 {
-    const config_path = try std.fs.path.join(allocator, &.{ beads_dir, "config.yaml" });
-    defer allocator.free(config_path);
-
-    const file = std.fs.cwd().openFile(config_path, .{}) catch {
-        return try allocator.dupe(u8, "bd");
-    };
-    defer file.close();
-
-    const content = file.readToEndAlloc(allocator, 4096) catch {
-        return try allocator.dupe(u8, "bd");
-    };
-    defer allocator.free(content);
-
-    if (std.mem.indexOf(u8, content, "prefix:")) |prefix_pos| {
-        const after_prefix = content[prefix_pos + 7 ..];
-        var i: usize = 0;
-        while (i < after_prefix.len and (after_prefix[i] == ' ' or after_prefix[i] == '\t')) {
-            i += 1;
-        }
-
-        if (i < after_prefix.len) {
-            if (after_prefix[i] == '"') {
-                i += 1;
-                const start = i;
-                while (i < after_prefix.len and after_prefix[i] != '"' and after_prefix[i] != '\n') {
-                    i += 1;
-                }
-                if (i > start) {
-                    return try allocator.dupe(u8, after_prefix[start..i]);
-                }
-            } else {
-                const start = i;
-                while (i < after_prefix.len and after_prefix[i] != '\n' and after_prefix[i] != ' ' and after_prefix[i] != '\t') {
-                    i += 1;
-                }
-                if (i > start) {
-                    return try allocator.dupe(u8, after_prefix[start..i]);
-                }
-            }
-        }
-    }
-
-    return try allocator.dupe(u8, "bd");
 }
 
 // --- Tests ---

@@ -83,7 +83,6 @@ test "concurrent writes: 10 agents, 100 writes each, zero corruption" {
 
     // Spawn agent processes that each create multiple issues
     var children: [STRESS_NUM_AGENTS]?process.Child = [_]?process.Child{null} ** STRESS_NUM_AGENTS;
-    var spawned_count: usize = 0;
 
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
@@ -108,7 +107,6 @@ test "concurrent writes: 10 agents, 100 writes each, zero corruption" {
 
         child.spawn() catch continue;
         child_ptr.* = child;
-        spawned_count += 1;
     }
 
     // Wait for all agents to complete
