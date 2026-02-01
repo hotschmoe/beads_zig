@@ -30,6 +30,7 @@ pub const label = @import("label.zig");
 pub const comments = @import("comments.zig");
 pub const history = @import("history.zig");
 pub const audit = @import("audit.zig");
+pub const changelog = @import("changelog.zig");
 pub const info = @import("info.zig");
 pub const stats = @import("stats.zig");
 pub const doctor = @import("doctor.zig");
@@ -110,6 +111,7 @@ pub const AddBatchArgs = args.AddBatchArgs;
 pub const BatchFormat = args.BatchFormat;
 pub const ImportArgs = args.ImportArgs;
 pub const EpicArgs = args.EpicArgs;
+pub const SortField = args.SortField;
 
 pub const SearchError = search.SearchError;
 pub const SearchResult = search.SearchResult;
@@ -137,6 +139,11 @@ pub const runHistory = history.run;
 pub const AuditError = audit.AuditError;
 pub const AuditResult = audit.AuditResult;
 pub const runAudit = audit.run;
+
+pub const ChangelogError = changelog.ChangelogError;
+pub const ChangelogResult = changelog.ChangelogResult;
+pub const runChangelog = changelog.run;
+pub const ChangelogArgs = args.ChangelogArgs;
 
 pub const InfoError = info.InfoError;
 pub const InfoResult = info.InfoResult;

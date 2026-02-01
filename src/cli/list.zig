@@ -81,6 +81,14 @@ pub fn run(
         filters.limit = n;
     }
 
+    // Apply sort options
+    filters.order_by = switch (list_args.sort) {
+        .created_at => .created_at,
+        .updated_at => .updated_at,
+        .priority => .priority,
+    };
+    filters.order_desc = list_args.sort_desc;
+
     const issues = try ctx.store.list(filters);
     defer {
         for (issues) |*issue| {

@@ -249,6 +249,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .changelog => |changelog_args| {
+            cli.runChangelog(changelog_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.InvalidDateFormat, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
     }
 }
 
@@ -305,7 +311,7 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\    import <file>     Import issues from JSONL file
             \\
             \\  Queries:
-            \\    list              List issues with filters
+            \\    list              List issues (--sort created|updated|priority, --asc/--desc)
             \\    ready             Show actionable issues (unblocked)
             \\    blocked           Show blocked issues
             \\    search <query>    Full-text search
@@ -339,6 +345,7 @@ fn showHelp(topic: ?[]const u8, allocator: std.mem.Allocator) !void {
             \\  Audit:
             \\    history <id>      Show issue history
             \\    audit             Project-wide audit log
+            \\    changelog         Generate changelog from closed issues
             \\
             \\  System:
             \\    help              Show this help

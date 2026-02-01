@@ -76,6 +76,9 @@ pub const Command = union(enum) {
     history: HistoryArgs,
     audit: AuditArgs,
 
+    // Changelog
+    changelog: ChangelogArgs,
+
     // Sync
     sync: SyncArgs,
 
@@ -174,6 +177,20 @@ pub const ImportArgs = struct {
     dry_run: bool = false, // Show what would be imported without importing
 };
 
+/// Sort field options for list command.
+pub const SortField = enum {
+    created_at,
+    updated_at,
+    priority,
+
+    pub fn fromString(s: []const u8) ?SortField {
+        if (std.ascii.eqlIgnoreCase(s, "created") or std.ascii.eqlIgnoreCase(s, "created_at")) return .created_at;
+        if (std.ascii.eqlIgnoreCase(s, "updated") or std.ascii.eqlIgnoreCase(s, "updated_at")) return .updated_at;
+        if (std.ascii.eqlIgnoreCase(s, "priority")) return .priority;
+        return null;
+    }
+};
+
 /// List command arguments.
 pub const ListArgs = struct {
     status: ?[]const u8 = null,
@@ -183,6 +200,8 @@ pub const ListArgs = struct {
     label: ?[]const u8 = null,
     limit: ?u32 = null,
     all: bool = false,
+    sort: SortField = .created_at,
+    sort_desc: bool = true,
 };
 
 /// Ready command arguments.
@@ -339,6 +358,14 @@ pub const HistoryArgs = struct {
 /// Audit command arguments.
 pub const AuditArgs = struct {
     limit: ?u32 = null,
+};
+
+/// Changelog command arguments.
+pub const ChangelogArgs = struct {
+    since: ?[]const u8 = null, // Start date filter (YYYY-MM-DD)
+    until: ?[]const u8 = null, // End date filter (YYYY-MM-DD)
+    limit: ?u32 = null,
+    group_by: ?[]const u8 = null, // Group by field (e.g., "type")
 };
 
 /// Sync command arguments.
@@ -653,6 +680,11 @@ pub const ArgParser = struct {
             return .{ .audit = try self.parseAuditArgs() };
         }
 
+        // Changelog
+        if (std.mem.eql(u8, cmd, "changelog")) {
+            return .{ .changelog = try self.parseChangelogArgs() };
+        }
+
         // Sync
         if (std.mem.eql(u8, cmd, "sync") or std.mem.eql(u8, cmd, "flush") or std.mem.eql(u8, cmd, "export")) {
             return .{ .sync = try self.parseSyncArgs() };
@@ -887,6 +919,13 @@ pub const ArgParser = struct {
                 result.limit = limit;
             } else if (self.consumeFlag("-A", "--all")) {
                 result.all = true;
+            } else if (self.consumeFlag(null, "--sort")) {
+                const sort_str = self.next() orelse return error.MissingFlagValue;
+                result.sort = SortField.fromString(sort_str) orelse return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--asc")) {
+                result.sort_desc = false;
+            } else if (self.consumeFlag(null, "--desc")) {
+                result.sort_desc = true;
             } else break;
         }
         return result;
@@ -1119,6 +1158,22 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
+            } else break;
+        }
+        return result;
+    }
+
+    fn parseChangelogArgs(self: *Self) ParseError!ChangelogArgs {
+        var result = ChangelogArgs{};
+        while (self.hasNext()) {
+            if (self.consumeFlag(null, "--since")) {
+                result.since = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--until")) {
+                result.until = self.next() orelse return error.MissingFlagValue;
+            } else if (try self.parseLimitFlag()) |limit| {
+                result.limit = limit;
+            } else if (self.consumeFlag("-g", "--group-by")) {
+                result.group_by = self.next() orelse return error.MissingFlagValue;
             } else break;
         }
         return result;
@@ -1598,6 +1653,43 @@ test "parse list --all flag" {
     const result = try parser.parse();
 
     try std.testing.expect(result.command.list.all);
+}
+
+test "parse list --sort flag" {
+    const args = [_][]const u8{ "list", "--sort", "priority" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expectEqual(SortField.priority, result.command.list.sort);
+    try std.testing.expect(result.command.list.sort_desc); // default
+}
+
+test "parse list --sort with --asc" {
+    const args = [_][]const u8{ "list", "--sort", "updated", "--asc" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expectEqual(SortField.updated_at, result.command.list.sort);
+    try std.testing.expect(!result.command.list.sort_desc);
+}
+
+test "parse list --sort with --desc" {
+    const args = [_][]const u8{ "list", "--sort", "created", "--desc" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expectEqual(SortField.created_at, result.command.list.sort);
+    try std.testing.expect(result.command.list.sort_desc);
+}
+
+test "SortField.fromString" {
+    try std.testing.expectEqual(SortField.created_at, SortField.fromString("created").?);
+    try std.testing.expectEqual(SortField.created_at, SortField.fromString("created_at").?);
+    try std.testing.expectEqual(SortField.updated_at, SortField.fromString("updated").?);
+    try std.testing.expectEqual(SortField.updated_at, SortField.fromString("updated_at").?);
+    try std.testing.expectEqual(SortField.priority, SortField.fromString("priority").?);
+    try std.testing.expectEqual(SortField.priority, SortField.fromString("PRIORITY").?);
+    try std.testing.expectEqual(@as(?SortField, null), SortField.fromString("invalid"));
 }
 
 test "parse ready command" {
