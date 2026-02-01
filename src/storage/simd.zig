@@ -15,8 +15,6 @@ pub const VECTOR_SIZE = 16;
 /// A newline scanner that uses SIMD to find newline positions efficiently.
 /// Scans 16 bytes at a time, falling back to scalar for remainder.
 pub const NewlineScanner = struct {
-    const Self = @This();
-
     /// Iterator over newline positions in a byte slice.
     /// Returns byte offsets of each '\n' character.
     pub const Iterator = struct {
@@ -125,9 +123,7 @@ pub const LineIterator = struct {
     pos: usize,
     scanner: NewlineScanner.Iterator,
 
-    const Self = @This();
-
-    pub fn init(data: []const u8) Self {
+    pub fn init(data: []const u8) LineIterator {
         return .{
             .data = data,
             .pos = 0,
@@ -137,7 +133,7 @@ pub const LineIterator = struct {
 
     /// Get the next line (excluding the newline character).
     /// Returns null when all lines have been consumed.
-    pub fn next(self: *Self) ?[]const u8 {
+    pub fn next(self: *LineIterator) ?[]const u8 {
         if (self.pos >= self.data.len) return null;
 
         // Find next newline
@@ -158,7 +154,7 @@ pub const LineIterator = struct {
     }
 
     /// Skip empty lines and return the next non-empty line.
-    pub fn nextNonEmpty(self: *Self) ?[]const u8 {
+    pub fn nextNonEmpty(self: *LineIterator) ?[]const u8 {
         while (self.next()) |line| {
             if (line.len > 0) return line;
         }
