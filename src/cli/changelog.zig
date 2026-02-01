@@ -11,8 +11,6 @@ const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
-const Status = models.Status;
-const IssueType = models.IssueType;
 const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 const timestamp = models.timestamp;
@@ -197,7 +195,7 @@ fn printGroupedByType(output: *common.Output, issues: []Issue, allocator: std.me
     for (type_order) |type_str| {
         if (type_groups.get(type_str)) |group| {
             if (group.items.len > 0) {
-                try output.println("## {s}", .{capitalizeFirst(type_str)});
+                try output.println("## {s}", .{type_str});
                 try output.println("", .{});
                 for (group.items) |issue| {
                     try output.println("- [{s}] {s}", .{ issue.id, issue.title });
@@ -218,7 +216,7 @@ fn printGroupedByType(output: *common.Output, issues: []Issue, allocator: std.me
             }
         }
         if (!found and entry.value_ptr.items.len > 0) {
-            try output.println("## {s}", .{capitalizeFirst(entry.key_ptr.*)});
+            try output.println("## {s}", .{entry.key_ptr.*});
             try output.println("", .{});
             for (entry.value_ptr.items) |issue| {
                 try output.println("- [{s}] {s}", .{ issue.id, issue.title });
@@ -226,12 +224,6 @@ fn printGroupedByType(output: *common.Output, issues: []Issue, allocator: std.me
             try output.println("", .{});
         }
     }
-}
-
-fn capitalizeFirst(s: []const u8) []const u8 {
-    if (s.len == 0) return s;
-    // Return as-is for display since we can't modify const memory
-    return s;
 }
 
 fn parseDateToTimestamp(date_str: []const u8) ?i64 {
