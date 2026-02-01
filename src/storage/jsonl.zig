@@ -153,11 +153,12 @@ pub const JsonlFile = struct {
     pub fn writeAll(self: *Self, issues_list: []const Issue) !void {
         const dir = fs.cwd();
 
-        // Create temp file path
+        // Create temp file path with PID to prevent collision under concurrent writes
         var tmp_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const tmp_path = std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp.{d}", .{
+        const tmp_path = std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp.{d}.{d}", .{
             self.path,
             std.time.milliTimestamp(),
+            std.os.linux.getpid(),
         }) catch return error.WriteError;
 
         // Ensure parent directory exists
