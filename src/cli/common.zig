@@ -12,6 +12,7 @@ pub const Output = output_mod.Output;
 pub const OutputOptions = output_mod.OutputOptions;
 pub const IssueStore = storage.IssueStore;
 pub const DependencyGraph = storage.DependencyGraph;
+pub const EventStore = storage.EventStore;
 
 /// Common errors shared across CLI commands.
 pub const CommandError = error{
@@ -25,7 +26,9 @@ pub const CommandContext = struct {
     allocator: std.mem.Allocator,
     output: Output,
     store: IssueStore,
+    event_store: EventStore,
     issues_path: []const u8,
+    events_path: []const u8,
     global: args.GlobalOptions,
 
     /// Initialize a command context by loading the workspace.
@@ -46,15 +49,21 @@ pub const CommandContext = struct {
         const issues_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
             return CommandError.OutOfMemory;
         };
+        const events_path = std.fs.path.join(allocator, &.{ beads_dir, "events.jsonl" }) catch {
+            allocator.free(issues_path);
+            return CommandError.OutOfMemory;
+        };
 
         std.fs.cwd().access(issues_path, .{}) catch |err| {
             if (err == error.FileNotFound) {
                 outputErrorGeneric(&output, global.isStructuredOutput(), "workspace not initialized. Run 'bz init' first.") catch {};
                 allocator.free(issues_path);
+                allocator.free(events_path);
                 return null;
             }
             outputErrorGeneric(&output, global.isStructuredOutput(), "cannot access workspace") catch {};
             allocator.free(issues_path);
+            allocator.free(events_path);
             return CommandError.StorageError;
         };
 
@@ -65,15 +74,22 @@ pub const CommandContext = struct {
                 outputErrorGeneric(&output, global.isStructuredOutput(), "failed to load issues") catch {};
                 store.deinit();
                 allocator.free(issues_path);
+                allocator.free(events_path);
                 return CommandError.StorageError;
             }
         };
+
+        // Initialize event store and load next ID
+        var event_store = EventStore.init(allocator, events_path);
+        event_store.loadNextId() catch {}; // OK if events file doesn't exist
 
         return CommandContext{
             .allocator = allocator,
             .output = output,
             .store = store,
+            .event_store = event_store,
             .issues_path = issues_path,
+            .events_path = events_path,
             .global = global,
         };
     }
@@ -82,6 +98,7 @@ pub const CommandContext = struct {
     pub fn deinit(self: *CommandContext) void {
         self.store.deinit();
         self.allocator.free(self.issues_path);
+        self.allocator.free(self.events_path);
     }
 
     /// Save the store to file if auto-flush is enabled.
@@ -97,6 +114,11 @@ pub const CommandContext = struct {
     /// Create a dependency graph from the store.
     pub fn createGraph(self: *CommandContext) DependencyGraph {
         return DependencyGraph.init(&self.store, self.allocator);
+    }
+
+    /// Record an audit event. Silently ignores errors (audit is best-effort).
+    pub fn recordEvent(self: *CommandContext, event: @import("../models/event.zig").Event) void {
+        _ = self.event_store.append(event) catch {};
     }
 };
 

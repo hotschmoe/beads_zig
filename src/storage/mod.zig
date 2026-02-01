@@ -18,6 +18,7 @@ pub const dependencies = @import("dependencies.zig");
 pub const lock = @import("lock.zig");
 pub const wal = @import("wal.zig");
 pub const compact = @import("compact.zig");
+pub const events = @import("events.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -46,6 +47,9 @@ pub const Compactor = compact.Compactor;
 pub const CompactError = compact.CompactError;
 pub const WalStats = compact.WalStats;
 pub const CompactionThresholds = compact.CompactionThresholds;
+
+pub const EventStore = events.EventStore;
+pub const EventStoreError = events.EventStoreError;
 
 test {
     std.testing.refAllDecls(@This());

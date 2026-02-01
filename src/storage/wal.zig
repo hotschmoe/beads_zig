@@ -6,9 +6,17 @@
 //! - fsync'd before lock release for durability
 //! - Replayed on read to reconstruct current state
 //!
-//! WAL entry format (JSON lines):
+//! WAL entry format (binary framed):
+//!   [magic:u32][crc:u32][len:u32][json_payload][newline]
+//!
+//! - magic: 0xB3AD5 - enables quick validation of WAL integrity
+//! - crc: CRC32 checksum of the JSON payload (detects corruption)
+//! - len: length of JSON payload (enables skipping without parsing)
+//! - json_payload: the actual WAL entry as JSON
+//! - newline: \n for human readability when inspecting
+//!
+//! Legacy format (plain JSON lines) is also supported for reading:
 //! {"op":"add","ts":1706540000,"id":"bd-abc123","data":{...}}
-//! {"op":"close","ts":1706540001,"id":"bd-abc123","data":null}
 
 const std = @import("std");
 const fs = std.fs;
@@ -16,6 +24,12 @@ const Issue = @import("../models/issue.zig").Issue;
 const BeadsLock = @import("lock.zig").BeadsLock;
 const IssueStore = @import("store.zig").IssueStore;
 const test_util = @import("../test_util.zig");
+
+/// Magic bytes to identify framed WAL entries: 0x000B3AD5 ("BEADS" in hex-ish)
+pub const WAL_MAGIC: u32 = 0x000B3AD5;
+
+/// Size of the binary frame header (magic + crc + len)
+pub const FRAME_HEADER_SIZE: usize = 12;
 
 pub const WalError = error{
     WalCorrupted,
@@ -25,6 +39,7 @@ pub const WalError = error{
     ParseError,
     OutOfMemory,
     ReplayPartialFailure,
+    ChecksumMismatch,
 };
 
 /// Statistics from WAL replay operations.
@@ -86,6 +101,7 @@ pub const WalOp = enum {
 pub const WalEntry = struct {
     op: WalOp,
     ts: i64, // Unix timestamp for ordering
+    seq: u64 = 0, // Monotonic sequence number for deterministic ordering within same timestamp
     id: []const u8, // Issue ID
     data: ?Issue, // Full issue for add/update, null for status-only ops
 
@@ -100,6 +116,9 @@ pub const WalEntry = struct {
 
         try jws.objectField("ts");
         try jws.write(self.ts);
+
+        try jws.objectField("seq");
+        try jws.write(self.seq);
 
         try jws.objectField("id");
         try jws.write(self.id);
@@ -119,6 +138,7 @@ pub const WalEntry = struct {
 pub const ParsedWalEntry = struct {
     op: WalOp,
     ts: i64,
+    seq: u64 = 0, // Sequence number (0 for legacy entries)
     id: []const u8,
     data: ?Issue,
 
@@ -136,6 +156,7 @@ pub const Wal = struct {
     wal_path: []const u8,
     lock_path: []const u8,
     allocator: std.mem.Allocator,
+    next_seq: u64 = 1, // Next sequence number to assign
 
     const Self = @This();
 
@@ -149,6 +170,7 @@ pub const Wal = struct {
             .wal_path = wal_path,
             .lock_path = lock_path,
             .allocator = allocator,
+            .next_seq = 1,
         };
     }
 
@@ -157,13 +179,38 @@ pub const Wal = struct {
         self.allocator.free(self.lock_path);
     }
 
+    /// Load the next sequence number from existing WAL entries.
+    /// Call this after init to ensure sequence numbers are unique.
+    pub fn loadNextSeq(self: *Self) !void {
+        const entries = self.readEntries() catch return;
+        defer {
+            for (entries) |*e| {
+                var entry = e.*;
+                entry.deinit(self.allocator);
+            }
+            self.allocator.free(entries);
+        }
+
+        var max_seq: u64 = 0;
+        for (entries) |e| {
+            if (e.seq > max_seq) max_seq = e.seq;
+        }
+        self.next_seq = max_seq + 1;
+    }
+
     /// Append an entry to the WAL under exclusive lock.
     /// Ensures durability via fsync before releasing lock.
+    /// Assigns a monotonic sequence number to the entry.
     pub fn appendEntry(self: *Self, entry: WalEntry) !void {
         var lock = BeadsLock.acquire(self.lock_path) catch return WalError.LockFailed;
         defer lock.release();
 
-        try self.appendEntryUnlocked(entry);
+        // Assign sequence number under lock
+        var entry_with_seq = entry;
+        entry_with_seq.seq = self.next_seq;
+        self.next_seq += 1;
+
+        try self.appendEntryUnlocked(entry_with_seq);
     }
 
     /// Append entry without acquiring lock (caller must hold lock).
@@ -187,11 +234,21 @@ pub const Wal = struct {
         // Seek to end
         file.seekFromEnd(0) catch return WalError.WriteError;
 
-        // Serialize entry
+        // Serialize entry to JSON
         const json_bytes = std.json.Stringify.valueAlloc(self.allocator, entry, .{}) catch return WalError.WriteError;
         defer self.allocator.free(json_bytes);
 
-        // Write entry + newline
+        // Compute CRC32 checksum of the JSON payload
+        const crc = std.hash.Crc32.hash(json_bytes);
+
+        // Write binary frame header: [magic:u32][crc:u32][len:u32]
+        const len: u32 = @intCast(json_bytes.len);
+        var header: [FRAME_HEADER_SIZE]u8 = undefined;
+        std.mem.writeInt(u32, header[0..4], WAL_MAGIC, .little);
+        std.mem.writeInt(u32, header[4..8], crc, .little);
+        std.mem.writeInt(u32, header[8..12], len, .little);
+
+        file.writeAll(&header) catch return WalError.WriteError;
         file.writeAll(json_bytes) catch return WalError.WriteError;
         file.writeAll("\n") catch return WalError.WriteError;
 
@@ -200,6 +257,7 @@ pub const Wal = struct {
     }
 
     /// Read all WAL entries.
+    /// Supports both framed format (with CRC32) and legacy plain JSON lines.
     pub fn readEntries(self: *Self) ![]ParsedWalEntry {
         const file = fs.cwd().openFile(self.wal_path, .{}) catch |err| switch (err) {
             error.FileNotFound => return &[_]ParsedWalEntry{},
@@ -218,30 +276,74 @@ pub const Wal = struct {
             entries.deinit(self.allocator);
         }
 
-        var line_start: usize = 0;
-        for (content, 0..) |c, i| {
-            if (c == '\n') {
-                const line = content[line_start..i];
-                line_start = i + 1;
+        var pos: usize = 0;
+        while (pos < content.len) {
+            // Try to parse as framed entry first (check for magic bytes)
+            if (pos + FRAME_HEADER_SIZE <= content.len) {
+                const magic = std.mem.readInt(u32, content[pos..][0..4], .little);
+                if (magic == WAL_MAGIC) {
+                    // Framed format: [magic:u32][crc:u32][len:u32][json][newline]
+                    const stored_crc = std.mem.readInt(u32, content[pos + 4 ..][0..4], .little);
+                    const len = std.mem.readInt(u32, content[pos + 8 ..][0..4], .little);
 
-                if (line.len == 0) continue;
+                    const payload_start = pos + FRAME_HEADER_SIZE;
+                    const payload_end = payload_start + len;
 
+                    // Check for truncation
+                    if (payload_end > content.len) {
+                        // Truncated entry - skip to end (partial write from crash)
+                        break;
+                    }
+
+                    const json_payload = content[payload_start..payload_end];
+
+                    // Verify CRC32
+                    const computed_crc = std.hash.Crc32.hash(json_payload);
+                    if (computed_crc != stored_crc) {
+                        // CRC mismatch - corrupted entry, skip it
+                        // Try to find next entry by looking for next magic or newline
+                        pos = payload_end;
+                        if (pos < content.len and content[pos] == '\n') {
+                            pos += 1;
+                        }
+                        continue;
+                    }
+
+                    // Parse the JSON payload
+                    if (self.parseEntry(json_payload)) |entry| {
+                        try entries.append(self.allocator, entry);
+                    } else |_| {
+                        // JSON parse error - skip
+                    }
+
+                    // Move past the entry (json + newline)
+                    pos = payload_end;
+                    if (pos < content.len and content[pos] == '\n') {
+                        pos += 1;
+                    }
+                    continue;
+                }
+            }
+
+            // Fall back to legacy plain JSON line format
+            // Find the next newline
+            var line_end = pos;
+            while (line_end < content.len and content[line_end] != '\n') {
+                line_end += 1;
+            }
+
+            if (line_end > pos) {
+                const line = content[pos..line_end];
                 if (self.parseEntry(line)) |entry| {
                     try entries.append(self.allocator, entry);
                 } else |_| {
                     // Skip malformed entries (graceful degradation)
-                    continue;
                 }
             }
-        }
 
-        // Handle last line if no trailing newline
-        if (line_start < content.len) {
-            const line = content[line_start..];
-            if (line.len > 0) {
-                if (self.parseEntry(line)) |entry| {
-                    try entries.append(self.allocator, entry);
-                } else |_| {}
+            pos = line_end;
+            if (pos < content.len and content[pos] == '\n') {
+                pos += 1;
             }
         }
 
@@ -254,6 +356,7 @@ pub const Wal = struct {
             struct {
                 op: []const u8,
                 ts: i64,
+                seq: u64 = 0, // Default to 0 for legacy entries without seq
                 id: []const u8,
                 data: ?Issue,
             },
@@ -277,13 +380,14 @@ pub const Wal = struct {
         return ParsedWalEntry{
             .op = op,
             .ts = parsed.value.ts,
+            .seq = parsed.value.seq,
             .id = id,
             .data = data,
         };
     }
 
     /// Replay WAL entries onto an IssueStore.
-    /// Applies operations in timestamp order.
+    /// Applies operations in timestamp/sequence order.
     /// Returns statistics about the replay including any failures.
     pub fn replay(self: *Self, store: *IssueStore) !ReplayStats {
         const entries = try self.readEntries();
@@ -295,10 +399,12 @@ pub const Wal = struct {
             self.allocator.free(entries);
         }
 
-        // Sort by timestamp (sortUnstable mutates through the slice pointer)
+        // Sort by timestamp, then by sequence number for deterministic ordering
+        // when multiple entries have the same timestamp
         std.mem.sortUnstable(ParsedWalEntry, @constCast(entries), {}, struct {
             fn lessThan(_: void, a: ParsedWalEntry, b: ParsedWalEntry) bool {
-                return a.ts < b.ts;
+                if (a.ts != b.ts) return a.ts < b.ts;
+                return a.seq < b.seq;
             }
         }.lessThan);
 

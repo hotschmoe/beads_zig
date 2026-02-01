@@ -10,6 +10,7 @@ const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const Event = @import("../models/event.zig").Event;
 
 const Status = models.Status;
 const IssueStore = common.IssueStore;
@@ -66,6 +67,19 @@ pub fn run(
         return CloseError.StorageError;
     };
 
+    // Record audit event
+    const actor = global.actor orelse "unknown";
+    const event = Event.issueClosed(allocator, close_args.id, actor, close_args.reason, now) catch Event{
+        .id = 0,
+        .issue_id = close_args.id,
+        .event_type = .closed,
+        .actor = actor,
+        .old_value = null,
+        .new_value = close_args.reason,
+        .created_at = now,
+    };
+    ctx.recordEvent(event);
+
     try ctx.saveIfAutoFlush();
 
     try outputSuccess(&ctx.output, global, close_args.id, "closed", "Closed issue {s}");
@@ -101,6 +115,10 @@ pub fn runReopen(
         try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to reopen issue");
         return CloseError.StorageError;
     };
+
+    // Record audit event
+    const actor = global.actor orelse "unknown";
+    ctx.recordEvent(Event.issueReopened(reopen_args.id, actor, now));
 
     try ctx.saveIfAutoFlush();
 
