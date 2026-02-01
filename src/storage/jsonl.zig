@@ -8,6 +8,8 @@
 const std = @import("std");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
+const simd = @import("simd.zig");
+const mmap = @import("mmap.zig");
 const test_util = @import("../test_util.zig");
 
 pub const JsonlError = error{
@@ -51,12 +53,16 @@ pub const JsonlFile = struct {
     /// Read all issues from the JSONL file.
     /// Returns empty slice if file doesn't exist.
     /// Caller owns the returned slice and must free each issue.
+    /// Uses SIMD-accelerated newline scanning for efficient parsing of large files.
     pub fn readAll(self: *Self) ![]Issue {
-        const file = fs.cwd().openFile(self.path, .{}) catch |err| switch (err) {
-            error.FileNotFound => return &[_]Issue{},
-            else => return err,
+        // Use mmap for zero-copy reading
+        var mapping = mmap.MappedFile.open(self.path) catch |err| switch (err) {
+            mmap.MmapError.FileNotFound => return &[_]Issue{},
+            else => return error.InvalidJson,
         };
-        defer file.close();
+        defer mapping.close();
+
+        const content = mapping.data();
 
         var issues: std.ArrayListUnmanaged(Issue) = .{};
         errdefer {
@@ -66,45 +72,19 @@ pub const JsonlFile = struct {
             issues.deinit(self.allocator);
         }
 
-        // Read entire file content
-        const content = file.readToEndAlloc(self.allocator, 1024 * 1024 * 100) catch |err| switch (err) {
-            else => return err,
-        };
-        defer self.allocator.free(content);
+        // Use SIMD-accelerated line iterator for efficient newline scanning
+        var line_iter = simd.LineIterator.init(content);
+        while (line_iter.next()) |line| {
+            if (line.len == 0) continue;
 
-        // Parse line by line
-        var line_start: usize = 0;
-        for (content, 0..) |c, i| {
-            if (c == '\n') {
-                const line = content[line_start..i];
-                line_start = i + 1;
+            const issue = std.json.parseFromSliceLeaky(
+                Issue,
+                self.allocator,
+                line,
+                .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+            ) catch continue;
 
-                if (line.len == 0) continue;
-
-                const issue = std.json.parseFromSliceLeaky(
-                    Issue,
-                    self.allocator,
-                    line,
-                    .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
-                ) catch continue;
-
-                try issues.append(self.allocator, issue);
-            }
-        }
-
-        // Handle last line if no trailing newline
-        if (line_start < content.len) {
-            const line = content[line_start..];
-            if (line.len > 0) {
-                if (std.json.parseFromSliceLeaky(
-                    Issue,
-                    self.allocator,
-                    line,
-                    .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
-                )) |issue| {
-                    try issues.append(self.allocator, issue);
-                } else |_| {}
-            }
+            try issues.append(self.allocator, issue);
         }
 
         return issues.toOwnedSlice(self.allocator);
@@ -113,15 +93,22 @@ pub const JsonlFile = struct {
     /// Read all issues from the JSONL file with detailed corruption tracking.
     /// Returns a LoadResult containing issues and corruption statistics.
     /// Logs and skips corrupt entries instead of failing.
+    /// Uses SIMD-accelerated newline scanning for efficient parsing of large files.
     pub fn readAllWithRecovery(self: *Self) !LoadResult {
-        const file = fs.cwd().openFile(self.path, .{}) catch |err| switch (err) {
-            error.FileNotFound => return LoadResult{
+        // Use mmap for zero-copy reading
+        var mapping = mmap.MappedFile.open(self.path) catch |err| switch (err) {
+            mmap.MmapError.FileNotFound => return LoadResult{
                 .issues = &[_]Issue{},
                 .corruption_count = 0,
             },
-            else => return err,
+            else => return LoadResult{
+                .issues = &[_]Issue{},
+                .corruption_count = 0,
+            },
         };
-        defer file.close();
+        defer mapping.close();
+
+        const content = mapping.data();
 
         var issues: std.ArrayListUnmanaged(Issue) = .{};
         var corrupt_lines: std.ArrayListUnmanaged(usize) = .{};
@@ -133,53 +120,24 @@ pub const JsonlFile = struct {
             corrupt_lines.deinit(self.allocator);
         }
 
-        // Read entire file content
-        const content = file.readToEndAlloc(self.allocator, 1024 * 1024 * 100) catch |err| switch (err) {
-            else => return err,
-        };
-        defer self.allocator.free(content);
-
-        // Parse line by line with line number tracking
-        var line_start: usize = 0;
+        // Use SIMD-accelerated line iterator for efficient newline scanning
+        var line_iter = simd.LineIterator.init(content);
         var line_num: usize = 0;
 
-        for (content, 0..) |c, i| {
-            if (c == '\n') {
-                line_num += 1;
-                const line = content[line_start..i];
-                line_start = i + 1;
-
-                if (line.len == 0) continue;
-
-                if (std.json.parseFromSliceLeaky(
-                    Issue,
-                    self.allocator,
-                    line,
-                    .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
-                )) |issue| {
-                    try issues.append(self.allocator, issue);
-                } else |_| {
-                    // Track corrupt line (1-indexed for user display)
-                    try corrupt_lines.append(self.allocator, line_num);
-                }
-            }
-        }
-
-        // Handle last line if no trailing newline
-        if (line_start < content.len) {
+        while (line_iter.next()) |line| {
             line_num += 1;
-            const line = content[line_start..];
-            if (line.len > 0) {
-                if (std.json.parseFromSliceLeaky(
-                    Issue,
-                    self.allocator,
-                    line,
-                    .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
-                )) |issue| {
-                    try issues.append(self.allocator, issue);
-                } else |_| {
-                    try corrupt_lines.append(self.allocator, line_num);
-                }
+            if (line.len == 0) continue;
+
+            if (std.json.parseFromSliceLeaky(
+                Issue,
+                self.allocator,
+                line,
+                .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+            )) |issue| {
+                try issues.append(self.allocator, issue);
+            } else |_| {
+                // Track corrupt line (1-indexed for user display)
+                try corrupt_lines.append(self.allocator, line_num);
             }
         }
 

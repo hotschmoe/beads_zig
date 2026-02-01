@@ -213,10 +213,9 @@ pub const Compactor = struct {
         var store = IssueStore.init(self.allocator, jsonl_path);
         defer store.deinit();
 
-        store.loadFromFile() catch |err| switch (err) {
-            error.FileNotFound => {}, // Empty main file is OK
-            else => return CompactError.CompactionFailed,
-        };
+        // Load main file - empty file is OK (returns empty slice)
+        // FileNotFound is handled internally by the mmap-based reader
+        store.loadFromFile() catch return CompactError.CompactionFailed;
 
         // 3. Replay WAL operations (using current generation)
         var wal = try Wal.init(self.beads_dir, self.allocator);

@@ -31,6 +31,7 @@ const IssueStore = @import("store.zig").IssueStore;
 const Generation = @import("generation.zig").Generation;
 const walstate = @import("walstate.zig");
 const fscheck = @import("fscheck.zig");
+const mmap = @import("mmap.zig");
 const test_util = @import("../test_util.zig");
 
 /// Magic bytes to identify framed WAL entries: 0x000B3AD5 ("BEADS" in hex-ish)
@@ -459,16 +460,22 @@ pub const Wal = struct {
     }
 
     /// Read entries from a specific WAL file path.
+    /// Uses memory-mapped I/O for zero-copy reading of large WAL files.
     fn readEntriesFromPath(self: *Self, path: []const u8) ![]ParsedWalEntry {
-        const file = fs.cwd().openFile(path, .{}) catch |err| switch (err) {
-            error.FileNotFound => return &[_]ParsedWalEntry{},
-            else => return err,
+        // Use mmap for zero-copy reading
+        var mapping = mmap.MappedFile.open(path) catch |err| switch (err) {
+            mmap.MmapError.FileNotFound => return &[_]ParsedWalEntry{},
+            else => return WalError.ParseError,
         };
-        defer file.close();
+        defer mapping.close();
 
-        const content = file.readToEndAlloc(self.allocator, 100 * 1024 * 1024) catch return WalError.ParseError;
-        defer self.allocator.free(content);
+        const content = mapping.data();
+        return self.parseEntriesFromContent(content);
+    }
 
+    /// Parse WAL entries from content buffer.
+    /// Separated from I/O to allow both mmap and regular read paths.
+    fn parseEntriesFromContent(self: *Self, content: []const u8) ![]ParsedWalEntry {
         var entries: std.ArrayListUnmanaged(ParsedWalEntry) = .{};
         errdefer {
             for (entries.items) |*e| {

@@ -25,6 +25,8 @@ pub const metrics = @import("metrics.zig");
 pub const txlog = @import("txlog.zig");
 pub const fscheck = @import("fscheck.zig");
 pub const walstate = @import("walstate.zig");
+pub const mmap = @import("mmap.zig");
+pub const simd = @import("simd.zig");
 
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
@@ -81,6 +83,12 @@ pub const WalState = walstate.WalState;
 pub const WalStateStats = walstate.WalStateStats;
 pub const getGlobalWalState = walstate.getGlobalState;
 pub const resetGlobalWalState = walstate.resetGlobalState;
+
+pub const MappedFile = mmap.MappedFile;
+pub const MmapError = mmap.MmapError;
+
+pub const NewlineScanner = simd.NewlineScanner;
+pub const LineIterator = simd.LineIterator;
 
 test {
     std.testing.refAllDecls(@This());
