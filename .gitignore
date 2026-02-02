@@ -32,3 +32,6 @@ sandbox/*
 
 # Test temp directory (created by tests, cleaned up after)
 .test_tmp/
+
+# Reference projects (downloaded for comparison)
+reference_project/

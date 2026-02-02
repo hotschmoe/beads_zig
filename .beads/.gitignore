@@ -1,11 +1,4 @@
-# Database
-*.db
-*.db-shm
-*.db-wal
-
-# Lock files
+# beads_zig generated files (not tracked in git)
+*.wal
 *.lock
-
-# Temporary
-last-touched
-*.tmp
+metadata.json
