@@ -61,6 +61,8 @@ pub const OutputOptions = struct {
     quiet: bool = false,
     silent: bool = false, // Suppress ALL output including errors (for tests)
     no_color: bool = false,
+    wrap: bool = false, // Wrap long lines in plain text output
+    stats: bool = false, // Show token savings stats for TOON output
 };
 
 /// Output formatter for consistent CLI output across all modes.
@@ -68,9 +70,13 @@ pub const Output = struct {
     mode: OutputMode,
     toon: bool,
     silent: bool, // Suppress ALL output including errors (for tests)
+    wrap: bool, // Wrap long lines in plain text output
+    stats: bool, // Show token savings stats for TOON output
     stdout: std.fs.File,
     stderr: std.fs.File,
     allocator: std.mem.Allocator,
+    /// Terminal width for line wrapping (default: 80)
+    terminal_width: usize = 80,
 
     const Self = @This();
 
@@ -88,13 +94,19 @@ pub const Output = struct {
             mode = .rich;
         }
 
+        // Try to get terminal width, default to 80
+        const terminal_width: usize = getTerminalWidth() orelse 80;
+
         return .{
             .mode = mode,
             .toon = opts.toon,
             .silent = opts.silent,
+            .wrap = opts.wrap,
+            .stats = opts.stats,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
+            .terminal_width = terminal_width,
         };
     }
 
@@ -104,9 +116,12 @@ pub const Output = struct {
             .mode = mode,
             .toon = false,
             .silent = false,
+            .wrap = false,
+            .stats = false,
             .stdout = std.fs.File.stdout(),
             .stderr = std.fs.File.stderr(),
             .allocator = allocator,
+            .terminal_width = 80,
         };
     }
 
@@ -116,9 +131,12 @@ pub const Output = struct {
             .mode = mode,
             .toon = false,
             .silent = false,
+            .wrap = false,
+            .stats = false,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
+            .terminal_width = 80,
         };
     }
 
@@ -128,9 +146,12 @@ pub const Output = struct {
             .mode = .quiet,
             .toon = false,
             .silent = true,
+            .wrap = false,
+            .stats = false,
             .stdout = std.fs.File.stdout(),
             .stderr = std.fs.File.stderr(),
             .allocator = allocator,
+            .terminal_width = 80,
         };
     }
 
@@ -229,6 +250,7 @@ pub const Output = struct {
 
     /// Print raw JSON value to stdout (for JSON mode).
     /// If toon mode is enabled, converts JSON to TOON format for reduced token usage.
+    /// If stats mode is also enabled, displays token savings information.
     pub fn printJson(self: *Self, value: anytype) !void {
         const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, value, .{});
         defer self.allocator.free(json_bytes);
@@ -241,10 +263,38 @@ pub const Output = struct {
             };
             defer self.allocator.free(toon_bytes);
             try self.stdout.writeAll(toon_bytes);
+            try self.stdout.writeAll("\n");
+
+            // Show token savings stats if enabled
+            if (self.stats) {
+                try self.printToonStats(json_bytes.len, toon_bytes.len);
+            }
         } else {
             try self.stdout.writeAll(json_bytes);
+            try self.stdout.writeAll("\n");
         }
-        try self.stdout.writeAll("\n");
+    }
+
+    /// Print TOON format token savings statistics.
+    fn printToonStats(self: *Self, json_len: usize, toon_len: usize) !void {
+        // Estimate tokens using common approximation: ~4 chars per token
+        const json_tokens = (json_len + 3) / 4;
+        const toon_tokens = (toon_len + 3) / 4;
+
+        if (json_tokens == 0) return;
+
+        const savings_pct: usize = if (json_tokens > toon_tokens)
+            ((json_tokens - toon_tokens) * 100) / json_tokens
+        else
+            0;
+
+        const msg = try std.fmt.allocPrint(
+            self.allocator,
+            "# Token savings: {d}% ({d} -> {d} tokens)\n",
+            .{ savings_pct, json_tokens, toon_tokens },
+        );
+        defer self.allocator.free(msg);
+        try self.stderr.writeAll(msg);
     }
 
     // ========================================================================
@@ -265,13 +315,13 @@ pub const Output = struct {
 
     fn printIssuePlain(self: *Self, issue: Issue) !void {
         try self.writeFormatted("ID: {s}\n", .{issue.id});
-        try self.writeFormatted("Title: {s}\n", .{issue.title});
+        try self.writeWrapped("Title: ", issue.title, 7);
         try self.writeFormatted("Status: {s}\n", .{issue.status.toString()});
         try self.writeFormatted("Priority: {s}\n", .{issue.priority.toString()});
         try self.writeFormatted("Type: {s}\n", .{issue.issue_type.toString()});
 
         if (issue.description) |desc| {
-            try self.writeFormatted("Description: {s}\n", .{desc});
+            try self.writeWrapped("Description: ", desc, 13);
         }
         if (issue.assignee) |assignee| {
             try self.writeFormatted("Assignee: {s}\n", .{assignee});
@@ -295,11 +345,25 @@ pub const Output = struct {
     fn printIssueListPlain(self: *Self, issues: []const Issue) !void {
         for (issues) |issue| {
             const status_abbrev = abbreviateStatus(issue.status);
-            try self.writeFormatted("{s}  [{s}] {s}\n", .{
+            // Format: "bd-xxx  [STAT] "  = ID(variable) + 2 spaces + [ + 4 + ] + 1 space
+            const prefix_len = issue.id.len + 2 + 1 + 4 + 1 + 1;
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}  [{s}] ", .{
                 issue.id,
                 status_abbrev,
-                issue.title,
             });
+            defer self.allocator.free(prefix);
+            try self.stdout.writeAll(prefix);
+
+            if (self.wrap and issue.title.len + prefix_len > self.terminal_width) {
+                const wrapped = wrapText(self.allocator, issue.title, self.terminal_width, prefix_len) catch issue.title;
+                const should_free = wrapped.ptr != issue.title.ptr;
+                defer if (should_free) self.allocator.free(wrapped);
+                try self.stdout.writeAll(wrapped);
+                try self.stdout.writeAll("\n");
+            } else {
+                try self.stdout.writeAll(issue.title);
+                try self.stdout.writeAll("\n");
+            }
         }
     }
 
@@ -385,6 +449,23 @@ pub const Output = struct {
         const msg = try std.fmt.allocPrint(self.allocator, fmt, args);
         defer self.allocator.free(msg);
         try self.stdout.writeAll(msg);
+    }
+
+    /// Write a labeled field with optional text wrapping.
+    /// label: The field label (e.g., "Title: ")
+    /// text: The text content to write
+    /// indent: Number of spaces to indent continuation lines
+    fn writeWrapped(self: *Self, label: []const u8, text: []const u8, indent: usize) !void {
+        try self.stdout.writeAll(label);
+        if (self.wrap and text.len + label.len > self.terminal_width) {
+            const wrapped = wrapText(self.allocator, text, self.terminal_width, indent) catch text;
+            const should_free = wrapped.ptr != text.ptr;
+            defer if (should_free) self.allocator.free(wrapped);
+            try self.stdout.writeAll(wrapped);
+        } else {
+            try self.stdout.writeAll(text);
+        }
+        try self.stdout.writeAll("\n");
     }
 
     // ========================================================================
@@ -545,6 +626,86 @@ pub const Output = struct {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Get terminal width from ioctl or COLUMNS env var.
+fn getTerminalWidth() ?usize {
+    // Try ioctl first (POSIX)
+    if (@import("builtin").os.tag != .windows) {
+        const stdout_fd = std.posix.STDOUT_FILENO;
+        var winsize: std.posix.winsize = undefined;
+        const result = std.posix.system.ioctl(stdout_fd, std.posix.T.IOCGWINSZ, @intFromPtr(&winsize));
+        if (result == 0 and winsize.col > 0) {
+            return @intCast(winsize.col);
+        }
+    }
+    // Fallback to COLUMNS environment variable
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "COLUMNS")) |cols| {
+        defer std.heap.page_allocator.free(cols);
+        return std.fmt.parseInt(usize, cols, 10) catch null;
+    } else |_| {}
+    return null;
+}
+
+/// Wrap text to fit within a given width, preserving word boundaries.
+/// Returns allocated memory that must be freed by the caller.
+fn wrapText(allocator: std.mem.Allocator, text: []const u8, width: usize, indent: usize) ![]const u8 {
+    if (width <= indent) return allocator.dupe(u8, text);
+
+    var result: std.ArrayListUnmanaged(u8) = .{};
+    errdefer result.deinit(allocator);
+
+    var line_start: usize = 0;
+    var last_space: ?usize = null;
+    var current_width: usize = 0;
+    const effective_width = width - indent;
+
+    for (text, 0..) |c, i| {
+        if (c == '\n') {
+            // Preserve existing newlines
+            try result.appendSlice(allocator, text[line_start .. i + 1]);
+            if (i + 1 < text.len) {
+                try result.appendNTimes(allocator, ' ', indent);
+            }
+            line_start = i + 1;
+            last_space = null;
+            current_width = 0;
+            continue;
+        }
+
+        if (c == ' ') {
+            last_space = i;
+        }
+
+        current_width += 1;
+
+        if (current_width > effective_width) {
+            // Need to wrap
+            if (last_space) |space_pos| {
+                // Wrap at last space
+                try result.appendSlice(allocator, text[line_start..space_pos]);
+                try result.append(allocator, '\n');
+                try result.appendNTimes(allocator, ' ', indent);
+                line_start = space_pos + 1;
+                current_width = i - space_pos;
+                last_space = null;
+            } else {
+                // No space to wrap at, force break
+                try result.appendSlice(allocator, text[line_start..i]);
+                try result.append(allocator, '\n');
+                try result.appendNTimes(allocator, ' ', indent);
+                line_start = i;
+                current_width = 1;
+            }
+        }
+    }
+
+    // Append remaining text
+    if (line_start < text.len) {
+        try result.appendSlice(allocator, text[line_start..]);
+    }
+
+    return result.toOwnedSlice(allocator);
+}
 
 /// Check if NO_COLOR environment variable is set (cross-platform).
 fn checkNoColorEnv() bool {

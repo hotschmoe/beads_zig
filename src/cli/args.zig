@@ -13,6 +13,8 @@ pub const GlobalOptions = struct {
     silent: bool = false, // Suppress ALL output including errors (for tests)
     verbose: u8 = 0,
     no_color: bool = false,
+    wrap: bool = false, // Wrap long lines in plain text output
+    stats: bool = false, // Show token savings stats for TOON output
     data_path: ?[]const u8 = null,
     actor: ?[]const u8 = null,
     lock_timeout: u32 = 5000,
@@ -662,6 +664,14 @@ pub const ArgParser = struct {
         if (std.mem.eql(u8, arg, "--lock-timeout")) {
             const val = self.next() orelse return error.MissingFlagValue;
             global.lock_timeout = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
+            return true;
+        }
+        if (std.mem.eql(u8, arg, "--wrap")) {
+            global.wrap = true;
+            return true;
+        }
+        if (std.mem.eql(u8, arg, "--stats")) {
+            global.stats = true;
             return true;
         }
 

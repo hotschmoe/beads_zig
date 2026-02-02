@@ -54,6 +54,8 @@ pub const CommandContext = struct {
             .quiet = global.quiet,
             .silent = global.silent,
             .no_color = global.no_color,
+            .wrap = global.wrap,
+            .stats = global.stats,
         });
 
         const beads_dir_str = global.data_path orelse ".beads";
