@@ -27,28 +27,48 @@ pub const ReadyError = error{
 
 pub const ReadyResult = struct {
     success: bool,
-    issues: ?[]const IssueCompact = null,
+    issues: ?[]const IssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
 
-    const IssueCompact = struct {
+    /// Full issue representation for agent consumption.
+    /// Includes all fields commonly needed for workflow automation.
+    const IssueFull = struct {
         id: []const u8,
         title: []const u8,
+        description: ?[]const u8 = null,
+        status: []const u8,
         priority: u3,
+        issue_type: []const u8,
+        assignee: ?[]const u8 = null,
+        labels: []const []const u8,
+        created_at: i64,
+        updated_at: i64,
+        blocks: []const []const u8, // IDs of issues this blocks (dependents)
     };
 };
 
 pub const BlockedResult = struct {
     success: bool,
-    issues: ?[]const BlockedIssue = null,
+    issues: ?[]const BlockedIssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
 
-    const BlockedIssue = struct {
+    /// Full blocked issue representation for agent consumption.
+    /// Includes all fields commonly needed for workflow automation.
+    const BlockedIssueFull = struct {
         id: []const u8,
         title: []const u8,
+        description: ?[]const u8 = null,
+        status: []const u8,
         priority: u3,
-        blocked_by: []const []const u8,
+        issue_type: []const u8,
+        assignee: ?[]const u8 = null,
+        labels: []const []const u8,
+        created_at: i64,
+        updated_at: i64,
+        blocked_by: []const []const u8, // IDs of blocking issues
+        blocks: []const []const u8, // IDs of issues this blocks (dependents)
     };
 };
 
@@ -115,20 +135,46 @@ pub fn run(
     }
 
     if (global.isStructuredOutput()) {
-        var compact_issues = try allocator.alloc(ReadyResult.IssueCompact, display_issues.len);
-        defer allocator.free(compact_issues);
+        var full_issues = try allocator.alloc(ReadyResult.IssueFull, display_issues.len);
+        defer {
+            for (full_issues) |fi| {
+                for (fi.blocks) |block_id| {
+                    allocator.free(block_id);
+                }
+                allocator.free(fi.blocks);
+            }
+            allocator.free(full_issues);
+        }
 
         for (display_issues, 0..) |issue, i| {
-            compact_issues[i] = .{
+            // Get issues that depend on this one (this issue blocks them)
+            const dependents = try graph.getDependents(issue.id);
+            defer graph.freeDependencies(dependents);
+
+            var blocks_ids = try allocator.alloc([]const u8, dependents.len);
+            for (dependents, 0..) |dep, j| {
+                // Dupe the issue_id since freeDependencies will free it
+                blocks_ids[j] = try allocator.dupe(u8, dep.issue_id);
+            }
+
+            full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
+                .description = issue.description,
+                .status = issue.status.toString(),
                 .priority = issue.priority.value,
+                .issue_type = issue.issue_type.toString(),
+                .assignee = issue.assignee,
+                .labels = issue.labels,
+                .created_at = issue.created_at.value,
+                .updated_at = issue.updated_at.value,
+                .blocks = blocks_ids,
             };
         }
 
         try ctx.output.printJson(ReadyResult{
             .success = true,
-            .issues = compact_issues,
+            .issues = full_issues,
             .count = display_issues.len,
         });
     } else {
@@ -176,10 +222,17 @@ pub fn runBlocked(
     const display_issues = applyLimit(filtered, blocked_args.limit);
 
     if (global.isStructuredOutput()) {
-        var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssue, display_issues.len);
+        var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssueFull, display_issues.len);
         defer {
             for (blocked_issues) |bi| {
+                for (bi.blocked_by) |blocker_id| {
+                    allocator.free(blocker_id);
+                }
                 allocator.free(bi.blocked_by);
+                for (bi.blocks) |block_id| {
+                    allocator.free(block_id);
+                }
+                allocator.free(bi.blocks);
             }
             allocator.free(blocked_issues);
         }
@@ -190,14 +243,33 @@ pub fn runBlocked(
 
             var blocker_ids = try allocator.alloc([]const u8, blockers.len);
             for (blockers, 0..) |blocker, j| {
-                blocker_ids[j] = blocker.id;
+                // Dupe the id since freeIssues will free it
+                blocker_ids[j] = try allocator.dupe(u8, blocker.id);
+            }
+
+            // Get issues that depend on this one (this issue blocks them)
+            const dependents = try graph.getDependents(issue.id);
+            defer graph.freeDependencies(dependents);
+
+            var blocks_ids = try allocator.alloc([]const u8, dependents.len);
+            for (dependents, 0..) |dep, j| {
+                // Dupe the issue_id since freeDependencies will free it
+                blocks_ids[j] = try allocator.dupe(u8, dep.issue_id);
             }
 
             blocked_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
+                .description = issue.description,
+                .status = issue.status.toString(),
                 .priority = issue.priority.value,
+                .issue_type = issue.issue_type.toString(),
+                .assignee = issue.assignee,
+                .labels = issue.labels,
+                .created_at = issue.created_at.value,
+                .updated_at = issue.updated_at.value,
                 .blocked_by = blocker_ids,
+                .blocks = blocks_ids,
             };
         }
 
