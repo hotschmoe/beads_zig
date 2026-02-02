@@ -100,7 +100,7 @@ pub fn run(
         null;
 
     // Get actor (from flag, env, or default)
-    const actor = global.actor orelse getDefaultActor();
+    const actor = global.actor orelse common.getDefaultActor();
 
     // Get config prefix (read from config.yaml or use default)
     const prefix = try getConfigPrefix(allocator, beads_dir);
@@ -226,15 +226,6 @@ fn epochDayFromYMD(year: i32, month: u4, day: u5) !i32 {
     const doy: u32 = (153 * (if (m > 2) m - 3 else m + 9) + 2) / 5 + day - 1;
     const doe: u32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return era * 146097 + @as(i32, @intCast(doe)) - 719468;
-}
-
-/// Get the default actor name from environment.
-/// On Windows, returns null (env var access requires allocation).
-/// Use --actor flag to specify the actor on Windows.
-fn getDefaultActor() ?[]const u8 {
-    const builtin = @import("builtin");
-    if (builtin.os.tag == .windows) return null;
-    return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
 }
 
 /// Read the ID prefix from config.yaml, defaulting to "bd".

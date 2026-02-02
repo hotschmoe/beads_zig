@@ -17,15 +17,6 @@ const IssueStore = common.IssueStore;
 const IssueStoreError = common.IssueStoreError;
 const CommandContext = common.CommandContext;
 
-/// Get the default actor name from environment.
-/// On Windows, returns null (env var access requires allocation).
-/// Use --actor flag to specify the actor on Windows.
-fn getDefaultActor() ?[]const u8 {
-    const builtin = @import("builtin");
-    if (builtin.os.tag == .windows) return null;
-    return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
-}
-
 pub const UpdateError = error{
     WorkspaceNotInitialized,
     IssueNotFound,
@@ -69,7 +60,7 @@ pub fn run(
 
     // Handle --claim flag: set assignee to actor AND status to in_progress
     if (update_args.claim) {
-        const actor = global.actor orelse getDefaultActor() orelse {
+        const actor = global.actor orelse common.getDefaultActor() orelse {
             try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "--claim requires an actor (use --actor or set $USER)");
             return UpdateError.InvalidArgument;
         };
