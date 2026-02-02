@@ -331,11 +331,9 @@ fn runRename(
 
         // Check if issue has the old label
         var has_old_label = false;
-        var old_label_idx: usize = 0;
-        for (issue.labels, 0..) |label, idx| {
+        for (issue.labels) |label| {
             if (std.mem.eql(u8, label, old_name)) {
                 has_old_label = true;
-                old_label_idx = idx;
                 break;
             }
         }
