@@ -112,7 +112,8 @@ pub const LogEntry = struct {
             details_str = d;
         }
 
-        return std.fmt.allocPrint(allocator,
+        return std.fmt.allocPrint(
+            allocator,
             "[{x:0>16}] [{s}] {s}/{s}{s}{s} {s}",
             .{
                 self.correlation_id,

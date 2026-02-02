@@ -156,17 +156,63 @@ jobs:
           const beads_zig = @import("beads_zig");
           pub fn main() !void {
               // Verify package exports are accessible
-              const result = beads_zig.add(2, 3);
-              _ = result;
+              _ = beads_zig.models;
+              _ = beads_zig.storage;
+              _ = beads_zig.cli;
           }
           EOF
 
           zig build
 
+  build-binaries:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    needs: [test, format]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            name: bz-linux-x86_64
+          - target: aarch64-linux-gnu
+            name: bz-linux-aarch64
+          - target: x86_64-macos
+            name: bz-macos-x86_64
+          - target: aarch64-macos
+            name: bz-macos-aarch64
+          - target: x86_64-windows-gnu
+            name: bz-windows-x86_64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build for ${{ matrix.target }}
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+      - name: Rename binary
+        run: |
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            mv zig-out/bin/bz.exe ${{ matrix.name }}
+          else
+            mv zig-out/bin/bz ${{ matrix.name }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [test, format, package]
+    needs: [test, format, package, build-binaries]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
@@ -190,6 +236,22 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Download all artifacts
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+
+      - name: Prepare binaries
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          mkdir -p release
+          # Each artifact is in its own directory
+          for dir in binaries/*/; do
+            cp "$dir"* release/ 2>/dev/null || true
+          done
+          ls -la release/
+
       - name: Create Release
         if: steps.check_tag.outputs.exists == 'false'
         uses: softprops/action-gh-release@v1
@@ -199,3 +261,4 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: release/*

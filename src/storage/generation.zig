@@ -194,4 +194,3 @@ test "Generation.walPath generates correct paths" {
     defer allocator.free(path2);
     try std.testing.expectEqualStrings(".beads/beads.wal.42", path2);
 }
-
