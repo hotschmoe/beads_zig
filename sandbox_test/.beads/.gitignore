@@ -1,0 +1,4 @@
+# beads_zig generated files (not tracked in git)
+*.wal
+*.lock
+metadata.json
