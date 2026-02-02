@@ -390,13 +390,15 @@ fn generateCorrelationId() u64 {
     return (ts << 32) | (counter & 0xFFFFFFFF);
 }
 
+/// Windows API declaration for process ID.
+const windows_kernel32 = struct {
+    extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
+};
+
 /// Get current process ID.
 fn getCurrentPid() i32 {
     if (builtin.os.tag == .windows) {
-        const extern_decl = struct {
-            extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
-        };
-        return @intCast(extern_decl.GetCurrentProcessId());
+        return @intCast(windows_kernel32.GetCurrentProcessId());
     } else if (builtin.os.tag == .linux) {
         return @bitCast(std.os.linux.getpid());
     } else {

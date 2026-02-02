@@ -37,14 +37,19 @@ const RunResult = struct {
     }
 };
 
-/// Run bz from the project root using absolute paths.
-fn runBzFromRoot(allocator: std.mem.Allocator, args: []const []const u8, work_dir: []const u8) !RunResult {
-    // Build the absolute path to bz binary
+/// Platform-specific bz binary name.
+const BZ_EXE = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+
+/// Get the absolute path to the bz binary.
+fn getBzPath(allocator: std.mem.Allocator) ![]const u8 {
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
+    return fs.path.join(allocator, &.{ cwd_path, BZ_EXE });
+}
 
-    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
+/// Run bz from the project root using absolute paths.
+fn runBzFromRoot(allocator: std.mem.Allocator, args: []const []const u8, work_dir: []const u8) !RunResult {
+    const bz_path = try getBzPath(allocator);
     defer allocator.free(bz_path);
 
     var argv: std.ArrayListUnmanaged([]const u8) = .{};

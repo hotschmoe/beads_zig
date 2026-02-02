@@ -18,6 +18,30 @@ const windows = std.os.windows;
 /// Page size used for mmap alignment.
 const page_size = std.heap.page_size_min;
 
+/// Windows API declarations for memory mapping.
+const windows_mmap = struct {
+    extern "kernel32" fn CreateFileMappingW(
+        hFile: windows.HANDLE,
+        lpFileMappingAttributes: ?*anyopaque,
+        flProtect: windows.DWORD,
+        dwMaximumSizeHigh: windows.DWORD,
+        dwMaximumSizeLow: windows.DWORD,
+        lpName: ?[*:0]const u16,
+    ) callconv(.winapi) ?windows.HANDLE;
+
+    extern "kernel32" fn MapViewOfFile(
+        hFileMappingObject: windows.HANDLE,
+        dwDesiredAccess: windows.DWORD,
+        dwFileOffsetHigh: windows.DWORD,
+        dwFileOffsetLow: windows.DWORD,
+        dwNumberOfBytesToMap: usize,
+    ) callconv(.winapi) ?[*]align(page_size) u8;
+
+    extern "kernel32" fn UnmapViewOfFile(lpBaseAddress: [*]const u8) callconv(.winapi) windows.BOOL;
+
+    extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(.winapi) windows.BOOL;
+};
+
 pub const MmapError = error{
     FileNotFound,
     AccessDenied,
@@ -136,32 +160,10 @@ pub const MappedFile = struct {
 
     /// Windows memory mapping implementation using CreateFileMappingW and MapViewOfFile.
     fn mapFileWindows(file: std.fs.File, size: usize) !MapResult {
-        const kernel32 = struct {
-            extern "kernel32" fn CreateFileMappingW(
-                hFile: windows.HANDLE,
-                lpFileMappingAttributes: ?*anyopaque,
-                flProtect: windows.DWORD,
-                dwMaximumSizeHigh: windows.DWORD,
-                dwMaximumSizeLow: windows.DWORD,
-                lpName: ?[*:0]const u16,
-            ) callconv(.winapi) ?windows.HANDLE;
-
-            extern "kernel32" fn MapViewOfFile(
-                hFileMappingObject: windows.HANDLE,
-                dwDesiredAccess: windows.DWORD,
-                dwFileOffsetHigh: windows.DWORD,
-                dwFileOffsetLow: windows.DWORD,
-                dwNumberOfBytesToMap: usize,
-            ) callconv(.winapi) ?[*]align(page_size) u8;
-
-            extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(.winapi) windows.BOOL;
-        };
-
         const PAGE_READONLY: windows.DWORD = 0x02;
         const FILE_MAP_READ: windows.DWORD = 0x0004;
 
-        // Create file mapping object
-        const mapping_handle = kernel32.CreateFileMappingW(
+        const mapping_handle = windows_mmap.CreateFileMappingW(
             file.handle,
             null,
             PAGE_READONLY,
@@ -169,10 +171,9 @@ pub const MappedFile = struct {
             0,
             null,
         ) orelse return error.MmapFailed;
-        errdefer _ = kernel32.CloseHandle(mapping_handle);
+        errdefer _ = windows_mmap.CloseHandle(mapping_handle);
 
-        // Map view of the file
-        const ptr = kernel32.MapViewOfFile(
+        const ptr = windows_mmap.MapViewOfFile(
             mapping_handle,
             FILE_MAP_READ,
             0,
@@ -193,14 +194,9 @@ pub const MappedFile = struct {
 
     /// Windows unmap implementation using UnmapViewOfFile.
     fn unmapFileWindows(slice: []align(page_size) u8, mapping_handle: ?windows.HANDLE) void {
-        const kernel32 = struct {
-            extern "kernel32" fn UnmapViewOfFile(lpBaseAddress: [*]const u8) callconv(.winapi) windows.BOOL;
-            extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(.winapi) windows.BOOL;
-        };
-
-        _ = kernel32.UnmapViewOfFile(slice.ptr);
+        _ = windows_mmap.UnmapViewOfFile(slice.ptr);
         if (mapping_handle) |handle| {
-            _ = kernel32.CloseHandle(handle);
+            _ = windows_mmap.CloseHandle(handle);
         }
     }
 };

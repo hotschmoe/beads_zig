@@ -29,13 +29,19 @@ const STRESS_NUM_AGENTS = 10;
 const STRESS_WRITES_PER_AGENT = 1;
 const TOTAL_EXPECTED_WRITES = STRESS_NUM_AGENTS * STRESS_WRITES_PER_AGENT;
 
-// Run the bz CLI in a subprocess.
-fn runBz(allocator: std.mem.Allocator, args: []const []const u8, work_dir: []const u8) !struct { exit_code: u32, stdout: []const u8 } {
+/// Platform-specific bz binary name.
+const BZ_EXE = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+
+/// Get the absolute path to the bz binary.
+fn getBzPath(allocator: std.mem.Allocator) ![]const u8 {
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
+    return fs.path.join(allocator, &.{ cwd_path, BZ_EXE });
+}
 
-    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
+/// Run the bz CLI in a subprocess.
+fn runBz(allocator: std.mem.Allocator, args: []const []const u8, work_dir: []const u8) !struct { exit_code: u32, stdout: []const u8 } {
+    const bz_path = try getBzPath(allocator);
     defer allocator.free(bz_path);
 
     var argv: std.ArrayListUnmanaged([]const u8) = .{};
@@ -69,7 +75,7 @@ fn runBz(allocator: std.mem.Allocator, args: []const []const u8, work_dir: []con
     return .{ .exit_code = exit_code, .stdout = stdout_bytes };
 }
 
-// Run bz CLI with explicit path (avoids re-computing path per call)
+/// Run bz CLI with explicit path (avoids re-computing path per call).
 fn runBzDirect(
     allocator: std.mem.Allocator,
     bz_path: []const u8,
@@ -109,19 +115,13 @@ fn runBzDirect(
 test "concurrent writes: 10 agents, 1 write each, serialized" {
     const allocator = testing.allocator;
 
-    // Create isolated test directory
     const test_dir = try test_util.createTestDir(allocator, "stress_serialized");
     defer allocator.free(test_dir);
     defer test_util.cleanupTestDir(test_dir);
 
-    // Get bz binary path
-    const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
+    const bz_path = try getBzPath(allocator);
     defer allocator.free(bz_path);
 
-    // Verify binary exists
     fs.cwd().access(bz_path, .{}) catch |err| {
         std.debug.print("bz binary not found: {s}\n", .{bz_path});
         return err;
@@ -188,19 +188,13 @@ test "concurrent writes: 10 agents, 1 write each, serialized" {
 test "batch writes: 1 agent, 10 issues, zero corruption" {
     const allocator = testing.allocator;
 
-    // Create isolated test directory
     const test_dir = try test_util.createTestDir(allocator, "stress_batch");
     defer allocator.free(test_dir);
     defer test_util.cleanupTestDir(test_dir);
 
-    // Get bz binary path
-    const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
+    const bz_path = try getBzPath(allocator);
     defer allocator.free(bz_path);
 
-    // Verify binary exists
     fs.cwd().access(bz_path, .{}) catch |err| {
         std.debug.print("bz binary not found: {s}\n", .{bz_path});
         return err;
@@ -256,21 +250,15 @@ test "batch writes: 1 agent, 10 issues, zero corruption" {
 test "chaos: concurrent writes with interrupts verify data integrity" {
     const allocator = testing.allocator;
 
-    // Create isolated test directory
     const test_dir = try test_util.createTestDir(allocator, "stress_chaos");
     defer allocator.free(test_dir);
     defer test_util.cleanupTestDir(test_dir);
 
-    // Initialize workspace
     const init_result = try runBz(allocator, &[_][]const u8{"init"}, test_dir);
     allocator.free(init_result.stdout);
     try testing.expectEqual(@as(u32, 0), init_result.exit_code);
 
-    const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-
-    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
+    const bz_path = try getBzPath(allocator);
     defer allocator.free(bz_path);
 
     // Spawn many concurrent bz processes to create chaos
