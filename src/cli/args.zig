@@ -744,37 +744,148 @@ pub const ArgParser = struct {
     }
 
     /// Parse all arguments into a ParseResult.
+    /// Global flags can appear before or after the subcommand.
     pub fn parse(self: *Self) ParseError!ParseResult {
         var global = GlobalOptions{};
 
-        // Parse global flags first
-        while (self.hasNext()) {
-            const arg = self.peek().?;
+        // First pass: extract global flags from anywhere in the argument list
+        // and find the subcommand position
+        var cmd_index: ?usize = null;
+        var filtered_indices: std.ArrayListUnmanaged(usize) = .{};
+        defer filtered_indices.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < self.args.len) {
+            const arg = self.args[i];
+
+            // Try to parse as global flag
             if (std.mem.startsWith(u8, arg, "-")) {
-                if (self.parseGlobalFlag(&global)) |consumed| {
-                    if (!consumed) break;
-                } else |_| {
-                    break;
+                if (isGlobalFlag(arg)) |needs_value| {
+                    // Apply the global flag
+                    applyGlobalFlag(arg, &global);
+                    if (needs_value) {
+                        // Consume the next argument as the value
+                        i += 1;
+                        if (i < self.args.len) {
+                            applyGlobalFlagValue(arg, self.args[i], &global) catch {
+                                return error.InvalidArgument;
+                            };
+                        } else {
+                            return error.MissingFlagValue;
+                        }
+                    }
+                    i += 1;
+                    continue;
                 }
-            } else {
-                break;
             }
+
+            // Not a global flag - check if it's the subcommand
+            if (cmd_index == null and !std.mem.startsWith(u8, arg, "-")) {
+                cmd_index = filtered_indices.items.len;
+            }
+            filtered_indices.append(self.allocator, i) catch return error.InvalidArgument;
+            i += 1;
         }
 
-        // Parse subcommand
-        const cmd_str = self.next() orelse {
+        // Reset parser to use filtered indices
+        // We need to parse command args from the filtered list
+        if (filtered_indices.items.len == 0) {
             return .{
                 .global = global,
                 .command = .{ .help = .{ .topic = null } },
             };
-        };
+        }
 
+        // Get the subcommand string
+        const first_filtered = filtered_indices.items[0];
+        const cmd_str = self.args[first_filtered];
+
+        // Set parser index to after the filtered command for subcommand arg parsing
+        // We need to skip processed global flags in subsequent parsing
+        self.index = first_filtered + 1;
+
+        // Parse subcommand with remaining args (which may still have subcommand-specific flags)
         const command = try self.parseCommand(cmd_str);
 
         return .{
             .global = global,
             .command = command,
         };
+    }
+
+    /// Check if an argument is a global flag.
+    /// Returns true (needs value) / false (no value) if it's a global flag, null otherwise.
+    fn isGlobalFlag(arg: []const u8) ?bool {
+        // Flags that don't need values
+        const no_value_flags = [_][]const u8{
+            "--json",
+            "--toon",
+            "-q",
+            "--quiet",
+            "-v",
+            "--verbose",
+            "-vv",
+            "--no-color",
+            "--no-auto-flush",
+            "--no-auto-import",
+            "--wrap",
+            "--stats",
+            "--robot",
+        };
+        for (no_value_flags) |flag| {
+            if (std.mem.eql(u8, arg, flag)) return false;
+        }
+
+        // Flags that need values
+        const value_flags = [_][]const u8{
+            "--data",
+            "--db",
+            "--actor",
+            "--lock-timeout",
+        };
+        for (value_flags) |flag| {
+            if (std.mem.eql(u8, arg, flag)) return true;
+        }
+
+        return null;
+    }
+
+    /// Apply a global flag (no value).
+    fn applyGlobalFlag(arg: []const u8, global: *GlobalOptions) void {
+        if (std.mem.eql(u8, arg, "--json")) {
+            global.json = true;
+        } else if (std.mem.eql(u8, arg, "--toon")) {
+            global.toon = true;
+        } else if (std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--quiet")) {
+            global.quiet = true;
+        } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--verbose")) {
+            global.verbose +|= 1;
+        } else if (std.mem.eql(u8, arg, "-vv")) {
+            global.verbose +|= 2;
+        } else if (std.mem.eql(u8, arg, "--no-color")) {
+            global.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--no-auto-flush")) {
+            global.no_auto_flush = true;
+        } else if (std.mem.eql(u8, arg, "--no-auto-import")) {
+            global.no_auto_import = true;
+        } else if (std.mem.eql(u8, arg, "--wrap")) {
+            global.wrap = true;
+        } else if (std.mem.eql(u8, arg, "--stats")) {
+            global.stats = true;
+        } else if (std.mem.eql(u8, arg, "--robot")) {
+            global.robot = true;
+        }
+    }
+
+    /// Apply a global flag that requires a value.
+    fn applyGlobalFlagValue(flag: []const u8, value: []const u8, global: *GlobalOptions) !void {
+        if (std.mem.eql(u8, flag, "--data") or std.mem.eql(u8, flag, "--db")) {
+            global.data_path = value;
+        } else if (std.mem.eql(u8, flag, "--actor")) {
+            global.actor = value;
+        } else if (std.mem.eql(u8, flag, "--lock-timeout")) {
+            global.lock_timeout = std.fmt.parseInt(u32, value, 10) catch return error.InvalidArgument;
+        }
     }
 
     fn parseGlobalFlag(self: *Self, global: *GlobalOptions) ParseError!bool {
@@ -1996,6 +2107,34 @@ test "parse global flag --json" {
     const result = try parser.parse();
 
     try std.testing.expect(result.global.json);
+    try std.testing.expect(result.command == .list);
+}
+
+test "parse global flag --json after subcommand" {
+    const args = [_][]const u8{ "list", "--json" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.global.json);
+    try std.testing.expect(result.command == .list);
+}
+
+test "parse global flag --json after subcommand with ready" {
+    const args = [_][]const u8{ "ready", "--json" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.global.json);
+    try std.testing.expect(result.command == .ready);
+}
+
+test "parse global flags before and after subcommand" {
+    const args = [_][]const u8{ "--quiet", "list", "--json" };
+    var parser = ArgParser.init(std.testing.allocator, &args);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.global.json);
+    try std.testing.expect(result.global.quiet);
     try std.testing.expect(result.command == .list);
 }
 

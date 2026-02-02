@@ -118,10 +118,16 @@ pub fn run(
     const prefix = try getConfigPrefix(allocator, beads_dir);
     defer allocator.free(prefix);
 
-    // Generate ID
+    // Generate ID with collision checking
     var generator = IdGenerator.init(prefix);
     const issue_count = store.countTotal();
-    const issue_id = try generator.generate(allocator, issue_count);
+    const issue_id = generator.generateUnique(allocator, issue_count, store.getIdIndex()) catch |err| {
+        if (err == error.CollisionLimitExceeded) {
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
+            return CreateError.StorageError;
+        }
+        return err;
+    };
     defer allocator.free(issue_id);
 
     // Create issue

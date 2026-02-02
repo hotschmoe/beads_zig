@@ -166,7 +166,13 @@ fn runCreate(
 
     var generator = id_gen.IdGenerator.init(prefix);
     const issue_count = store.countTotal();
-    const issue_id = try generator.generate(allocator, issue_count);
+    const issue_id = generator.generateUnique(allocator, issue_count, store.getIdIndex()) catch |err| {
+        if (err == error.CollisionLimitExceeded) {
+            try common.outputErrorTyped(EpicResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
+            return EpicError.StorageError;
+        }
+        return err;
+    };
     defer allocator.free(issue_id);
 
     const now = std.time.timestamp();

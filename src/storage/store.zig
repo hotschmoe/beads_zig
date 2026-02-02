@@ -190,6 +190,11 @@ pub const IssueStore = struct {
         return &self.issues.items[idx];
     }
 
+    /// Get read-only access to the ID index for collision checking.
+    pub fn getIdIndex(self: *const Self) std.StringHashMapUnmanaged(usize) {
+        return self.id_index;
+    }
+
     /// Fields that can be updated on an issue.
     pub const IssueUpdate = struct {
         title: ?[]const u8 = null,
