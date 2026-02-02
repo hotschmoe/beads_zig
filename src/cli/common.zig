@@ -16,6 +16,51 @@ pub const DependencyGraph = storage.DependencyGraph;
 pub const EventStore = storage.EventStore;
 pub const StoreLoadResult = storage.StoreLoadResult;
 
+/// Full issue representation for agent consumption in JSON output.
+/// Used by list, ready, and blocked commands for consistent schema.
+pub const IssueFull = struct {
+    id: []const u8,
+    title: []const u8,
+    description: ?[]const u8 = null,
+    status: []const u8,
+    priority: u3,
+    issue_type: []const u8,
+    assignee: ?[]const u8 = null,
+    labels: []const []const u8,
+    created_at: i64,
+    updated_at: i64,
+    blocks: []const []const u8, // IDs of issues this blocks (dependents)
+};
+
+/// Collect IDs of issues that depend on the given issue (issues it blocks).
+/// Caller owns returned slice and must free each ID and the slice itself.
+pub fn collectBlocksIds(
+    allocator: std.mem.Allocator,
+    graph: *DependencyGraph,
+    issue_id: []const u8,
+) ![][]const u8 {
+    const dependents = try graph.getDependents(issue_id);
+    defer graph.freeDependencies(dependents);
+
+    var blocks_ids = try allocator.alloc([]const u8, dependents.len);
+    errdefer {
+        for (blocks_ids) |bid| allocator.free(bid);
+        allocator.free(blocks_ids);
+    }
+    for (dependents, 0..) |dep, j| {
+        blocks_ids[j] = try allocator.dupe(u8, dep.issue_id);
+    }
+    return blocks_ids;
+}
+
+/// Free a blocks IDs slice allocated by collectBlocksIds.
+pub fn freeBlocksIds(allocator: std.mem.Allocator, blocks_ids: []const []const u8) void {
+    for (blocks_ids) |block_id| {
+        allocator.free(block_id);
+    }
+    allocator.free(blocks_ids);
+}
+
 /// Common errors shared across CLI commands.
 pub const CommandError = error{
     WorkspaceNotInitialized,

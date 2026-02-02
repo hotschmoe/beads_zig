@@ -26,25 +26,9 @@ pub const ListError = error{
 
 pub const ListResult = struct {
     success: bool,
-    issues: ?[]const IssueFull = null,
+    issues: ?[]const common.IssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
-
-    /// Full issue representation for agent consumption.
-    /// Includes all fields commonly needed for workflow automation.
-    const IssueFull = struct {
-        id: []const u8,
-        title: []const u8,
-        description: ?[]const u8 = null,
-        status: []const u8,
-        priority: u3,
-        issue_type: []const u8,
-        assignee: ?[]const u8 = null,
-        labels: []const []const u8,
-        created_at: i64,
-        updated_at: i64,
-        blocks: []const []const u8, // IDs of issues this blocks (dependents)
-    };
 };
 
 pub fn run(
@@ -171,28 +155,15 @@ pub fn run(
     if (global.isStructuredOutput()) {
         var graph = ctx.createGraph();
 
-        var full_issues = try allocator.alloc(ListResult.IssueFull, issues.len);
+        var full_issues = try allocator.alloc(common.IssueFull, issues.len);
         defer {
             for (full_issues) |fi| {
-                for (fi.blocks) |block_id| {
-                    allocator.free(block_id);
-                }
-                allocator.free(fi.blocks);
+                common.freeBlocksIds(allocator, fi.blocks);
             }
             allocator.free(full_issues);
         }
 
         for (issues, 0..) |issue, i| {
-            // Get issues that depend on this one (this issue blocks them)
-            const dependents = try graph.getDependents(issue.id);
-            defer graph.freeDependencies(dependents);
-
-            var blocks_ids = try allocator.alloc([]const u8, dependents.len);
-            for (dependents, 0..) |dep, j| {
-                // Dupe the issue_id since freeDependencies will free it
-                blocks_ids[j] = try allocator.dupe(u8, dep.issue_id);
-            }
-
             full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
@@ -204,7 +175,7 @@ pub fn run(
                 .labels = issue.labels,
                 .created_at = issue.created_at.value,
                 .updated_at = issue.updated_at.value,
-                .blocks = blocks_ids,
+                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
             };
         }
 

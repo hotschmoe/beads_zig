@@ -27,25 +27,9 @@ pub const ReadyError = error{
 
 pub const ReadyResult = struct {
     success: bool,
-    issues: ?[]const IssueFull = null,
+    issues: ?[]const common.IssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
-
-    /// Full issue representation for agent consumption.
-    /// Includes all fields commonly needed for workflow automation.
-    const IssueFull = struct {
-        id: []const u8,
-        title: []const u8,
-        description: ?[]const u8 = null,
-        status: []const u8,
-        priority: u3,
-        issue_type: []const u8,
-        assignee: ?[]const u8 = null,
-        labels: []const []const u8,
-        created_at: i64,
-        updated_at: i64,
-        blocks: []const []const u8, // IDs of issues this blocks (dependents)
-    };
 };
 
 pub const BlockedResult = struct {
@@ -135,28 +119,15 @@ pub fn run(
     }
 
     if (global.isStructuredOutput()) {
-        var full_issues = try allocator.alloc(ReadyResult.IssueFull, display_issues.len);
+        var full_issues = try allocator.alloc(common.IssueFull, display_issues.len);
         defer {
             for (full_issues) |fi| {
-                for (fi.blocks) |block_id| {
-                    allocator.free(block_id);
-                }
-                allocator.free(fi.blocks);
+                common.freeBlocksIds(allocator, fi.blocks);
             }
             allocator.free(full_issues);
         }
 
         for (display_issues, 0..) |issue, i| {
-            // Get issues that depend on this one (this issue blocks them)
-            const dependents = try graph.getDependents(issue.id);
-            defer graph.freeDependencies(dependents);
-
-            var blocks_ids = try allocator.alloc([]const u8, dependents.len);
-            for (dependents, 0..) |dep, j| {
-                // Dupe the issue_id since freeDependencies will free it
-                blocks_ids[j] = try allocator.dupe(u8, dep.issue_id);
-            }
-
             full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
@@ -168,7 +139,7 @@ pub fn run(
                 .labels = issue.labels,
                 .created_at = issue.created_at.value,
                 .updated_at = issue.updated_at.value,
-                .blocks = blocks_ids,
+                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
             };
         }
 
@@ -225,14 +196,8 @@ pub fn runBlocked(
         var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssueFull, display_issues.len);
         defer {
             for (blocked_issues) |bi| {
-                for (bi.blocked_by) |blocker_id| {
-                    allocator.free(blocker_id);
-                }
-                allocator.free(bi.blocked_by);
-                for (bi.blocks) |block_id| {
-                    allocator.free(block_id);
-                }
-                allocator.free(bi.blocks);
+                common.freeBlocksIds(allocator, bi.blocked_by);
+                common.freeBlocksIds(allocator, bi.blocks);
             }
             allocator.free(blocked_issues);
         }
@@ -243,18 +208,7 @@ pub fn runBlocked(
 
             var blocker_ids = try allocator.alloc([]const u8, blockers.len);
             for (blockers, 0..) |blocker, j| {
-                // Dupe the id since freeIssues will free it
                 blocker_ids[j] = try allocator.dupe(u8, blocker.id);
-            }
-
-            // Get issues that depend on this one (this issue blocks them)
-            const dependents = try graph.getDependents(issue.id);
-            defer graph.freeDependencies(dependents);
-
-            var blocks_ids = try allocator.alloc([]const u8, dependents.len);
-            for (dependents, 0..) |dep, j| {
-                // Dupe the issue_id since freeDependencies will free it
-                blocks_ids[j] = try allocator.dupe(u8, dep.issue_id);
             }
 
             blocked_issues[i] = .{
@@ -269,7 +223,7 @@ pub fn runBlocked(
                 .created_at = issue.created_at.value,
                 .updated_at = issue.updated_at.value,
                 .blocked_by = blocker_ids,
-                .blocks = blocks_ids,
+                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
             };
         }
 
