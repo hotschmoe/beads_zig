@@ -228,6 +228,8 @@ pub const ListArgs = struct {
     notes_contains: ?[]const u8 = null,
     limit: ?u32 = null,
     all: bool = false,
+    overdue: bool = false,
+    include_deferred: bool = false,
     sort: SortField = .created_at,
     sort_desc: bool = true,
 };
@@ -240,6 +242,8 @@ pub const ReadyArgs = struct {
     title_contains: ?[]const u8 = null,
     desc_contains: ?[]const u8 = null,
     notes_contains: ?[]const u8 = null,
+    overdue: bool = false,
+    include_deferred: bool = false,
 };
 
 /// Blocked command arguments.
@@ -1052,6 +1056,10 @@ pub const ArgParser = struct {
                 result.limit = limit;
             } else if (self.consumeFlag("-A", "--all")) {
                 result.all = true;
+            } else if (self.consumeFlag(null, "--overdue")) {
+                result.overdue = true;
+            } else if (self.consumeFlag(null, "--deferred") or self.consumeFlag(null, "--include-deferred")) {
+                result.include_deferred = true;
             } else if (self.consumeFlag(null, "--sort")) {
                 const sort_str = self.next() orelse return error.MissingFlagValue;
                 result.sort = SortField.fromString(sort_str) orelse return error.InvalidArgument;
@@ -1084,6 +1092,10 @@ pub const ArgParser = struct {
                 result.desc_contains = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag(null, "--notes-contains")) {
                 result.notes_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--overdue")) {
+                result.overdue = true;
+            } else if (self.consumeFlag(null, "--include-deferred")) {
+                result.include_deferred = true;
             } else break;
         }
         return result;

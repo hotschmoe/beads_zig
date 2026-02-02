@@ -111,6 +111,12 @@ pub fn run(
         filters.limit = n;
     }
 
+    // Apply overdue filter
+    filters.overdue = list_args.overdue;
+
+    // Apply include_deferred filter
+    filters.include_deferred = list_args.include_deferred;
+
     // Apply sort options
     filters.order_by = switch (list_args.sort) {
         .created_at => .created_at,

@@ -280,7 +280,7 @@ test "DependencyStore.getReadyIssues excludes blocked issues" {
         .thread_id = null,
     });
 
-    const ready = try dep_store.getReadyIssues();
+    const ready = try dep_store.getReadyIssues(false);
     defer dep_store.freeIssues(ready);
 
     // Should only have ready and blocker (blocker has no deps)
@@ -316,7 +316,7 @@ test "DependencyStore.getReadyIssues includes issue when blocker is closed" {
         .thread_id = null,
     });
 
-    const ready = try dep_store.getReadyIssues();
+    const ready = try dep_store.getReadyIssues(false);
     defer dep_store.freeIssues(ready);
 
     // Child should be ready since blocker is closed

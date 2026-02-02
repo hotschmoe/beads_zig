@@ -79,11 +79,11 @@ pub fn run(
     }
 
     var graph = ctx.createGraph();
-    const issues = try graph.getReadyIssues();
+    const issues = try graph.getReadyIssues(ready_args.include_deferred);
     defer graph.freeIssues(issues);
 
     // Apply filters
-    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, ready_args.title_contains, ready_args.desc_contains, ready_args.notes_contains);
+    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, ready_args.title_contains, ready_args.desc_contains, ready_args.notes_contains, ready_args.overdue);
     defer allocator.free(filtered);
 
     const display_issues = applyLimit(filtered, ready_args.limit);
@@ -143,8 +143,8 @@ pub fn runBlocked(
     const issues = try graph.getBlockedIssues();
     defer graph.freeIssues(issues);
 
-    // Apply filters
-    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains);
+    // Apply filters (blocked command doesn't support overdue filter)
+    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains, false);
     defer allocator.free(filtered);
 
     const display_issues = applyLimit(filtered, blocked_args.limit);
@@ -220,12 +220,14 @@ fn applyFilters(
     title_contains: ?[]const u8,
     desc_contains: ?[]const u8,
     notes_contains: ?[]const u8,
+    overdue_only: bool,
 ) ![]Issue {
     // No filters - return original slice
-    if (priority_min == null and priority_max == null and title_contains == null and desc_contains == null and notes_contains == null) {
+    if (priority_min == null and priority_max == null and title_contains == null and desc_contains == null and notes_contains == null and !overdue_only) {
         return try allocator.dupe(Issue, issues);
     }
 
+    const now = std.time.timestamp();
     var filtered: std.ArrayListUnmanaged(Issue) = .{};
     errdefer filtered.deinit(allocator);
 
@@ -250,6 +252,13 @@ fn applyFilters(
         if (notes_contains) |query| {
             if (issue.notes) |notes| {
                 if (!containsIgnoreCase(notes, query)) continue;
+            } else continue;
+        }
+
+        // Overdue filter: only include issues past their due date
+        if (overdue_only) {
+            if (issue.due_at.value) |due_time| {
+                if (due_time >= now) continue;
             } else continue;
         }
 

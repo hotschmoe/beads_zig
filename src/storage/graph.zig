@@ -278,8 +278,8 @@ pub const DependencyGraph = struct {
         return false;
     }
 
-    /// Get all issues that are ready (open, not blocked by open issues, not deferred).
-    pub fn getReadyIssues(self: *Self) ![]Issue {
+    /// Get all issues that are ready (open, not blocked by open issues, optionally not deferred).
+    pub fn getReadyIssues(self: *Self, include_deferred: bool) ![]Issue {
         const now = std.time.timestamp();
 
         var results: std.ArrayListUnmanaged(Issue) = .{};
@@ -291,12 +291,18 @@ pub const DependencyGraph = struct {
         }
 
         for (self.store.getAllRef()) |issue| {
-            // Must be open
-            if (!statusEql(issue.status, .open)) continue;
+            // Must be open (or deferred if include_deferred is set)
+            if (statusEql(issue.status, .deferred)) {
+                if (!include_deferred) continue;
+            } else if (!statusEql(issue.status, .open)) {
+                continue;
+            }
 
-            // Must not be deferred to future
-            if (issue.defer_until.value) |defer_time| {
-                if (defer_time > now) continue;
+            // Must not be deferred to future (unless including deferred)
+            if (!include_deferred) {
+                if (issue.defer_until.value) |defer_time| {
+                    if (defer_time > now) continue;
+                }
             }
 
             // Must not have any open blockers
@@ -589,7 +595,7 @@ test "DependencyGraph getReadyIssues excludes blocked" {
         .thread_id = null,
     });
 
-    const ready = try graph.getReadyIssues();
+    const ready = try graph.getReadyIssues(false);
     defer graph.freeIssues(ready);
 
     try std.testing.expectEqual(@as(usize, 2), ready.len);
@@ -622,7 +628,7 @@ test "DependencyGraph getReadyIssues includes when blocker closed" {
         .thread_id = null,
     });
 
-    const ready = try graph.getReadyIssues();
+    const ready = try graph.getReadyIssues(false);
     defer graph.freeIssues(ready);
 
     try std.testing.expectEqual(@as(usize, 1), ready.len);

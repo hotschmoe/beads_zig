@@ -341,6 +341,8 @@ pub const IssueStore = struct {
         desc_contains: ?[]const u8 = null,
         notes_contains: ?[]const u8 = null,
         include_tombstones: bool = false,
+        overdue: bool = false,
+        include_deferred: bool = false,
         limit: ?u32 = null,
         offset: ?u32 = null,
         order_by: OrderBy = .created_at,
@@ -371,7 +373,14 @@ pub const IssueStore = struct {
 
             // Apply filters
             if (filters.status) |s| {
-                if (!statusEql(issue.status, s)) continue;
+                // When include_deferred is set, allow deferred issues through even when filtering for open
+                if (!statusEql(issue.status, s)) {
+                    if (filters.include_deferred and statusEql(issue.status, .deferred)) {
+                        // Allow deferred issues through
+                    } else {
+                        continue;
+                    }
+                }
             }
             if (filters.priority) |p| {
                 if (issue.priority.value != p.value) continue;
@@ -429,6 +438,14 @@ pub const IssueStore = struct {
             if (filters.notes_contains) |query| {
                 if (issue.notes) |notes| {
                     if (!containsIgnoreCase(notes, query)) continue;
+                } else continue;
+            }
+
+            // Overdue filter: only include issues past their due date
+            if (filters.overdue) {
+                const now = std.time.timestamp();
+                if (issue.due_at.value) |due_time| {
+                    if (due_time >= now) continue;
                 } else continue;
             }
 
