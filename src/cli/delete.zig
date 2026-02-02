@@ -22,6 +22,24 @@ const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 const DependencyGraph = common.DependencyGraph;
 const Wal = storage.Wal;
+const Output = @import("../output/mod.zig").Output;
+
+/// Output a list of IDs, one per line (used for quiet/robot output).
+fn outputIdList(output: *Output, ids: []const []const u8) !void {
+    for (ids) |id| {
+        try output.raw(id);
+        try output.raw("\n");
+    }
+}
+
+/// Create a slice of IDs from the ArrayList (for JSON output).
+fn createIdSlice(allocator: std.mem.Allocator, ids: std.ArrayListUnmanaged([]const u8)) ![]const []const u8 {
+    const id_slice = try allocator.alloc([]const u8, ids.items.len);
+    for (ids.items, 0..) |id, i| {
+        id_slice[i] = id;
+    }
+    return id_slice;
+}
 
 /// Truncate the WAL after hard delete to prevent deleted issues from reappearing.
 fn truncateWalIfNeeded(hard: bool, deleted_count: usize, beads_dir: []const u8, allocator: std.mem.Allocator) void {
@@ -44,7 +62,6 @@ pub const DeleteError = error{
 
 pub const DeleteResult = struct {
     success: bool,
-    id: ?[]const u8 = null,
     ids: ?[]const []const u8 = null,
     deleted_count: ?usize = null,
     message: ?[]const u8 = null,
@@ -165,11 +182,8 @@ pub fn run(
     // Dry run mode - just report what would be deleted
     if (delete_args.dry_run) {
         if (structured_output) {
-            var id_slice = try allocator.alloc([]const u8, ids_to_delete.items.len);
+            const id_slice = try createIdSlice(allocator, ids_to_delete);
             defer allocator.free(id_slice);
-            for (ids_to_delete.items, 0..) |id, i| {
-                id_slice[i] = id;
-            }
             try ctx.output.printJson(DeleteResult{
                 .success = true,
                 .ids = id_slice,
@@ -180,15 +194,9 @@ pub fn run(
         } else if (global.robot) {
             try ctx.output.raw("DRY_RUN\t");
             try ctx.output.print("{d}\n", .{ids_to_delete.items.len});
-            for (ids_to_delete.items) |id| {
-                try ctx.output.raw(id);
-                try ctx.output.raw("\n");
-            }
+            try outputIdList(&ctx.output, ids_to_delete.items);
         } else if (global.quiet) {
-            for (ids_to_delete.items) |id| {
-                try ctx.output.raw(id);
-                try ctx.output.raw("\n");
-            }
+            try outputIdList(&ctx.output, ids_to_delete.items);
         } else {
             try ctx.output.print("Would delete {d} issue(s):\n", .{ids_to_delete.items.len});
             for (ids_to_delete.items) |id| {
@@ -240,11 +248,8 @@ pub fn run(
 
     // Output result
     if (structured_output) {
-        var id_slice = try allocator.alloc([]const u8, ids_to_delete.items.len);
+        const id_slice = try createIdSlice(allocator, ids_to_delete);
         defer allocator.free(id_slice);
-        for (ids_to_delete.items, 0..) |id, i| {
-            id_slice[i] = id;
-        }
         try ctx.output.printJson(DeleteResult{
             .success = deleted_count > 0,
             .ids = id_slice,
@@ -253,15 +258,9 @@ pub fn run(
     } else if (global.robot) {
         try ctx.output.raw("OK\t");
         try ctx.output.print("{d}\n", .{deleted_count});
-        for (ids_to_delete.items) |id| {
-            try ctx.output.raw(id);
-            try ctx.output.raw("\n");
-        }
+        try outputIdList(&ctx.output, ids_to_delete.items);
     } else if (global.quiet) {
-        for (ids_to_delete.items) |id| {
-            try ctx.output.raw(id);
-            try ctx.output.raw("\n");
-        }
+        try outputIdList(&ctx.output, ids_to_delete.items);
     } else {
         if (deleted_count == 1 and ids_to_delete.items.len == 1) {
             if (delete_args.hard) {
@@ -291,12 +290,15 @@ test "DeleteError enum exists" {
 }
 
 test "DeleteResult struct works" {
+    const ids = [_][]const u8{"bd-abc123"};
     const result = DeleteResult{
         .success = true,
-        .id = "bd-abc123",
+        .ids = &ids,
+        .deleted_count = 1,
     };
     try std.testing.expect(result.success);
-    try std.testing.expectEqualStrings("bd-abc123", result.id.?);
+    try std.testing.expectEqual(@as(usize, 1), result.ids.?.len);
+    try std.testing.expectEqualStrings("bd-abc123", result.ids.?[0]);
 }
 
 test "run detects uninitialized workspace" {
