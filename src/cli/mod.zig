@@ -150,6 +150,8 @@ pub const runHistory = history.run;
 pub const AuditError = audit.AuditError;
 pub const AuditResult = audit.AuditResult;
 pub const runAudit = audit.run;
+pub const AuditArgs = args.AuditArgs;
+pub const AuditSubcommand = args.AuditSubcommand;
 
 pub const ChangelogError = changelog.ChangelogError;
 pub const ChangelogResult = changelog.ChangelogResult;
@@ -163,6 +165,7 @@ pub const runInfo = info.run;
 pub const StatsError = stats.StatsError;
 pub const StatsResult = stats.StatsResult;
 pub const runStats = stats.run;
+pub const StatsArgs = args.StatsArgs;
 
 pub const DoctorError = doctor.DoctorError;
 pub const DoctorResult = doctor.DoctorResult;

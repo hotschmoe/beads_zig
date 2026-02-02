@@ -208,9 +208,9 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .stats => {
-            cli.runStats(result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+        .stats => |stats_args| {
+            cli.runStats(stats_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError, error.GitError => std.process.exit(1),
                 else => return err,
             };
         },
@@ -258,7 +258,7 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         },
         .audit => |audit_args| {
             cli.runAudit(audit_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                error.WorkspaceNotInitialized, error.StorageError, error.InvalidKind, error.EntryNotFound => std.process.exit(1),
                 else => return err,
             };
         },

@@ -38,7 +38,7 @@ pub const Command = union(enum) {
     // Workspace
     init: InitArgs,
     info: void,
-    stats: void,
+    stats: StatsArgs,
     doctor: void,
     config: ConfigArgs,
     orphans: OrphansArgs,
@@ -113,6 +113,12 @@ pub const Command = union(enum) {
 /// Init command arguments.
 pub const InitArgs = struct {
     prefix: []const u8 = "bd",
+};
+
+/// Stats command arguments.
+pub const StatsArgs = struct {
+    activity: bool = false, // Show git-based activity statistics
+    activity_hours: u32 = 24, // Hours to look back for activity stats (default 24)
 };
 
 /// Create command arguments.
@@ -474,9 +480,43 @@ pub const HistoryArgs = struct {
     id: []const u8,
 };
 
+/// Audit subcommand variants.
+pub const AuditSubcommand = union(enum) {
+    /// Record an LLM/tool interaction for training data.
+    record: struct {
+        kind: []const u8, // "llm_call" or "tool_call"
+        issue_id: ?[]const u8 = null, // Optional issue context
+        model: ?[]const u8 = null, // Model name (for llm_call)
+        prompt: ?[]const u8 = null, // Input prompt (for llm_call)
+        response: ?[]const u8 = null, // Output response (for llm_call)
+        tool_name: ?[]const u8 = null, // Tool name (for tool_call)
+        exit_code: ?i32 = null, // Exit code (for tool_call)
+        metadata: ?[]const u8 = null, // Additional JSON metadata
+    },
+    /// Label an audit entry for quality tracking.
+    label: struct {
+        entry_id: i64, // Event ID to label
+        label_value: []const u8, // e.g., "good", "bad", "neutral"
+        reason: ?[]const u8 = null, // Explanation for the label
+    },
+    /// View audit log for a specific issue.
+    log: struct {
+        issue_id: []const u8,
+        limit: ?u32 = null,
+    },
+    /// Summary of audit data over time period.
+    summary: struct {
+        days: u32 = 7, // Number of days to summarize
+    },
+    /// Legacy: show project-wide audit log (default behavior).
+    list: struct {
+        limit: ?u32 = null,
+    },
+};
+
 /// Audit command arguments.
 pub const AuditArgs = struct {
-    limit: ?u32 = null,
+    subcommand: AuditSubcommand,
 };
 
 /// Changelog command arguments.
@@ -804,7 +844,7 @@ pub const ArgParser = struct {
             return .{ .info = {} };
         }
         if (std.mem.eql(u8, cmd, "stats")) {
-            return .{ .stats = {} };
+            return .{ .stats = try self.parseStatsArgs() };
         }
         if (std.mem.eql(u8, cmd, "doctor")) {
             return .{ .doctor = {} };
@@ -964,6 +1004,18 @@ pub const ArgParser = struct {
                 result.prefix = self.next() orelse return error.MissingFlagValue;
             } else if (self.peekPositional()) |_| {
                 result.prefix = self.next().?;
+            } else break;
+        }
+        return result;
+    }
+
+    fn parseStatsArgs(self: *Self) ParseError!StatsArgs {
+        var result = StatsArgs{};
+        while (self.hasNext()) {
+            if (self.consumeFlag("-a", "--activity")) {
+                result.activity = true;
+            } else if (self.consumeFlag(null, "--activity-hours")) {
+                result.activity_hours = try self.consumeU32() orelse return error.MissingFlagValue;
             } else break;
         }
         return result;
@@ -1550,13 +1602,108 @@ pub const ArgParser = struct {
     }
 
     fn parseAuditArgs(self: *Self) ParseError!AuditArgs {
-        var result = AuditArgs{};
-        while (self.hasNext()) {
-            if (try self.parseLimitFlag()) |limit| {
-                result.limit = limit;
-            } else break;
+        // Check for subcommand
+        const subcmd = self.next() orelse {
+            // Default: list with no limit
+            return .{ .subcommand = .{ .list = .{ .limit = null } } };
+        };
+
+        // Handle --limit flag at top level (legacy support)
+        if (std.mem.startsWith(u8, subcmd, "-")) {
+            // Put it back and parse as list subcommand with limit
+            self.index -= 1;
+            var limit: ?u32 = null;
+            while (self.hasNext()) {
+                if (try self.parseLimitFlag()) |l| {
+                    limit = l;
+                } else break;
+            }
+            return .{ .subcommand = .{ .list = .{ .limit = limit } } };
         }
-        return result;
+
+        if (std.mem.eql(u8, subcmd, "record")) {
+            const kind = self.next() orelse return error.MissingRequiredArgument;
+            var result = AuditSubcommand{ .record = .{ .kind = kind } };
+
+            while (self.hasNext()) {
+                if (self.consumeFlag("-i", "--issue")) {
+                    result.record.issue_id = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-m", "--model")) {
+                    result.record.model = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-p", "--prompt")) {
+                    result.record.prompt = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-r", "--response")) {
+                    result.record.response = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-t", "--tool-name")) {
+                    result.record.tool_name = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-e", "--exit-code")) {
+                    const exit_str = self.next() orelse return error.MissingFlagValue;
+                    result.record.exit_code = std.fmt.parseInt(i32, exit_str, 10) catch return error.InvalidFlagValue;
+                } else if (self.consumeFlag(null, "--metadata")) {
+                    result.record.metadata = self.next() orelse return error.MissingFlagValue;
+                } else break;
+            }
+            return .{ .subcommand = result };
+        }
+
+        if (std.mem.eql(u8, subcmd, "label")) {
+            const entry_id_str = self.next() orelse return error.MissingRequiredArgument;
+            const entry_id = std.fmt.parseInt(i64, entry_id_str, 10) catch return error.InvalidArgument;
+            var label_value: ?[]const u8 = null;
+            var reason: ?[]const u8 = null;
+
+            while (self.hasNext()) {
+                if (self.consumeFlag("-l", "--label")) {
+                    label_value = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-r", "--reason")) {
+                    reason = self.next() orelse return error.MissingFlagValue;
+                } else if (self.peekPositional()) |_| {
+                    if (label_value == null) {
+                        label_value = self.next().?;
+                    } else break;
+                } else break;
+            }
+
+            if (label_value == null) return error.MissingRequiredArgument;
+            return .{ .subcommand = .{ .label = .{
+                .entry_id = entry_id,
+                .label_value = label_value.?,
+                .reason = reason,
+            } } };
+        }
+
+        if (std.mem.eql(u8, subcmd, "log")) {
+            const issue_id = self.next() orelse return error.MissingRequiredArgument;
+            var limit: ?u32 = null;
+            while (self.hasNext()) {
+                if (try self.parseLimitFlag()) |l| {
+                    limit = l;
+                } else break;
+            }
+            return .{ .subcommand = .{ .log = .{ .issue_id = issue_id, .limit = limit } } };
+        }
+
+        if (std.mem.eql(u8, subcmd, "summary")) {
+            var days: u32 = 7;
+            while (self.hasNext()) {
+                if (self.consumeFlag("-d", "--days")) {
+                    days = try self.consumeU32() orelse return error.MissingFlagValue;
+                } else break;
+            }
+            return .{ .subcommand = .{ .summary = .{ .days = days } } };
+        }
+
+        if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
+            var limit: ?u32 = null;
+            while (self.hasNext()) {
+                if (try self.parseLimitFlag()) |l| {
+                    limit = l;
+                } else break;
+            }
+            return .{ .subcommand = .{ .list = .{ .limit = limit } } };
+        }
+
+        return error.UnknownSubcommand;
     }
 
     fn parseChangelogArgs(self: *Self) ParseError!ChangelogArgs {
@@ -2482,9 +2629,13 @@ test "parse audit command" {
 test "parse audit command with limit" {
     const args = [_][]const u8{ "audit", "--limit", "50" };
     var parser = ArgParser.init(std.testing.allocator, &args);
-    const result = try parser.parse();
+    var result = try parser.parse();
+    defer result.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(u32, 50), result.command.audit.limit.?);
+    switch (result.command.audit.subcommand) {
+        .list => |list_args| try std.testing.expectEqual(@as(u32, 50), list_args.limit.?),
+        else => try std.testing.expect(false),
+    }
 }
 
 test "parse sync command" {

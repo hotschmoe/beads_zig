@@ -1,6 +1,8 @@
 //! Stats command for beads_zig.
 //!
 //! `bz stats` - Show project statistics
+//! `bz stats --activity` - Show git-based activity statistics
+//! `bz stats --activity-hours 48` - Show activity for last 48 hours
 
 const std = @import("std");
 const common = @import("common.zig");
@@ -12,6 +14,7 @@ pub const StatsError = error{
     WorkspaceNotInitialized,
     StorageError,
     OutOfMemory,
+    GitError,
 };
 
 pub const StatsResult = struct {
@@ -22,15 +25,32 @@ pub const StatsResult = struct {
     by_status: ?[]const CountEntry = null,
     by_priority: ?[]const CountEntry = null,
     by_type: ?[]const CountEntry = null,
+    activity: ?ActivityStats = null,
     message: ?[]const u8 = null,
 
     pub const CountEntry = struct {
         key: []const u8,
         count: usize,
     };
+
+    pub const ActivityStats = struct {
+        period_hours: u32,
+        git_commits: usize,
+        issues_created: usize,
+        issues_closed: usize,
+        issues_updated: usize,
+        commits_with_issue_refs: usize,
+        issue_refs: ?[]const IssueRef = null,
+
+        pub const IssueRef = struct {
+            issue_id: []const u8,
+            commit_count: usize,
+        };
+    };
 };
 
 pub fn run(
+    stats_args: args.StatsArgs,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
@@ -109,6 +129,15 @@ pub fn run(
         try type_list.append(allocator, .{ .key = entry.key_ptr.*, .count = entry.value_ptr.* });
     }
 
+    // Activity stats (if requested)
+    var activity_stats: ?StatsResult.ActivityStats = null;
+    var issue_refs_list: std.ArrayListUnmanaged(StatsResult.ActivityStats.IssueRef) = .{};
+    defer issue_refs_list.deinit(allocator);
+
+    if (stats_args.activity) {
+        activity_stats = try getActivityStats(allocator, &ctx, stats_args.activity_hours, &issue_refs_list);
+    }
+
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(StatsResult{
             .success = true,
@@ -118,6 +147,7 @@ pub fn run(
             .by_status = status_list.items,
             .by_priority = priority_list.items,
             .by_type = type_list.items,
+            .activity = activity_stats,
         });
     } else if (!global.quiet) {
         try ctx.output.println("Issue Statistics", .{});
@@ -145,7 +175,172 @@ pub fn run(
                 try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
             }
         }
+
+        if (activity_stats) |activity| {
+            try ctx.output.print("\nActivity (last {d} hours):\n", .{activity.period_hours});
+            try ctx.output.print("  Git commits:           {d}\n", .{activity.git_commits});
+            try ctx.output.print("  Issues created:        {d}\n", .{activity.issues_created});
+            try ctx.output.print("  Issues closed:         {d}\n", .{activity.issues_closed});
+            try ctx.output.print("  Issues updated:        {d}\n", .{activity.issues_updated});
+            try ctx.output.print("  Commits with refs:     {d}\n", .{activity.commits_with_issue_refs});
+
+            if (activity.issue_refs) |refs| {
+                if (refs.len > 0) {
+                    try ctx.output.print("\n  Referenced Issues:\n", .{});
+                    for (refs[0..@min(10, refs.len)]) |ref| {
+                        try ctx.output.print("    {s: <12} {d} commits\n", .{ ref.issue_id, ref.commit_count });
+                    }
+                    if (refs.len > 10) {
+                        try ctx.output.print("    ... and {d} more\n", .{refs.len - 10});
+                    }
+                }
+            }
+        }
     }
+}
+
+fn getActivityStats(
+    allocator: std.mem.Allocator,
+    ctx: *CommandContext,
+    hours: u32,
+    issue_refs_list: *std.ArrayListUnmanaged(StatsResult.ActivityStats.IssueRef),
+) !StatsResult.ActivityStats {
+    const now = std.time.timestamp();
+    const since = now - @as(i64, @intCast(hours)) * 60 * 60;
+
+    // Count issue activity in the time period
+    var issues_created: usize = 0;
+    var issues_closed: usize = 0;
+    var issues_updated: usize = 0;
+
+    for (ctx.store.issues.items) |issue| {
+        if (issue.status.eql(.tombstone)) continue;
+
+        if (issue.created_at.value >= since) {
+            issues_created += 1;
+        }
+        if (issue.closed_at.value) |closed_ts| {
+            if (closed_ts >= since) {
+                issues_closed += 1;
+            }
+        }
+        if (issue.updated_at.value >= since and issue.created_at.value < since) {
+            issues_updated += 1;
+        }
+    }
+
+    // Get git commit stats
+    var git_commits: usize = 0;
+    var commits_with_refs: usize = 0;
+    var issue_ref_counts: std.StringHashMapUnmanaged(usize) = .{};
+    defer issue_ref_counts.deinit(allocator);
+
+    // Run git log to get recent commits
+    const git_result = runGitLog(allocator, hours) catch {
+        // Git not available or not a git repo - return partial stats
+        return StatsResult.ActivityStats{
+            .period_hours = hours,
+            .git_commits = 0,
+            .issues_created = issues_created,
+            .issues_closed = issues_closed,
+            .issues_updated = issues_updated,
+            .commits_with_issue_refs = 0,
+            .issue_refs = null,
+        };
+    };
+    defer allocator.free(git_result);
+
+    // Parse git log output
+    var lines = std.mem.splitScalar(u8, git_result, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        git_commits += 1;
+
+        // Look for issue references (bd-xxx pattern)
+        var found_ref = false;
+        var i: usize = 0;
+        while (i < line.len) {
+            // Look for "bd-" or similar prefix
+            if (i + 3 < line.len and
+                (std.mem.eql(u8, line[i .. i + 3], "bd-") or std.mem.eql(u8, line[i .. i + 3], "BD-")))
+            {
+                // Extract the issue ID
+                const start = i;
+                i += 3;
+                while (i < line.len and (std.ascii.isAlphanumeric(line[i]) or line[i] == '-' or line[i] == '.')) {
+                    i += 1;
+                }
+                const issue_id = line[start..i];
+                if (issue_id.len > 3) {
+                    // Normalize to lowercase
+                    var normalized: [32]u8 = undefined;
+                    const len = @min(issue_id.len, 32);
+                    for (0..len) |j| {
+                        normalized[j] = std.ascii.toLower(issue_id[j]);
+                    }
+                    const key = normalized[0..len];
+
+                    // Check if this issue exists in our store
+                    if (ctx.store.exists(key) catch false) {
+                        const entry = try issue_ref_counts.getOrPutValue(allocator, key, 0);
+                        entry.value_ptr.* += 1;
+                        found_ref = true;
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+        if (found_ref) {
+            commits_with_refs += 1;
+        }
+    }
+
+    // Convert issue refs to array
+    var it = issue_ref_counts.iterator();
+    while (it.next()) |entry| {
+        try issue_refs_list.append(allocator, .{
+            .issue_id = entry.key_ptr.*,
+            .commit_count = entry.value_ptr.*,
+        });
+    }
+
+    // Sort by commit count descending
+    std.mem.sortUnstable(StatsResult.ActivityStats.IssueRef, issue_refs_list.items, {}, struct {
+        fn lessThan(_: void, a: StatsResult.ActivityStats.IssueRef, b: StatsResult.ActivityStats.IssueRef) bool {
+            return a.commit_count > b.commit_count;
+        }
+    }.lessThan);
+
+    return StatsResult.ActivityStats{
+        .period_hours = hours,
+        .git_commits = git_commits,
+        .issues_created = issues_created,
+        .issues_closed = issues_closed,
+        .issues_updated = issues_updated,
+        .commits_with_issue_refs = commits_with_refs,
+        .issue_refs = if (issue_refs_list.items.len > 0) issue_refs_list.items else null,
+    };
+}
+
+fn runGitLog(allocator: std.mem.Allocator, hours: u32) ![]const u8 {
+    var buf: [32]u8 = undefined;
+    const since_arg = std.fmt.bufPrint(&buf, "--since={d}.hours.ago", .{hours}) catch unreachable;
+
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "git", "log", "--oneline", since_arg },
+        .cwd = null,
+    }) catch return StatsError.GitError;
+
+    defer allocator.free(result.stderr);
+
+    if (result.term.Exited != 0) {
+        allocator.free(result.stdout);
+        return StatsError.GitError;
+    }
+
+    return result.stdout;
 }
 
 // --- Tests ---
@@ -169,8 +364,47 @@ test "StatsResult struct works" {
 test "run detects uninitialized workspace" {
     const allocator = std.testing.allocator;
 
+    const stats_args = args.StatsArgs{};
     const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
-    const result = run(global, allocator);
+    const result = run(stats_args, global, allocator);
     try std.testing.expectError(StatsError.WorkspaceNotInitialized, result);
+}
+
+test "StatsArgs default values" {
+    const stats_args = args.StatsArgs{};
+    try std.testing.expect(!stats_args.activity);
+    try std.testing.expectEqual(@as(u32, 24), stats_args.activity_hours);
+}
+
+test "parse stats with activity flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "stats", "--activity" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .stats => |s| {
+            try std.testing.expect(s.activity);
+            try std.testing.expectEqual(@as(u32, 24), s.activity_hours);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse stats with activity-hours flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "stats", "--activity", "--activity-hours", "48" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .stats => |s| {
+            try std.testing.expect(s.activity);
+            try std.testing.expectEqual(@as(u32, 48), s.activity_hours);
+        },
+        else => try std.testing.expect(false),
+    }
 }
