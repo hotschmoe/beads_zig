@@ -2,6 +2,7 @@
 //!
 //! `bz upgrade` - Upgrade to latest release from GitHub
 //! `bz upgrade --check` - Check for updates without installing
+//! `bz upgrade --dry-run` - Show what would be updated without installing
 //! `bz upgrade --version 0.2.0` - Upgrade to specific version
 //! `bz upgrade --no-verify` - Skip checksum verification
 //!
@@ -40,6 +41,10 @@ pub const UpgradeResult = struct {
     upgraded: bool = false,
     checksum_verified: bool = false,
     message: ?[]const u8 = null,
+    // Dry-run specific fields
+    dry_run: bool = false,
+    would_download: ?[]const u8 = null,
+    install_path: ?[]const u8 = null,
 };
 
 const GITHUB_OWNER = "hotschmoe";
@@ -82,6 +87,8 @@ pub fn run(
 
     if (upgrade_args.check_only) {
         try runCheck(&out, structured_output, allocator);
+    } else if (upgrade_args.dry_run) {
+        try runDryRun(&out, structured_output, target.?, upgrade_args.version, allocator);
     } else if (upgrade_args.version) |target_version| {
         try runUpgradeToVersion(&out, structured_output, global.verbose > 0, target_version, target.?, upgrade_args.verify, upgrade_args.force, allocator);
     } else {
@@ -130,6 +137,103 @@ fn runCheck(
         } else {
             try out.info("You are running the latest version.", .{});
         }
+    }
+}
+
+fn runDryRun(
+    out: *output.Output,
+    structured_output: bool,
+    target_platform: []const u8,
+    specific_version: ?[]const u8,
+    allocator: std.mem.Allocator,
+) !void {
+    // Determine target version
+    const target_version = blk: {
+        if (specific_version) |v| {
+            break :blk try allocator.dupe(u8, v);
+        }
+        break :blk fetchLatestVersion(allocator) catch |err| {
+            const msg = switch (err) {
+                error.NetworkError => "Failed to check for updates (network error)",
+                error.ParseError => "Failed to parse release information",
+                else => "Failed to check for updates",
+            };
+            if (structured_output) {
+                try out.printJson(UpgradeResult{
+                    .success = false,
+                    .current_version = VERSION,
+                    .dry_run = true,
+                    .message = msg,
+                });
+            } else {
+                try out.err("{s}", .{msg});
+            }
+            return;
+        };
+    };
+    defer allocator.free(target_version);
+
+    const update_available = !std.mem.eql(u8, target_version, VERSION) and isNewerVersion(target_version, VERSION);
+
+    // Build binary name and URL
+    const version_tag = blk: {
+        if (target_version.len > 0 and target_version[0] != 'v') {
+            break :blk try std.fmt.allocPrint(allocator, "v{s}", .{target_version});
+        }
+        break :blk try allocator.dupe(u8, target_version);
+    };
+    defer allocator.free(version_tag);
+
+    const binary_name = blk: {
+        if (std.mem.eql(u8, target_platform, "windows-x86_64")) {
+            break :blk try std.fmt.allocPrint(allocator, "bz-{s}.exe", .{target_platform});
+        }
+        break :blk try std.fmt.allocPrint(allocator, "bz-{s}", .{target_platform});
+    };
+    defer allocator.free(binary_name);
+
+    const binary_url = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ GITHUB_DOWNLOAD_URL, version_tag, binary_name });
+    defer allocator.free(binary_url);
+
+    // Get install path
+    const install_path = getSelfPath(allocator) catch {
+        if (structured_output) {
+            try out.printJson(UpgradeResult{
+                .success = false,
+                .current_version = VERSION,
+                .dry_run = true,
+                .message = "Could not determine current binary path",
+            });
+        } else {
+            try out.err("Could not determine current binary path", .{});
+        }
+        return;
+    };
+    defer allocator.free(install_path);
+
+    if (structured_output) {
+        try out.printJson(UpgradeResult{
+            .success = true,
+            .current_version = VERSION,
+            .latest_version = target_version,
+            .update_available = update_available,
+            .dry_run = true,
+            .would_download = binary_url,
+            .install_path = install_path,
+        });
+    } else {
+        try out.print("Current version: {s}\n", .{VERSION});
+        try out.print("Target version:  {s}", .{target_version});
+        if (update_available) {
+            try out.print(" (update available)\n", .{});
+        } else if (std.mem.eql(u8, target_version, VERSION)) {
+            try out.print(" (same version)\n", .{});
+        } else {
+            try out.print(" (older version)\n", .{});
+        }
+        try out.print("\n", .{});
+        try out.print("Would download: {s}\n", .{binary_url});
+        try out.print("Would install to: {s}\n", .{install_path});
     }
 }
 
@@ -686,4 +790,19 @@ test "parseChecksum parses hash-only format" {
 test "parseChecksum rejects invalid checksums" {
     try std.testing.expect(parseChecksum("tooshort") == null);
     try std.testing.expect(parseChecksum("zzzz0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == null);
+}
+
+test "UpgradeResult dry_run fields" {
+    const result = UpgradeResult{
+        .success = true,
+        .current_version = "0.1.0",
+        .latest_version = "0.2.0",
+        .update_available = true,
+        .dry_run = true,
+        .would_download = "https://example.com/bz-linux-x86_64",
+        .install_path = "/usr/local/bin/bz",
+    };
+    try std.testing.expect(result.dry_run);
+    try std.testing.expectEqualStrings("https://example.com/bz-linux-x86_64", result.would_download.?);
+    try std.testing.expectEqualStrings("/usr/local/bin/bz", result.install_path.?);
 }

@@ -74,6 +74,9 @@ pub fn run(
     // Check 8: WAL data integrity (CRC validation)
     try checks.append(allocator, try checkWalIntegrity(beads_dir, allocator));
 
+    // Check 9: Schema version compatibility
+    try checks.append(allocator, checkSchemaVersion(beads_dir, allocator));
+
     // Count results
     var passed: usize = 0;
     var failed: usize = 0;
@@ -278,6 +281,50 @@ fn checkJsonlIntegrityFromContext(ctx: *const CommandContext) DoctorResult.Check
         .name = "JSONL data integrity",
         .status = "warn",
         .message = "Corrupt entries detected. Run 'bz compact' to rebuild.",
+    };
+}
+
+fn checkSchemaVersion(beads_dir: []const u8, allocator: std.mem.Allocator) DoctorResult.Check {
+    const version = storage.checkSchemaVersion(allocator, beads_dir) catch |err| {
+        return switch (err) {
+            error.MetadataNotFound => .{
+                .name = "Schema version",
+                .status = "warn",
+                .message = "metadata.json not found, assuming version 1",
+            },
+            error.MetadataParseError => .{
+                .name = "Schema version",
+                .status = "fail",
+                .message = "metadata.json is corrupted",
+            },
+            else => .{
+                .name = "Schema version",
+                .status = "fail",
+                .message = "Failed to read metadata.json",
+            },
+        };
+    };
+
+    if (version > storage.CURRENT_SCHEMA_VERSION) {
+        return .{
+            .name = "Schema version",
+            .status = "fail",
+            .message = "Database schema is newer than this bz version. Please upgrade bz.",
+        };
+    }
+
+    if (version < storage.CURRENT_SCHEMA_VERSION) {
+        return .{
+            .name = "Schema version",
+            .status = "warn",
+            .message = "Database schema is older. Migrations available.",
+        };
+    }
+
+    return .{
+        .name = "Schema version",
+        .status = "pass",
+        .message = null,
     };
 }
 

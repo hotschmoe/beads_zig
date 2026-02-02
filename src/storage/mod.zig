@@ -84,6 +84,14 @@ pub const MmapError = mmap.MmapError;
 pub const NewlineScanner = simd.NewlineScanner;
 pub const LineIterator = simd.LineIterator;
 
+pub const migrations = @import("migrations.zig");
+pub const MigrationError = migrations.MigrationError;
+pub const MigrationResult = migrations.MigrationResult;
+pub const Metadata = migrations.Metadata;
+pub const migrateIfNeeded = migrations.migrateIfNeeded;
+pub const checkSchemaVersion = migrations.checkSchemaVersion;
+pub const CURRENT_SCHEMA_VERSION = migrations.CURRENT_SCHEMA_VERSION;
+
 test {
     std.testing.refAllDecls(@This());
 }

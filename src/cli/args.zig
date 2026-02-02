@@ -671,6 +671,7 @@ pub const QueryArgs = struct {
 /// Upgrade command arguments.
 pub const UpgradeArgs = struct {
     check_only: bool = false,
+    dry_run: bool = false, // Show what would be updated without installing
     version: ?[]const u8 = null,
     verify: bool = true, // Verify checksum (default: on)
     force: bool = false, // Force upgrade even if same version
@@ -1908,6 +1909,8 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (self.consumeFlag("-c", "--check")) {
                 result.check_only = true;
+            } else if (self.consumeFlag("-n", "--dry-run")) {
+                result.dry_run = true;
             } else if (self.consumeFlag("-V", "--version")) {
                 result.version = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag(null, "--no-verify")) {

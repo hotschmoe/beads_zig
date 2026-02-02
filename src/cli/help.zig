@@ -699,6 +699,30 @@ const commands = [_]CommandHelp{
         },
     },
     .{
+        .name = "upgrade",
+        .summary = "Upgrade bz to latest version",
+        .usage = "bz upgrade [--check] [--dry-run] [--version <version>] [--no-verify] [--force]",
+        .description =
+        \\Downloads and installs the latest bz release from GitHub.
+        \\Verifies SHA256 checksum by default for security.
+        ,
+        .flags = &[_]FlagHelp{
+            .{ .short = "-c", .long = "--check", .description = "Check for updates without installing" },
+            .{ .short = "-n", .long = "--dry-run", .description = "Show what would be updated without installing" },
+            .{ .short = "-V", .long = "--version", .arg = "VERSION", .description = "Upgrade to a specific version" },
+            .{ .short = null, .long = "--no-verify", .description = "Skip SHA256 checksum verification" },
+            .{ .short = "-f", .long = "--force", .description = "Force upgrade even if same version" },
+        },
+        .examples = &[_]ExampleHelp{
+            .{ .command = "bz upgrade", .description = "Upgrade to latest version" },
+            .{ .command = "bz upgrade --check", .description = "Check for updates" },
+            .{ .command = "bz upgrade --dry-run", .description = "Show what would be updated" },
+            .{ .command = "bz upgrade --version 0.2.0", .description = "Upgrade to specific version" },
+            .{ .command = "bz upgrade --no-verify", .description = "Skip checksum verification" },
+        },
+        .see_also = &[_][]const u8{"version"},
+    },
+    .{
         .name = "completions",
         .aliases = &[_][]const u8{"completion"},
         .summary = "Generate shell completions",
