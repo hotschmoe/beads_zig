@@ -60,6 +60,49 @@ pub fn runCommandLoop(allocator: Allocator, argv: []const []const u8, cwd: ?[]co
     return timer.elapsedMs();
 }
 
+/// Result of running commands with output capture
+pub const CaptureResult = struct {
+    elapsed_ms: i64,
+    last_output: ?[]u8,
+};
+
+/// Run a command N times, capturing stdout from the last run
+pub fn runCommandLoopCapture(allocator: Allocator, argv: []const []const u8, cwd: ?[]const u8, count: usize) !CaptureResult {
+    const timer = Timer.begin();
+    var last_output: ?[]u8 = null;
+
+    for (0..count) |i| {
+        var child = std.process.Child.init(argv, allocator);
+        child.cwd = cwd;
+        child.stderr_behavior = .Ignore;
+
+        // Capture stdout only on last iteration
+        if (i == count - 1) {
+            child.stdout_behavior = .Pipe;
+            _ = try child.spawn();
+
+            var output_buf: [4096]u8 = undefined;
+            const bytes_read = try child.stdout.?.readAll(&output_buf);
+            _ = try child.wait();
+
+            if (bytes_read > 0) {
+                const trimmed = std.mem.trim(u8, output_buf[0..bytes_read], "\n\r \t");
+                if (trimmed.len > 0) {
+                    last_output = try allocator.dupe(u8, trimmed);
+                }
+            }
+        } else {
+            child.stdout_behavior = .Ignore;
+            _ = try child.spawnAndWait();
+        }
+    }
+
+    return .{
+        .elapsed_ms = timer.elapsedMs(),
+        .last_output = last_output,
+    };
+}
+
 /// Temporary directory in sandbox/ with automatic cleanup
 pub const TempDir = struct {
     path: []u8,

@@ -178,7 +178,7 @@ pub fn runQuick(
     // Force quiet mode for q command unless structured output is specified
     var modified_global = global;
     if (!global.isStructuredOutput()) {
-        modified_global.silent = true;
+        modified_global.quiet = true;
     }
 
     try run(create_args, modified_global, allocator);
