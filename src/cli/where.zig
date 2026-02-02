@@ -64,21 +64,18 @@ pub fn run(global: args.GlobalOptions, allocator: std.mem.Allocator) WhereError!
         };
     };
 
-    // abs_path is a slice into abs_path_buf with the resolved path
-    const path_slice = abs_path;
-
     if (global.json) {
         out.printJson(WhereResult{
             .success = true,
-            .path = path_slice,
+            .path = abs_path,
         }) catch return WhereError.WriteError;
     } else if (!global.quiet) {
-        out.print("{s}\n", .{path_slice}) catch return WhereError.WriteError;
+        out.print("{s}\n", .{abs_path}) catch return WhereError.WriteError;
     }
 
     return WhereResult{
         .success = true,
-        .path = path_slice,
+        .path = abs_path,
     };
 }
 

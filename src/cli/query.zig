@@ -442,19 +442,10 @@ fn saveAllQueries(allocator: std.mem.Allocator, beads_dir: []const u8, queries: 
     errdefer std.fs.cwd().deleteFile(tmp_path) catch {};
 
     for (queries) |q| {
-        const json_bytes = std.json.Stringify.valueAlloc(allocator, q, .{}) catch {
-            file.close();
-            return error.StorageError;
-        };
+        const json_bytes = std.json.Stringify.valueAlloc(allocator, q, .{}) catch return error.StorageError;
         defer allocator.free(json_bytes);
-        file.writeAll(json_bytes) catch {
-            file.close();
-            return error.StorageError;
-        };
-        file.writeAll("\n") catch {
-            file.close();
-            return error.StorageError;
-        };
+        try file.writeAll(json_bytes);
+        try file.writeAll("\n");
     }
 
     try file.sync();
