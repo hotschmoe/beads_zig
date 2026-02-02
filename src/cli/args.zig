@@ -88,6 +88,12 @@ pub const Command = union(enum) {
     completions: CompletionsArgs,
     metrics: MetricsArgs,
 
+    // Saved Queries
+    query: QueryArgs,
+
+    // Self-upgrade
+    upgrade: UpgradeArgs,
+
     // Help
     help: HelpArgs,
 };
@@ -426,6 +432,37 @@ pub const ConfigArgs = struct {
     subcommand: ConfigSubcommand,
 };
 
+/// Query subcommand variants.
+pub const QuerySubcommand = union(enum) {
+    save: struct {
+        name: []const u8,
+        status: ?[]const u8 = null,
+        priority: ?[]const u8 = null,
+        issue_type: ?[]const u8 = null,
+        assignee: ?[]const u8 = null,
+        label: ?[]const u8 = null,
+        limit: ?u32 = null,
+    },
+    run: struct {
+        name: []const u8,
+    },
+    list: void,
+    delete: struct {
+        name: []const u8,
+    },
+};
+
+/// Query command arguments.
+pub const QueryArgs = struct {
+    subcommand: QuerySubcommand,
+};
+
+/// Upgrade command arguments.
+pub const UpgradeArgs = struct {
+    check_only: bool = false,
+    version: ?[]const u8 = null,
+};
+
 /// Orphans command arguments.
 pub const OrphansArgs = struct {
     limit: ?u32 = null,
@@ -711,6 +748,16 @@ pub const ArgParser = struct {
         }
         if (std.mem.eql(u8, cmd, "metrics")) {
             return .{ .metrics = try self.parseMetricsArgs() };
+        }
+
+        // Saved Queries
+        if (std.mem.eql(u8, cmd, "query")) {
+            return .{ .query = try self.parseQueryArgs() };
+        }
+
+        // Self-upgrade
+        if (std.mem.eql(u8, cmd, "upgrade")) {
+            return .{ .upgrade = try self.parseUpgradeArgs() };
         }
 
         // Help
@@ -1263,6 +1310,55 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
+            } else break;
+        }
+        return result;
+    }
+
+    fn parseQueryArgs(self: *Self) ParseError!QueryArgs {
+        const subcmd = self.next() orelse return error.MissingRequiredArgument;
+
+        if (std.mem.eql(u8, subcmd, "save")) {
+            const name = self.next() orelse return error.MissingRequiredArgument;
+            var save_args = QuerySubcommand{ .save = .{ .name = name } };
+
+            while (self.hasNext()) {
+                if (self.consumeFlag("-s", "--status")) {
+                    save_args.save.status = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-p", "--priority")) {
+                    save_args.save.priority = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-t", "--type")) {
+                    save_args.save.issue_type = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-a", "--assignee")) {
+                    save_args.save.assignee = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-l", "--label")) {
+                    save_args.save.label = self.next() orelse return error.MissingFlagValue;
+                } else if (try self.parseLimitFlag()) |limit| {
+                    save_args.save.limit = limit;
+                } else break;
+            }
+
+            return .{ .subcommand = save_args };
+        }
+        if (std.mem.eql(u8, subcmd, "run")) {
+            return .{ .subcommand = .{ .run = .{ .name = self.next() orelse return error.MissingRequiredArgument } } };
+        }
+        if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
+            return .{ .subcommand = .{ .list = {} } };
+        }
+        if (std.mem.eql(u8, subcmd, "delete") or std.mem.eql(u8, subcmd, "rm")) {
+            return .{ .subcommand = .{ .delete = .{ .name = self.next() orelse return error.MissingRequiredArgument } } };
+        }
+        return error.UnknownSubcommand;
+    }
+
+    fn parseUpgradeArgs(self: *Self) ParseError!UpgradeArgs {
+        var result = UpgradeArgs{};
+        while (self.hasNext()) {
+            if (self.consumeFlag("-c", "--check")) {
+                result.check_only = true;
+            } else if (self.consumeFlag("-V", "--version")) {
+                result.version = self.next() orelse return error.MissingFlagValue;
             } else break;
         }
         return result;

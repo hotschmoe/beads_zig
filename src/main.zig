@@ -262,6 +262,18 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .query => |query_args| {
+            cli.runQuery(query_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.QueryNotFound, error.QueryAlreadyExists, error.InvalidQueryName, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .upgrade => |upgrade_args| {
+            cli.runUpgrade(upgrade_args, result.global, allocator) catch |err| switch (err) {
+                error.NetworkError, error.UnsupportedPlatform, error.WriteError => std.process.exit(1),
+                else => return err,
+            };
+        },
     }
 }
 

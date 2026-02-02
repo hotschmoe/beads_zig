@@ -42,6 +42,8 @@ pub const schema = @import("schema.zig");
 pub const completions = @import("completions.zig");
 pub const metrics_cmd = @import("metrics.zig");
 pub const help = @import("help.zig");
+pub const query = @import("query.zig");
+pub const upgrade = @import("upgrade.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -196,6 +198,16 @@ pub const MetricsArgs = args.MetricsArgs;
 pub const HelpError = help.HelpError;
 pub const HelpResult = help.HelpResult;
 pub const runHelp = help.run;
+
+pub const QueryError = query.QueryError;
+pub const QueryResult = query.QueryResult;
+pub const runQuery = query.run;
+pub const QueryArgs = args.QueryArgs;
+
+pub const UpgradeError = upgrade.UpgradeError;
+pub const UpgradeResult = upgrade.UpgradeResult;
+pub const runUpgrade = upgrade.run;
+pub const UpgradeArgs = args.UpgradeArgs;
 
 test {
     std.testing.refAllDecls(@This());
