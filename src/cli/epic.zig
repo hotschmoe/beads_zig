@@ -526,10 +526,9 @@ fn runCloseEligible(
         // Actually close the epics
         var closed_count: usize = 0;
         const now = std.time.timestamp();
-        const IssueUpdate = @import("../storage/mod.zig").IssueStore.IssueUpdate;
 
         for (eligible_epics.items) |id| {
-            const updates = IssueUpdate{
+            const updates = storage.IssueStore.IssueUpdate{
                 .status = .closed,
                 .closed_at = now,
                 .close_reason = "all children closed",
