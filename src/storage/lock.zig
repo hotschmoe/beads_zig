@@ -344,11 +344,31 @@ fn unlockPosix(file: std.fs.File) !void {
 const LOCKFILE_EXCLUSIVE_LOCK: u32 = 0x00000002;
 const LOCKFILE_FAIL_IMMEDIATELY: u32 = 0x00000001;
 
+// Windows API declarations (not exported by std.os.windows.kernel32)
+const windows_lock = struct {
+    extern "kernel32" fn LockFileEx(
+        hFile: std.os.windows.HANDLE,
+        dwFlags: u32,
+        dwReserved: u32,
+        nNumberOfBytesToLockLow: u32,
+        nNumberOfBytesToLockHigh: u32,
+        lpOverlapped: *std.os.windows.OVERLAPPED,
+    ) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+
+    extern "kernel32" fn UnlockFileEx(
+        hFile: std.os.windows.HANDLE,
+        dwReserved: u32,
+        nNumberOfBytesToUnlockLow: u32,
+        nNumberOfBytesToUnlockHigh: u32,
+        lpOverlapped: *std.os.windows.OVERLAPPED,
+    ) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+};
+
 fn lockExclusiveWindows(file: std.fs.File) !void {
     const windows = std.os.windows;
     var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
 
-    const result = windows.kernel32.LockFileEx(
+    const result = windows_lock.LockFileEx(
         file.handle,
         LOCKFILE_EXCLUSIVE_LOCK,
         0, // reserved
@@ -366,7 +386,7 @@ fn tryLockExclusiveWindows(file: std.fs.File) !bool {
     const windows = std.os.windows;
     var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
 
-    const result = windows.kernel32.LockFileEx(
+    const result = windows_lock.LockFileEx(
         file.handle,
         LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
         0, // reserved
@@ -389,7 +409,7 @@ fn unlockWindows(file: std.fs.File) !void {
     const windows = std.os.windows;
     var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
 
-    const result = windows.kernel32.UnlockFileEx(
+    const result = windows_lock.UnlockFileEx(
         file.handle,
         0, // reserved
         1, // bytes to unlock low

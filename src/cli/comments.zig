@@ -186,6 +186,8 @@ fn runList(
 }
 
 fn getDefaultActor() []const u8 {
+    const builtin = @import("builtin");
+    if (builtin.os.tag == .windows) return "unknown";
     return std.posix.getenv("USER") orelse "unknown";
 }
 
