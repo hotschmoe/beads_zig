@@ -27,6 +27,49 @@ pub const BackupInfo = struct {
     modified: i64,
 };
 
+/// Collect backup files from the .beads directory.
+/// Returns a list of BackupInfo structs sorted by modified time (newest first).
+/// Caller is responsible for freeing the filenames and deiniting the list.
+fn collectBackups(beads_dir: []const u8, allocator: std.mem.Allocator) !?std.ArrayListUnmanaged(BackupInfo) {
+    var dir = std.fs.cwd().openDir(beads_dir, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer dir.close();
+
+    var backups: std.ArrayListUnmanaged(BackupInfo) = .{};
+    errdefer {
+        for (backups.items) |b| allocator.free(b.filename);
+        backups.deinit(allocator);
+    }
+
+    var iter = dir.iterate();
+    while (try iter.next()) |entry| {
+        // Match backup files: issues.jsonl.bak.* or issues.*.jsonl (but not issues.jsonl)
+        if (std.mem.startsWith(u8, entry.name, "issues.jsonl.bak") or
+            (std.mem.startsWith(u8, entry.name, "issues.") and
+            std.mem.endsWith(u8, entry.name, ".jsonl") and
+            !std.mem.eql(u8, entry.name, "issues.jsonl")))
+        {
+            const stat = dir.statFile(entry.name) catch continue;
+            try backups.append(allocator, .{
+                .filename = try allocator.dupe(u8, entry.name),
+                .size = stat.size,
+                .modified = @intCast(@divFloor(stat.mtime, std.time.ns_per_s)),
+            });
+        }
+    }
+
+    // Sort by modified time (newest first)
+    std.mem.sortUnstable(BackupInfo, backups.items, {}, struct {
+        fn lessThan(_: void, a: BackupInfo, b: BackupInfo) bool {
+            return a.modified > b.modified;
+        }
+    }.lessThan);
+
+    return backups;
+}
+
 pub const BackupResult = struct {
     success: bool,
     action: ?[]const u8 = null,
@@ -65,54 +108,23 @@ pub fn run(
 fn runList(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
     const beads_dir = std.fs.path.dirname(ctx.store.jsonl_path) orelse ".beads";
 
-    var backups: std.ArrayListUnmanaged(BackupInfo) = .{};
+    var backups = (try collectBackups(beads_dir, allocator)) orelse {
+        if (structured_output) {
+            try ctx.output.printJson(BackupResult{
+                .success = true,
+                .action = "list",
+                .backup_count = 0,
+                .message = "no backups found",
+            });
+        } else if (!quiet) {
+            try ctx.output.info("No backups found", .{});
+        }
+        return;
+    };
     defer {
         for (backups.items) |b| allocator.free(b.filename);
         backups.deinit(allocator);
     }
-
-    // Open the .beads directory and look for backup files
-    var dir = std.fs.cwd().openDir(beads_dir, .{ .iterate = true }) catch |err| {
-        if (err == error.FileNotFound) {
-            if (structured_output) {
-                try ctx.output.printJson(BackupResult{
-                    .success = true,
-                    .action = "list",
-                    .backup_count = 0,
-                    .message = "no backups found",
-                });
-            } else if (!quiet) {
-                try ctx.output.info("No backups found", .{});
-            }
-            return;
-        }
-        return err;
-    };
-    defer dir.close();
-
-    var iter = dir.iterate();
-    while (try iter.next()) |entry| {
-        // Look for backup files matching pattern: issues.jsonl.bak.* or issues.*.jsonl
-        if (std.mem.startsWith(u8, entry.name, "issues.jsonl.bak") or
-            (std.mem.startsWith(u8, entry.name, "issues.") and
-            std.mem.endsWith(u8, entry.name, ".jsonl") and
-            !std.mem.eql(u8, entry.name, "issues.jsonl")))
-        {
-            const stat = dir.statFile(entry.name) catch continue;
-            try backups.append(allocator, .{
-                .filename = try allocator.dupe(u8, entry.name),
-                .size = stat.size,
-                .modified = @intCast(@divFloor(stat.mtime, std.time.ns_per_s)),
-            });
-        }
-    }
-
-    // Sort by modified time (newest first)
-    std.mem.sortUnstable(BackupInfo, backups.items, {}, struct {
-        fn lessThan(_: void, a: BackupInfo, b: BackupInfo) bool {
-            return a.modified > b.modified;
-        }
-    }.lessThan);
 
     if (structured_output) {
         try ctx.output.printJson(BackupResult{
@@ -328,45 +340,22 @@ fn runRestore(ctx: *CommandContext, file: []const u8, dry_run: bool, structured_
 fn runPrune(ctx: *CommandContext, keep: u32, dry_run: bool, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
     const beads_dir = std.fs.path.dirname(ctx.store.jsonl_path) orelse ".beads";
 
-    var backups: std.ArrayListUnmanaged(BackupInfo) = .{};
+    var backups = (try collectBackups(beads_dir, allocator)) orelse {
+        if (structured_output) {
+            try ctx.output.printJson(BackupResult{
+                .success = true,
+                .action = "prune",
+                .pruned_count = 0,
+                .message = "no backups to prune",
+            });
+        } else if (!quiet) {
+            try ctx.output.info("No backups to prune", .{});
+        }
+        return;
+    };
     defer {
         for (backups.items) |b| allocator.free(b.filename);
         backups.deinit(allocator);
-    }
-
-    // Collect backup files
-    var dir = std.fs.cwd().openDir(beads_dir, .{ .iterate = true }) catch |err| {
-        if (err == error.FileNotFound) {
-            if (structured_output) {
-                try ctx.output.printJson(BackupResult{
-                    .success = true,
-                    .action = "prune",
-                    .pruned_count = 0,
-                    .message = "no backups to prune",
-                });
-            } else if (!quiet) {
-                try ctx.output.info("No backups to prune", .{});
-            }
-            return;
-        }
-        return err;
-    };
-    defer dir.close();
-
-    var iter = dir.iterate();
-    while (try iter.next()) |entry| {
-        if (std.mem.startsWith(u8, entry.name, "issues.jsonl.bak") or
-            (std.mem.startsWith(u8, entry.name, "issues.") and
-            std.mem.endsWith(u8, entry.name, ".jsonl") and
-            !std.mem.eql(u8, entry.name, "issues.jsonl")))
-        {
-            const stat = dir.statFile(entry.name) catch continue;
-            try backups.append(allocator, .{
-                .filename = try allocator.dupe(u8, entry.name),
-                .size = stat.size,
-                .modified = @intCast(@divFloor(stat.mtime, std.time.ns_per_s)),
-            });
-        }
     }
 
     if (backups.items.len <= keep) {
@@ -382,13 +371,6 @@ fn runPrune(ctx: *CommandContext, keep: u32, dry_run: bool, structured_output: b
         }
         return;
     }
-
-    // Sort by modified time (newest first)
-    std.mem.sortUnstable(BackupInfo, backups.items, {}, struct {
-        fn lessThan(_: void, a: BackupInfo, b: BackupInfo) bool {
-            return a.modified > b.modified;
-        }
-    }.lessThan);
 
     const to_prune = backups.items.len - keep;
 
