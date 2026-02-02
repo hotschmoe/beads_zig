@@ -75,4 +75,36 @@ pub fn build(b: *std.Build) void {
         .paths = &.{"src"},
     });
     fmt_step.dependOn(&fmt.step);
+
+    // Benchmark: bz-only workflow
+    const bench_bz = b.addExecutable(.{
+        .name = "bz-bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/bz_only.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(bench_bz);
+
+    const bench_step = b.step("bench", "Run bz workflow benchmark");
+    const bench_run = b.addRunArtifact(bench_bz);
+    bench_run.step.dependOn(b.getInstallStep());
+    bench_step.dependOn(&bench_run.step);
+
+    // Benchmark: bz vs br comparison
+    const bench_compare = b.addExecutable(.{
+        .name = "bz-bench-compare",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/bz_vs_br.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(bench_compare);
+
+    const bench_compare_step = b.step("bench-compare", "Run bz vs br comparison benchmark");
+    const bench_compare_run = b.addRunArtifact(bench_compare);
+    bench_compare_run.step.dependOn(b.getInstallStep());
+    bench_compare_step.dependOn(&bench_compare_run.step);
 }
