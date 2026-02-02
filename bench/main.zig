@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 /// Nanosecond-precision timer that reports milliseconds
@@ -85,7 +86,7 @@ pub fn findBz(allocator: Allocator) ![]const u8 {
         return path;
     } else |_| {}
 
-    const default = "zig-out/bin/bz";
+    const default = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
     std.fs.cwd().access(default, .{}) catch return error.BinaryNotFound;
 
     const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");

@@ -362,6 +362,14 @@ const windows_lock = struct {
         nNumberOfBytesToUnlockHigh: u32,
         lpOverlapped: *std.os.windows.OVERLAPPED,
     ) callconv(.winapi) std.os.windows.BOOL;
+
+    extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
+
+    extern "kernel32" fn OpenProcess(
+        dwDesiredAccess: u32,
+        bInheritHandle: std.os.windows.BOOL,
+        dwProcessId: u32,
+    ) callconv(.winapi) ?std.os.windows.HANDLE;
 };
 
 fn lockExclusiveWindows(file: std.fs.File) !void {
@@ -397,7 +405,7 @@ fn tryLockExclusiveWindows(file: std.fs.File) !bool {
 
     if (result == 0) {
         const err = windows.kernel32.GetLastError();
-        if (err == windows.Win32Error.ERROR_LOCK_VIOLATION) {
+        if (err == windows.Win32Error.LOCK_VIOLATION) {
             return false;
         }
         return error.LockFailed;
@@ -455,7 +463,7 @@ fn readPidFromLockFile(file: std.fs.File) ?i32 {
 /// Get the current process ID.
 fn getCurrentPid() i32 {
     if (builtin.os.tag == .windows) {
-        return @intCast(std.os.windows.kernel32.GetCurrentProcessId());
+        return @intCast(windows_lock.GetCurrentProcessId());
     } else if (builtin.os.tag == .linux) {
         return @bitCast(std.os.linux.getpid());
     } else {
@@ -490,7 +498,7 @@ fn isProcessAliveWindows(pid: i32) bool {
     // PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
-    const handle = windows.kernel32.OpenProcess(
+    const handle = windows_lock.OpenProcess(
         PROCESS_QUERY_LIMITED_INFORMATION,
         0, // bInheritHandle
         @intCast(pid),
