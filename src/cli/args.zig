@@ -672,6 +672,8 @@ pub const QueryArgs = struct {
 pub const UpgradeArgs = struct {
     check_only: bool = false,
     version: ?[]const u8 = null,
+    verify: bool = true, // Verify checksum (default: on)
+    force: bool = false, // Force upgrade even if same version
 };
 
 /// Orphans command arguments.
@@ -1908,6 +1910,12 @@ pub const ArgParser = struct {
                 result.check_only = true;
             } else if (self.consumeFlag("-V", "--version")) {
                 result.version = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--no-verify")) {
+                result.verify = false;
+            } else if (self.consumeFlag(null, "--verify")) {
+                result.verify = true;
+            } else if (self.consumeFlag("-f", "--force")) {
+                result.force = true;
             } else break;
         }
         return result;
