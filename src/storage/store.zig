@@ -327,6 +327,39 @@ pub const IssueStore = struct {
         try self.update(id, .{ .status = .tombstone }, now);
     }
 
+    /// Hard delete an issue by removing it from the store entirely.
+    /// Unlike soft delete (tombstone), this permanently removes the issue.
+    pub fn remove(self: *Self, id: []const u8) !void {
+        const idx = self.id_index.get(id) orelse return IssueStoreError.IssueNotFound;
+        if (idx >= self.issues.items.len) return IssueStoreError.IssueNotFound;
+
+        // Free the issue data
+        self.issues.items[idx].deinit(self.allocator);
+
+        // Remove from index (free the key)
+        if (self.id_index.fetchRemove(id)) |kv| {
+            self.allocator.free(kv.key);
+        }
+
+        // Remove from issues array using swap-remove for O(1)
+        _ = self.issues.swapRemove(idx);
+
+        // Update the index for the swapped element (if any)
+        if (idx < self.issues.items.len) {
+            const swapped_id = self.issues.items[idx].id;
+            if (self.id_index.getPtr(swapped_id)) |idx_ptr| {
+                idx_ptr.* = idx;
+            }
+        }
+
+        // Also remove from dirty_ids if present
+        if (self.dirty_ids.fetchRemove(id)) |kv| {
+            self.allocator.free(kv.key);
+        }
+
+        self.dirty = true;
+    }
+
     /// Filters for listing issues.
     pub const ListFilters = struct {
         status: ?Status = null,

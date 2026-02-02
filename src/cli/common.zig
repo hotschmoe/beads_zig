@@ -51,6 +51,7 @@ pub const CommandContext = struct {
         var output = Output.init(allocator, .{
             .json = global.json,
             .toon = global.toon,
+            .robot = global.robot,
             .quiet = global.quiet,
             .silent = global.silent,
             .no_color = global.no_color,
@@ -268,9 +269,12 @@ pub fn initOutput(allocator: std.mem.Allocator, global: args.GlobalOptions) Outp
     return Output.init(allocator, .{
         .json = global.json,
         .toon = global.toon,
+        .robot = global.robot,
         .quiet = global.quiet,
         .silent = global.silent,
         .no_color = global.no_color,
+        .wrap = global.wrap,
+        .stats = global.stats,
     });
 }
 

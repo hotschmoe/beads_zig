@@ -142,6 +142,12 @@ fn outputSuccess(
             .id = id,
             .action = action,
         });
+    } else if (global.robot) {
+        // Robot format: ACTION<TAB>ID
+        try output.raw(action);
+        try output.raw("\t");
+        try output.raw(id);
+        try output.raw("\n");
     } else if (global.quiet) {
         try output.raw(id);
         try output.raw("\n");

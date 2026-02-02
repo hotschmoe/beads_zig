@@ -9,6 +9,7 @@ const std = @import("std");
 pub const GlobalOptions = struct {
     json: bool = false,
     toon: bool = false,
+    robot: bool = false, // Line-oriented machine-readable output for scripting
     quiet: bool = false,
     silent: bool = false, // Suppress ALL output including errors (for tests)
     verbose: u8 = 0,
@@ -24,6 +25,11 @@ pub const GlobalOptions = struct {
     /// Returns true if structured output (JSON or TOON) is enabled.
     pub fn isStructuredOutput(self: GlobalOptions) bool {
         return self.json or self.toon;
+    }
+
+    /// Returns true if any machine-readable output is enabled.
+    pub fn isMachineOutput(self: GlobalOptions) bool {
+        return self.json or self.toon or self.robot;
     }
 };
 
@@ -170,7 +176,16 @@ pub const ReopenArgs = struct {
 
 /// Delete command arguments.
 pub const DeleteArgs = struct {
-    id: []const u8,
+    /// Single issue ID to delete (mutually exclusive with from_file).
+    id: ?[]const u8 = null,
+    /// Path to file containing issue IDs to delete (one per line).
+    from_file: ?[]const u8 = null,
+    /// Delete issue and all its dependents recursively.
+    cascade: bool = false,
+    /// Prune from database immediately instead of marking as tombstone.
+    hard: bool = false,
+    /// Preview what would be deleted without making changes.
+    dry_run: bool = false,
 };
 
 /// Add-batch command arguments.
@@ -674,6 +689,10 @@ pub const ArgParser = struct {
             global.stats = true;
             return true;
         }
+        if (std.mem.eql(u8, arg, "--robot")) {
+            global.robot = true;
+            return true;
+        }
 
         // Put back if not recognized
         self.index -= 1;
@@ -1012,8 +1031,30 @@ pub const ArgParser = struct {
     }
 
     fn parseDeleteArgs(self: *Self) ParseError!DeleteArgs {
-        const id = self.next() orelse return error.MissingRequiredArgument;
-        return .{ .id = id };
+        var result = DeleteArgs{};
+
+        while (self.hasNext()) {
+            if (self.consumeFlag("-f", "--from-file")) {
+                result.from_file = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--cascade")) {
+                result.cascade = true;
+            } else if (self.consumeFlag(null, "--hard")) {
+                result.hard = true;
+            } else if (self.consumeFlag(null, "--dry-run")) {
+                result.dry_run = true;
+            } else if (self.peekPositional()) |_| {
+                if (result.id == null) {
+                    result.id = self.next().?;
+                } else break;
+            } else break;
+        }
+
+        // Require either id or from_file
+        if (result.id == null and result.from_file == null) {
+            return error.MissingRequiredArgument;
+        }
+
+        return result;
     }
 
     fn parseAddBatchArgs(self: *Self) ParseError!AddBatchArgs {
@@ -1897,12 +1938,34 @@ test "parse reopen command" {
 }
 
 test "parse delete command" {
-    const args = [_][]const u8{ "delete", "bd-abc123" };
-    var parser = ArgParser.init(std.testing.allocator, &args);
+    const args_arr = [_][]const u8{ "delete", "bd-abc123" };
+    var parser = ArgParser.init(std.testing.allocator, &args_arr);
     const result = try parser.parse();
 
     try std.testing.expect(result.command == .delete);
-    try std.testing.expectEqualStrings("bd-abc123", result.command.delete.id);
+    try std.testing.expectEqualStrings("bd-abc123", result.command.delete.id.?);
+}
+
+test "parse delete command with flags" {
+    const args_arr = [_][]const u8{ "delete", "bd-abc123", "--cascade", "--dry-run" };
+    var parser = ArgParser.init(std.testing.allocator, &args_arr);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .delete);
+    try std.testing.expectEqualStrings("bd-abc123", result.command.delete.id.?);
+    try std.testing.expect(result.command.delete.cascade);
+    try std.testing.expect(result.command.delete.dry_run);
+    try std.testing.expect(!result.command.delete.hard);
+}
+
+test "parse delete command with from-file" {
+    const args_arr = [_][]const u8{ "delete", "--from-file", "ids.txt" };
+    var parser = ArgParser.init(std.testing.allocator, &args_arr);
+    const result = try parser.parse();
+
+    try std.testing.expect(result.command == .delete);
+    try std.testing.expect(result.command.delete.id == null);
+    try std.testing.expectEqualStrings("ids.txt", result.command.delete.from_file.?);
 }
 
 test "parse list command" {

@@ -21,6 +21,7 @@ pub const OutputMode = enum {
     rich, // Colors and formatting (TTY)
     json, // Structured JSON output
     quiet, // Minimal output (IDs only)
+    robot, // Line-oriented machine-readable output for scripting
 };
 
 /// ANSI color escape codes.
@@ -58,6 +59,7 @@ pub const Color = struct {
 pub const OutputOptions = struct {
     json: bool = false,
     toon: bool = false,
+    robot: bool = false, // Line-oriented machine-readable output for scripting
     quiet: bool = false,
     silent: bool = false, // Suppress ALL output including errors (for tests)
     no_color: bool = false,
@@ -88,6 +90,8 @@ pub const Output = struct {
         var mode: OutputMode = .plain;
         if (opts.json or opts.toon) {
             mode = .json;
+        } else if (opts.robot) {
+            mode = .robot;
         } else if (opts.quiet or opts.silent) {
             mode = .quiet;
         } else if (!opts.no_color and !checkNoColorEnv() and stdout.isTty()) {
@@ -166,6 +170,7 @@ pub const Output = struct {
             .quiet => try self.printIssueQuiet(issue),
             .rich => try self.printIssueRich(issue),
             .plain => try self.printIssuePlain(issue),
+            .robot => try self.printIssueRobot(issue),
         }
     }
 
@@ -176,6 +181,7 @@ pub const Output = struct {
             .quiet => try self.printIssueListQuiet(issues),
             .rich => try self.printIssueListRich(issues),
             .plain => try self.printIssueListPlain(issues),
+            .robot => try self.printIssueListRobot(issues),
         }
     }
 
@@ -438,6 +444,29 @@ pub const Output = struct {
     fn printIssueListQuiet(self: *Self, issues: []const Issue) !void {
         for (issues) |issue| {
             try self.writeFormatted("{s}\n", .{issue.id});
+        }
+    }
+
+    // ========================================================================
+    // Robot Mode Helpers (tab-separated, line-oriented for scripting)
+    // ========================================================================
+
+    /// Print single issue in robot format: tab-separated key fields on one line.
+    /// Format: ID<TAB>STATUS<TAB>PRIORITY<TAB>TYPE<TAB>TITLE
+    fn printIssueRobot(self: *Self, issue: Issue) !void {
+        try self.writeFormatted("{s}\t{s}\t{s}\t{s}\t{s}\n", .{
+            issue.id,
+            issue.status.toString(),
+            issue.priority.toString(),
+            issue.issue_type.toString(),
+            issue.title,
+        });
+    }
+
+    /// Print issue list in robot format: one issue per line, tab-separated fields.
+    fn printIssueListRobot(self: *Self, issues: []const Issue) !void {
+        for (issues) |issue| {
+            try self.printIssueRobot(issue);
         }
     }
 
