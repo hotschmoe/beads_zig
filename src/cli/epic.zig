@@ -63,6 +63,40 @@ const IssueInfo = struct {
     priority: u8,
 };
 
+const ChildCounts = struct {
+    total: usize,
+    closed: usize,
+};
+
+fn countEpicChildren(
+    graph: *DependencyGraph,
+    store: *common.IssueStore,
+    epic_id: []const u8,
+    allocator: std.mem.Allocator,
+) !ChildCounts {
+    const children = try graph.getDependents(epic_id);
+    defer graph.freeDependencies(children);
+
+    var total: usize = 0;
+    var closed: usize = 0;
+
+    for (children) |dep| {
+        if (dep.dep_type == .parent_child) {
+            total += 1;
+            const child = try store.get(dep.issue_id);
+            if (child) |c| {
+                var child_issue = c;
+                defer child_issue.deinit(allocator);
+                if (child_issue.status == .closed or child_issue.status == .tombstone) {
+                    closed += 1;
+                }
+            }
+        }
+    }
+
+    return .{ .total = total, .closed = closed };
+}
+
 pub fn run(
     epic_args: args.EpicArgs,
     global: args.GlobalOptions,
@@ -400,34 +434,15 @@ fn runStatus(
 
     for (ctx.store.issues.items) |issue| {
         if (issue.issue_type == .epic and issue.status != .tombstone) {
-            const children = try graph.getDependents(issue.id);
-            defer graph.freeDependencies(children);
-
-            var total: usize = 0;
-            var closed: usize = 0;
-
-            for (children) |dep| {
-                if (dep.dep_type == .parent_child) {
-                    total += 1;
-                    const child = try ctx.store.get(dep.issue_id);
-                    if (child) |c| {
-                        var child_issue = c;
-                        defer child_issue.deinit(allocator);
-                        if (child_issue.status == .closed or child_issue.status == .tombstone) {
-                            closed += 1;
-                        }
-                    }
-                }
-            }
-
-            const percent: u8 = if (total > 0) @intCast((closed * 100) / total) else 0;
-            const eligible = total > 0 and closed == total;
+            const counts = try countEpicChildren(&graph, &ctx.store, issue.id, allocator);
+            const percent: u8 = if (counts.total > 0) @intCast((counts.closed * 100) / counts.total) else 0;
+            const eligible = counts.total > 0 and counts.closed == counts.total;
 
             try epic_statuses.append(allocator, .{
                 .id = try allocator.dupe(u8, issue.id),
                 .title = try allocator.dupe(u8, issue.title),
-                .total = total,
-                .closed = closed,
+                .total = counts.total,
+                .closed = counts.closed,
                 .percent_complete = percent,
                 .eligible_for_close = eligible,
             });
@@ -444,21 +459,14 @@ fn runStatus(
             try ctx.output.println("No epics found", .{});
         } else {
             for (epic_statuses.items) |info| {
-                if (info.eligible_for_close) {
-                    try ctx.output.print("{s}: {d}/{d} complete ({d}%) [eligible for close]\n", .{
-                        info.id,
-                        info.closed,
-                        info.total,
-                        info.percent_complete,
-                    });
-                } else {
-                    try ctx.output.print("{s}: {d}/{d} complete ({d}%)\n", .{
-                        info.id,
-                        info.closed,
-                        info.total,
-                        info.percent_complete,
-                    });
-                }
+                const suffix: []const u8 = if (info.eligible_for_close) " [eligible for close]" else "";
+                try ctx.output.print("{s}: {d}/{d} complete ({d}%){s}\n", .{
+                    info.id,
+                    info.closed,
+                    info.total,
+                    info.percent_complete,
+                    suffix,
+                });
             }
         }
     }
@@ -489,28 +497,8 @@ fn runCloseEligible(
 
     for (ctx.store.issues.items) |issue| {
         if (issue.issue_type == .epic and issue.status != .tombstone and issue.status != .closed) {
-            const children = try graph.getDependents(issue.id);
-            defer graph.freeDependencies(children);
-
-            var total: usize = 0;
-            var closed: usize = 0;
-
-            for (children) |dep| {
-                if (dep.dep_type == .parent_child) {
-                    total += 1;
-                    const child = try ctx.store.get(dep.issue_id);
-                    if (child) |c| {
-                        var child_issue = c;
-                        defer child_issue.deinit(allocator);
-                        if (child_issue.status == .closed or child_issue.status == .tombstone) {
-                            closed += 1;
-                        }
-                    }
-                }
-            }
-
-            // Eligible if has children and all are closed
-            if (total > 0 and closed == total) {
+            const counts = try countEpicChildren(&graph, &ctx.store, issue.id, allocator);
+            if (counts.total > 0 and counts.closed == counts.total) {
                 try eligible_epics.append(allocator, try allocator.dupe(u8, issue.id));
             }
         }
@@ -518,13 +506,6 @@ fn runCloseEligible(
 
     if (dry_run) {
         if (structured_output) {
-            // Build list of epic IDs for JSON output
-            var id_list: std.ArrayListUnmanaged([]const u8) = .{};
-            defer id_list.deinit(allocator);
-            for (eligible_epics.items) |id| {
-                try id_list.append(allocator, id);
-            }
-
             try ctx.output.printJson(EpicResult{
                 .success = true,
                 .action = "dry-run",
