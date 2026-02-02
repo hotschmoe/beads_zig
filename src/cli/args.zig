@@ -749,8 +749,6 @@ pub const ArgParser = struct {
         var global = GlobalOptions{};
 
         // First pass: extract global flags from anywhere in the argument list
-        // and find the subcommand position
-        var cmd_index: ?usize = null;
         var filtered_indices: std.ArrayListUnmanaged(usize) = .{};
         defer filtered_indices.deinit(self.allocator);
 
@@ -779,10 +777,7 @@ pub const ArgParser = struct {
                 }
             }
 
-            // Not a global flag - check if it's the subcommand
-            if (cmd_index == null and !std.mem.startsWith(u8, arg, "-")) {
-                cmd_index = filtered_indices.items.len;
-            }
+            // Not a global flag - add to filtered list
             filtered_indices.append(self.allocator, i) catch return error.InvalidArgument;
             i += 1;
         }
@@ -886,72 +881,6 @@ pub const ArgParser = struct {
         } else if (std.mem.eql(u8, flag, "--lock-timeout")) {
             global.lock_timeout = std.fmt.parseInt(u32, value, 10) catch return error.InvalidArgument;
         }
-    }
-
-    fn parseGlobalFlag(self: *Self, global: *GlobalOptions) ParseError!bool {
-        const arg = self.next().?;
-
-        if (std.mem.eql(u8, arg, "--json")) {
-            global.json = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--toon")) {
-            global.toon = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--quiet")) {
-            global.quiet = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--verbose")) {
-            global.verbose +|= 1;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "-vv")) {
-            global.verbose +|= 2;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--no-color")) {
-            global.no_color = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--no-auto-flush")) {
-            global.no_auto_flush = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--no-auto-import")) {
-            global.no_auto_import = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--data") or std.mem.eql(u8, arg, "--db")) {
-            global.data_path = self.next() orelse return error.MissingFlagValue;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--actor")) {
-            global.actor = self.next() orelse return error.MissingFlagValue;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--lock-timeout")) {
-            const val = self.next() orelse return error.MissingFlagValue;
-            global.lock_timeout = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--wrap")) {
-            global.wrap = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--stats")) {
-            global.stats = true;
-            return true;
-        }
-        if (std.mem.eql(u8, arg, "--robot")) {
-            global.robot = true;
-            return true;
-        }
-
-        // Put back if not recognized
-        self.index -= 1;
-        return error.UnknownFlag;
     }
 
     fn parseCommand(self: *Self, cmd: []const u8) ParseError!Command {
