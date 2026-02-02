@@ -84,7 +84,7 @@ fn runAdd(
         .dep_type = DependencyType.fromString(add_args.dep_type),
         .created_at = now,
         .created_by = global.actor,
-        .metadata = null,
+        .metadata = add_args.metadata,
         .thread_id = null,
     };
 
@@ -160,24 +160,35 @@ fn runList(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    const deps = try graph.getDependencies(list_args.id);
-    defer graph.freeDependencies(deps);
+    const direction = list_args.direction;
+    const show_down = direction == .down or direction == .both;
+    const show_up = direction == .up or direction == .both;
 
-    const dependents = try graph.getDependents(list_args.id);
-    defer graph.freeDependencies(dependents);
+    var deps: []Dependency = &.{};
+    var dependents: []Dependency = &.{};
+
+    if (show_down) {
+        deps = try graph.getDependencies(list_args.id);
+    }
+    defer if (show_down) graph.freeDependencies(deps);
+
+    if (show_up) {
+        dependents = try graph.getDependents(list_args.id);
+    }
+    defer if (show_up) graph.freeDependencies(dependents);
 
     if (global.isStructuredOutput()) {
         var depends_on_ids: ?[][]const u8 = null;
         var blocks_ids: ?[][]const u8 = null;
 
-        if (deps.len > 0) {
+        if (show_down and deps.len > 0) {
             depends_on_ids = try allocator.alloc([]const u8, deps.len);
             for (deps, 0..) |dep, i| {
                 depends_on_ids.?[i] = dep.depends_on_id;
             }
         }
 
-        if (dependents.len > 0) {
+        if (show_up and dependents.len > 0) {
             blocks_ids = try allocator.alloc([]const u8, dependents.len);
             for (dependents, 0..) |dep, i| {
                 blocks_ids.?[i] = dep.issue_id;
@@ -195,22 +206,30 @@ fn runList(
             .blocks = blocks_ids,
         });
     } else {
-        if (deps.len > 0) {
-            try output.println("Depends on:", .{});
-            for (deps) |dep| {
-                try output.print("  - {s} ({s})\n", .{ dep.depends_on_id, dep.dep_type.toString() });
+        if (show_down) {
+            if (deps.len > 0) {
+                try output.println("Depends on:", .{});
+                for (deps) |dep| {
+                    if (dep.metadata) |meta| {
+                        try output.print("  - {s} ({s}) [{s}]\n", .{ dep.depends_on_id, dep.dep_type.toString(), meta });
+                    } else {
+                        try output.print("  - {s} ({s})\n", .{ dep.depends_on_id, dep.dep_type.toString() });
+                    }
+                }
+            } else {
+                try output.println("Depends on: (none)", .{});
             }
-        } else {
-            try output.println("Depends on: (none)", .{});
         }
 
-        if (dependents.len > 0) {
-            try output.println("Blocks:", .{});
-            for (dependents) |dep| {
-                try output.print("  - {s}\n", .{dep.issue_id});
+        if (show_up) {
+            if (dependents.len > 0) {
+                try output.println("Blocks:", .{});
+                for (dependents) |dep| {
+                    try output.print("  - {s}\n", .{dep.issue_id});
+                }
+            } else {
+                try output.println("Blocks: (none)", .{});
             }
-        } else {
-            try output.println("Blocks: (none)", .{});
         }
     }
 }
@@ -231,6 +250,7 @@ fn runTree(
     allocator: std.mem.Allocator,
 ) !void {
     const id = tree_args.id;
+    const format = tree_args.format;
 
     // Check if issue exists
     const issue = try ctx.store.get(id);
@@ -250,6 +270,9 @@ fn runTree(
             .success = true,
             .tree = root,
         });
+    } else if (format == .mermaid) {
+        // Mermaid flowchart output
+        try printMermaidTree(&ctx.output, graph, ctx, id, allocator);
     } else {
         // ASCII tree output
         try ctx.output.println("{s} - {s} [{s}]", .{ id, i.title, i.status.toString() });
@@ -353,6 +376,160 @@ fn printTreeBranch(
         const child_is_last = (idx == deps.len - 1);
         try printTreeBranch(output, graph, ctx, dep.depends_on_id, new_prefix, child_is_last, visited, allocator, depth + 1, max_depth);
     }
+}
+
+fn printMermaidTree(
+    output: *common.Output,
+    graph: *DependencyGraph,
+    ctx: *CommandContext,
+    root_id: []const u8,
+    allocator: std.mem.Allocator,
+) !void {
+    // Start Mermaid flowchart
+    try output.println("```mermaid", .{});
+    try output.println("flowchart TD", .{});
+
+    // Track visited nodes to avoid duplicates
+    var visited: std.StringHashMapUnmanaged(void) = .{};
+    defer {
+        var it = visited.keyIterator();
+        while (it.next()) |key| allocator.free(key.*);
+        visited.deinit(allocator);
+    }
+
+    // Track emitted edges to avoid duplicates
+    var emitted_edges: std.StringHashMapUnmanaged(void) = .{};
+    defer {
+        var edge_it = emitted_edges.keyIterator();
+        while (edge_it.next()) |key| allocator.free(key.*);
+        emitted_edges.deinit(allocator);
+    }
+
+    // Collect all nodes and edges starting from root
+    try collectMermaidNodes(output, graph, ctx, root_id, &visited, &emitted_edges, allocator, 0, 5);
+
+    try output.println("```", .{});
+}
+
+fn collectMermaidNodes(
+    output: *common.Output,
+    graph: *DependencyGraph,
+    ctx: *CommandContext,
+    id: []const u8,
+    visited: *std.StringHashMapUnmanaged(void),
+    emitted_edges: *std.StringHashMapUnmanaged(void),
+    allocator: std.mem.Allocator,
+    depth: usize,
+    max_depth: usize,
+) !void {
+    // Skip if already visited
+    if (visited.contains(id)) return;
+
+    // Mark as visited
+    const id_copy = try allocator.dupe(u8, id);
+    errdefer allocator.free(id_copy);
+    try visited.put(allocator, id_copy, {});
+
+    // Get issue details for node label
+    const issue = try ctx.store.get(id);
+    const safe_id = try sanitizeMermaidId(id, allocator);
+    defer allocator.free(safe_id);
+
+    if (issue) |i| {
+        var iss = i;
+        defer iss.deinit(allocator);
+        const safe_title = try sanitizeMermaidLabel(iss.title, allocator);
+        defer allocator.free(safe_title);
+        try output.print("    {s}[\"{s}: {s}\"]\n", .{ safe_id, id, safe_title });
+    } else {
+        try output.print("    {s}[\"{s}: (not found)\"]\n", .{ safe_id, id });
+    }
+
+    if (depth >= max_depth) return;
+
+    // Get dependencies (what this issue depends on)
+    const deps = try graph.getDependencies(id);
+    defer graph.freeDependencies(deps);
+
+    for (deps) |dep| {
+        const target_id = try sanitizeMermaidId(dep.depends_on_id, allocator);
+        defer allocator.free(target_id);
+
+        // Create edge key for deduplication
+        var edge_buf: [256]u8 = undefined;
+        const edge_key = std.fmt.bufPrint(&edge_buf, "{s}->{s}", .{ safe_id, target_id }) catch continue;
+
+        if (!emitted_edges.contains(edge_key)) {
+            const edge_copy = try allocator.dupe(u8, edge_key);
+            try emitted_edges.put(allocator, edge_copy, {});
+
+            // Emit edge with dependency type as label
+            const dep_type_str = dep.dep_type.toString();
+            try output.print("    {s} -->|{s}| {s}\n", .{ safe_id, dep_type_str, target_id });
+        }
+
+        // Recurse into dependency
+        try collectMermaidNodes(output, graph, ctx, dep.depends_on_id, visited, emitted_edges, allocator, depth + 1, max_depth);
+    }
+
+    // Get dependents (what depends on this issue)
+    const dependents = try graph.getDependents(id);
+    defer graph.freeDependencies(dependents);
+
+    for (dependents) |dep| {
+        const source_id = try sanitizeMermaidId(dep.issue_id, allocator);
+        defer allocator.free(source_id);
+
+        // Create edge key for deduplication
+        var edge_buf: [256]u8 = undefined;
+        const edge_key = std.fmt.bufPrint(&edge_buf, "{s}->{s}", .{ source_id, safe_id }) catch continue;
+
+        if (!emitted_edges.contains(edge_key)) {
+            const edge_copy = try allocator.dupe(u8, edge_key);
+            try emitted_edges.put(allocator, edge_copy, {});
+
+            const dep_type_str = dep.dep_type.toString();
+            try output.print("    {s} -->|{s}| {s}\n", .{ source_id, dep_type_str, safe_id });
+        }
+
+        // Recurse into dependent
+        try collectMermaidNodes(output, graph, ctx, dep.issue_id, visited, emitted_edges, allocator, depth + 1, max_depth);
+    }
+}
+
+fn sanitizeMermaidId(id: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    // Replace characters that are invalid in Mermaid node IDs
+    var result = try allocator.alloc(u8, id.len);
+    for (id, 0..) |c, i| {
+        result[i] = if (c == '-' or c == '.') '_' else c;
+    }
+    return result;
+}
+
+fn sanitizeMermaidLabel(label: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    // Escape special characters in Mermaid labels
+    var count: usize = 0;
+    for (label) |c| {
+        count += if (c == '"' or c == '\\') @as(usize, 2) else @as(usize, 1);
+    }
+
+    var result = try allocator.alloc(u8, count);
+    var i: usize = 0;
+    for (label) |c| {
+        if (c == '"') {
+            result[i] = '\\';
+            result[i + 1] = '"';
+            i += 2;
+        } else if (c == '\\') {
+            result[i] = '\\';
+            result[i + 1] = '\\';
+            i += 2;
+        } else {
+            result[i] = c;
+            i += 1;
+        }
+    }
+    return result;
 }
 
 fn buildTreeNode(

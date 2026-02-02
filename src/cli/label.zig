@@ -24,6 +24,9 @@ pub const LabelResult = struct {
     labels: ?[]const []const u8 = null,
     added: ?[]const []const u8 = null,
     removed: ?[]const []const u8 = null,
+    old_name: ?[]const u8 = null,
+    new_name: ?[]const u8 = null,
+    renamed_count: ?usize = null,
     message: ?[]const u8 = null,
 };
 
@@ -37,6 +40,7 @@ pub fn run(
         .remove => |remove| try runRemove(remove.id, remove.labels, global, allocator),
         .list => |list| try runList(list.id, global, allocator),
         .list_all => try runListAll(global, allocator),
+        .rename => |rename| try runRename(rename.old_name, rename.new_name, global, allocator),
     }
 }
 
@@ -303,6 +307,78 @@ fn runListAll(
             for (label_list.items) |label| {
                 try ctx.output.print("  {s}\n", .{label});
             }
+        }
+    }
+}
+
+fn runRename(
+    old_name: []const u8,
+    new_name: []const u8,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return LabelError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    // Count how many issues have this label renamed
+    var renamed_count: usize = 0;
+
+    // Iterate through all issues
+    for (ctx.store.issues.items) |*issue| {
+        if (issue.status.eql(.tombstone)) continue;
+
+        // Check if issue has the old label
+        var has_old_label = false;
+        var old_label_idx: usize = 0;
+        for (issue.labels, 0..) |label, idx| {
+            if (std.mem.eql(u8, label, old_name)) {
+                has_old_label = true;
+                old_label_idx = idx;
+                break;
+            }
+        }
+
+        if (has_old_label) {
+            // Check if it already has the new label (avoid duplicates)
+            var has_new_label = false;
+            for (issue.labels) |label| {
+                if (std.mem.eql(u8, label, new_name)) {
+                    has_new_label = true;
+                    break;
+                }
+            }
+
+            if (has_new_label) {
+                // Remove the old label (new label already exists)
+                try ctx.store.removeLabel(issue.id, old_name);
+            } else {
+                // Replace old label with new label in place
+                // First remove old, then add new
+                try ctx.store.removeLabel(issue.id, old_name);
+                try ctx.store.addLabel(issue.id, new_name);
+            }
+            renamed_count += 1;
+        }
+    }
+
+    try ctx.saveIfAutoFlush();
+
+    if (global.isStructuredOutput()) {
+        try ctx.output.printJson(LabelResult{
+            .success = true,
+            .old_name = old_name,
+            .new_name = new_name,
+            .renamed_count = renamed_count,
+        });
+    } else if (global.quiet) {
+        try ctx.output.print("{d}\n", .{renamed_count});
+    } else {
+        if (renamed_count > 0) {
+            try ctx.output.success("Renamed label '{s}' to '{s}' on {d} issue(s)", .{ old_name, new_name, renamed_count });
+        } else {
+            try ctx.output.info("No issues found with label '{s}'", .{old_name});
         }
     }
 }

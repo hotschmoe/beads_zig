@@ -347,12 +347,39 @@ pub const EpicArgs = struct {
     subcommand: EpicSubcommand,
 };
 
+/// Direction filter for dependency listing.
+pub const DepDirection = enum {
+    up, // What depends on this issue (dependents/blocked-by)
+    down, // What this issue depends on
+    both, // Both directions (default)
+
+    pub fn fromString(s: []const u8) ?DepDirection {
+        if (std.ascii.eqlIgnoreCase(s, "up")) return .up;
+        if (std.ascii.eqlIgnoreCase(s, "down")) return .down;
+        if (std.ascii.eqlIgnoreCase(s, "both")) return .both;
+        return null;
+    }
+};
+
+/// Tree output formats for dep tree.
+pub const TreeFormat = enum {
+    ascii,
+    mermaid,
+
+    pub fn fromString(s: []const u8) ?TreeFormat {
+        if (std.ascii.eqlIgnoreCase(s, "ascii")) return .ascii;
+        if (std.ascii.eqlIgnoreCase(s, "mermaid")) return .mermaid;
+        return null;
+    }
+};
+
 /// Dependency subcommand variants.
 pub const DepSubcommand = union(enum) {
     add: struct {
         child: []const u8,
         parent: []const u8,
         dep_type: []const u8 = "blocks",
+        metadata: ?[]const u8 = null,
     },
     remove: struct {
         child: []const u8,
@@ -360,9 +387,11 @@ pub const DepSubcommand = union(enum) {
     },
     list: struct {
         id: []const u8,
+        direction: DepDirection = .both,
     },
     tree: struct {
         id: []const u8,
+        format: TreeFormat = .ascii,
     },
     cycles: void,
 };
@@ -406,6 +435,10 @@ pub const LabelSubcommand = union(enum) {
         id: []const u8,
     },
     list_all: void,
+    rename: struct {
+        old_name: []const u8,
+        new_name: []const u8,
+    },
 };
 
 /// Label command arguments.
@@ -1276,12 +1309,15 @@ pub const ArgParser = struct {
             const child = self.next() orelse return error.MissingRequiredArgument;
             const parent = self.next() orelse return error.MissingRequiredArgument;
             var dep_type: []const u8 = "blocks";
+            var metadata: ?[]const u8 = null;
             while (self.hasNext()) {
                 if (self.consumeFlag("-t", "--type")) {
                     dep_type = self.next() orelse return error.MissingFlagValue;
+                } else if (self.consumeFlag("-m", "--metadata")) {
+                    metadata = self.next() orelse return error.MissingFlagValue;
                 } else break;
             }
-            return .{ .subcommand = .{ .add = .{ .child = child, .parent = parent, .dep_type = dep_type } } };
+            return .{ .subcommand = .{ .add = .{ .child = child, .parent = parent, .dep_type = dep_type, .metadata = metadata } } };
         }
         if (std.mem.eql(u8, subcmd, "remove") or std.mem.eql(u8, subcmd, "rm")) {
             const child = self.next() orelse return error.MissingRequiredArgument;
@@ -1289,10 +1325,26 @@ pub const ArgParser = struct {
             return .{ .subcommand = .{ .remove = .{ .child = child, .parent = parent } } };
         }
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
-            return .{ .subcommand = .{ .list = .{ .id = self.next() orelse return error.MissingRequiredArgument } } };
+            const id = self.next() orelse return error.MissingRequiredArgument;
+            var direction: DepDirection = .both;
+            while (self.hasNext()) {
+                if (self.consumeFlag("-d", "--direction")) {
+                    const dir_str = self.next() orelse return error.MissingFlagValue;
+                    direction = DepDirection.fromString(dir_str) orelse return error.InvalidArgument;
+                } else break;
+            }
+            return .{ .subcommand = .{ .list = .{ .id = id, .direction = direction } } };
         }
         if (std.mem.eql(u8, subcmd, "tree")) {
-            return .{ .subcommand = .{ .tree = .{ .id = self.next() orelse return error.MissingRequiredArgument } } };
+            const id = self.next() orelse return error.MissingRequiredArgument;
+            var format: TreeFormat = .ascii;
+            while (self.hasNext()) {
+                if (self.consumeFlag("-f", "--format")) {
+                    const fmt_str = self.next() orelse return error.MissingFlagValue;
+                    format = TreeFormat.fromString(fmt_str) orelse return error.InvalidArgument;
+                } else break;
+            }
+            return .{ .subcommand = .{ .tree = .{ .id = id, .format = format } } };
         }
         if (std.mem.eql(u8, subcmd, "cycles")) {
             return .{ .subcommand = .{ .cycles = {} } };
@@ -1388,6 +1440,11 @@ pub const ArgParser = struct {
         }
         if (std.mem.eql(u8, subcmd, "list-all") or std.mem.eql(u8, subcmd, "all")) {
             return .{ .subcommand = .{ .list_all = {} } };
+        }
+        if (std.mem.eql(u8, subcmd, "rename") or std.mem.eql(u8, subcmd, "mv")) {
+            const old_name = self.next() orelse return error.MissingRequiredArgument;
+            const new_name = self.next() orelse return error.MissingRequiredArgument;
+            return .{ .subcommand = .{ .rename = .{ .old_name = old_name, .new_name = new_name } } };
         }
         return error.UnknownSubcommand;
     }
@@ -2152,6 +2209,47 @@ test "parse dep cycles command" {
     try std.testing.expect(result.command.dep.subcommand == .cycles);
 }
 
+test "parse dep add command with metadata" {
+    const input = [_][]const u8{ "dep", "add", "bd-child", "bd-parent", "--type", "blocks", "--metadata", "{\"reason\":\"needs API\"}" };
+    var parser = ArgParser.init(std.testing.allocator, &input);
+    const result = try parser.parse();
+
+    const add = result.command.dep.subcommand.add;
+    try std.testing.expectEqualStrings("bd-child", add.child);
+    try std.testing.expectEqualStrings("bd-parent", add.parent);
+    try std.testing.expectEqualStrings("blocks", add.dep_type);
+    try std.testing.expectEqualStrings("{\"reason\":\"needs API\"}", add.metadata.?);
+}
+
+test "parse dep list command with direction down" {
+    const input = [_][]const u8{ "dep", "list", "bd-abc123", "--direction", "down" };
+    var parser = ArgParser.init(std.testing.allocator, &input);
+    const result = try parser.parse();
+
+    const list = result.command.dep.subcommand.list;
+    try std.testing.expectEqualStrings("bd-abc123", list.id);
+    try std.testing.expectEqual(DepDirection.down, list.direction);
+}
+
+test "parse dep list command with direction up" {
+    const input = [_][]const u8{ "dep", "list", "bd-abc123", "--direction", "up" };
+    var parser = ArgParser.init(std.testing.allocator, &input);
+    const result = try parser.parse();
+
+    const list = result.command.dep.subcommand.list;
+    try std.testing.expectEqual(DepDirection.up, list.direction);
+}
+
+test "parse dep tree command with format mermaid" {
+    const input = [_][]const u8{ "dep", "tree", "bd-abc123", "--format", "mermaid" };
+    var parser = ArgParser.init(std.testing.allocator, &input);
+    const result = try parser.parse();
+
+    const tree = result.command.dep.subcommand.tree;
+    try std.testing.expectEqualStrings("bd-abc123", tree.id);
+    try std.testing.expectEqual(TreeFormat.mermaid, tree.format);
+}
+
 test "parse label add command" {
     const args = [_][]const u8{ "label", "add", "bd-abc123", "urgent", "backend" };
     var parser = ArgParser.init(std.testing.allocator, &args);
@@ -2191,6 +2289,26 @@ test "parse label list-all command" {
     const result = try parser.parse();
 
     try std.testing.expect(result.command.label.subcommand == .list_all);
+}
+
+test "parse label rename command" {
+    const input = [_][]const u8{ "label", "rename", "old-label", "new-label" };
+    var parser = ArgParser.init(std.testing.allocator, &input);
+    const result = try parser.parse();
+
+    const rename = result.command.label.subcommand.rename;
+    try std.testing.expectEqualStrings("old-label", rename.old_name);
+    try std.testing.expectEqualStrings("new-label", rename.new_name);
+}
+
+test "parse label mv command (alias for rename)" {
+    const input = [_][]const u8{ "label", "mv", "old-name", "new-name" };
+    var parser = ArgParser.init(std.testing.allocator, &input);
+    const result = try parser.parse();
+
+    const rename = result.command.label.subcommand.rename;
+    try std.testing.expectEqualStrings("old-name", rename.old_name);
+    try std.testing.expectEqualStrings("new-name", rename.new_name);
 }
 
 test "parse comments add command" {
