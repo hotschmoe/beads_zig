@@ -8,9 +8,10 @@
 //!   const result = try migrations.migrateIfNeeded(allocator, ".beads");
 
 const std = @import("std");
+const version_cmd = @import("../cli/version.zig");
 
-/// Current bz version - should match cli/version.zig VERSION constant.
-pub const BZ_VERSION: []const u8 = "0.1.5";
+/// Current bz version - imported from version.zig to avoid duplication.
+pub const BZ_VERSION: []const u8 = version_cmd.VERSION;
 
 /// Current schema version expected by this build.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
