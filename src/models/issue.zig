@@ -143,6 +143,7 @@ pub const Issue = struct {
     // Flags
     pinned: bool,
     is_template: bool,
+    ephemeral: bool = false, // Local-only, not written to JSONL
 
     // Version for optimistic locking (incremented on every update)
     version: u64 = 1,
@@ -187,6 +188,7 @@ pub const Issue = struct {
         if (!optionalStrEql(a.source_system, b.source_system)) return false;
         if (a.pinned != b.pinned) return false;
         if (a.is_template != b.is_template) return false;
+        if (a.ephemeral != b.ephemeral) return false;
         if (a.version != b.version) return false;
         return true;
     }
@@ -251,6 +253,7 @@ pub const Issue = struct {
 
         result.pinned = self.pinned;
         result.is_template = self.is_template;
+        result.ephemeral = self.ephemeral;
         result.version = self.version;
 
         // Clone labels
@@ -393,6 +396,7 @@ pub const Issue = struct {
             .source_system = null,
             .pinned = false,
             .is_template = false,
+            .ephemeral = false,
             .version = 1,
             .labels = &[_][]const u8{},
             .dependencies = &[_]Dependency{},
@@ -670,6 +674,7 @@ test "Issue.deinit frees all memory" {
         .source_system = try allocator.dupe(u8, "jira"),
         .pinned = false,
         .is_template = false,
+        .ephemeral = false,
         .labels = &[_][]const u8{},
         .dependencies = &[_]Dependency{},
         .comments = &[_]Comment{},

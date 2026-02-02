@@ -199,6 +199,9 @@ pub const JsonlFile = struct {
         defer content.deinit(self.allocator);
 
         for (issues_list) |issue| {
+            // Skip ephemeral issues - they are local-only and not persisted to JSONL
+            if (issue.ephemeral) continue;
+
             const json_bytes = std.json.Stringify.valueAlloc(self.allocator, issue, .{}) catch return error.WriteError;
             defer self.allocator.free(json_bytes);
             content.appendSlice(self.allocator, json_bytes) catch return error.WriteError;
@@ -217,7 +220,11 @@ pub const JsonlFile = struct {
 
     /// Append a single issue to the JSONL file.
     /// Less safe than writeAll but faster for single additions.
+    /// Skips ephemeral issues (local-only, not persisted).
     pub fn append(self: *Self, issue: Issue) !void {
+        // Skip ephemeral issues - they are local-only and not persisted to JSONL
+        if (issue.ephemeral) return;
+
         const dir = fs.cwd();
 
         // Ensure parent directory exists

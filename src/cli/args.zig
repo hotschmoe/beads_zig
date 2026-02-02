@@ -119,6 +119,7 @@ pub const CreateArgs = struct {
     deps: []const []const u8 = &[_][]const u8{},
     due: ?[]const u8 = null,
     estimate: ?i32 = null,
+    ephemeral: bool = false, // Local-only, not written to JSONL
 };
 
 /// Quick capture command arguments.
@@ -149,6 +150,8 @@ pub const UpdateArgs = struct {
     status: ?[]const u8 = null,
     /// Expected version for optimistic locking (compare-and-swap).
     expected_version: ?u64 = null,
+    /// Claim: set assignee to actor AND status to in_progress atomically.
+    claim: bool = false,
 };
 
 /// Close command arguments.
@@ -824,6 +827,8 @@ pub const ArgParser = struct {
             } else if (self.consumeFlag("-e", "--estimate")) {
                 const val = self.next() orelse return error.MissingFlagValue;
                 result.estimate = std.fmt.parseInt(i32, val, 10) catch return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--ephemeral")) {
+                result.ephemeral = true;
             } else if (self.peekPositional()) |_| {
                 if (!title_set) {
                     result.title = self.next().?;
@@ -912,6 +917,8 @@ pub const ArgParser = struct {
             } else if (self.consumeFlag("-v", "--version")) {
                 const version_str = self.next() orelse return error.MissingFlagValue;
                 result.expected_version = std.fmt.parseInt(u64, version_str, 10) catch return error.InvalidFlagValue;
+            } else if (self.consumeFlag(null, "--claim")) {
+                result.claim = true;
             } else if (self.peekPositional()) |_| {
                 if (!id_set) {
                     result.id = self.next().?;

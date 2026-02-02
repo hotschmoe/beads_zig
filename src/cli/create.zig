@@ -126,6 +126,7 @@ pub fn run(
     issue.created_by = actor;
     issue.due_at = .{ .value = due_at };
     issue.estimated_minutes = create_args.estimate;
+    issue.ephemeral = create_args.ephemeral;
 
     // Set labels on issue (will be persisted via WAL)
     if (create_args.labels.len > 0) {
