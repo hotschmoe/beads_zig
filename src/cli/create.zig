@@ -123,21 +123,27 @@ pub fn run(
     issue.due_at = .{ .value = due_at };
     issue.estimated_minutes = create_args.estimate;
 
-    // Insert into store
+    // Set labels on issue (will be persisted via WAL)
+    if (create_args.labels.len > 0) {
+        issue.labels = create_args.labels;
+    }
+
+    // Insert into store (for in-memory state and duplicate check)
     store.insert(issue) catch {
         try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to create issue");
         return CreateError.StorageError;
     };
 
-    // Add labels
-    for (create_args.labels) |label| {
-        store.addLabel(issue_id, label) catch {};
-    }
-
-    // Save to file (auto-flush)
+    // Append to WAL for fast persistence (instead of full file rewrite)
     if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to save issues");
+        var wal = storage.Wal.init(beads_dir, allocator) catch {
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to initialize WAL");
+            return CreateError.StorageError;
+        };
+        defer wal.deinit();
+
+        wal.addIssue(issue) catch {
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to write to WAL");
             return CreateError.StorageError;
         };
     }

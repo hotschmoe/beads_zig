@@ -29,6 +29,7 @@ pub const CommandContext = struct {
     output: Output,
     store: IssueStore,
     event_store: EventStore,
+    beads_dir: []const u8,
     issues_path: []const u8,
     events_path: []const u8,
     global: args.GlobalOptions,
@@ -36,10 +37,13 @@ pub const CommandContext = struct {
     corruption_count: usize = 0,
     /// Line numbers of corrupt JSONL entries (owned memory).
     corrupt_lines: []const usize = &.{},
+    /// Number of WAL entries replayed during load.
+    wal_entries_replayed: usize = 0,
 
     /// Initialize a command context by loading the workspace.
     /// Returns null and outputs an error if workspace is not initialized.
     /// Uses graceful corruption recovery: logs and skips corrupt entries.
+    /// Replays WAL entries after loading main file for consistency.
     pub fn init(
         allocator: std.mem.Allocator,
         global: args.GlobalOptions,
@@ -52,12 +56,17 @@ pub const CommandContext = struct {
             .no_color = global.no_color,
         });
 
-        const beads_dir = global.data_path orelse ".beads";
+        const beads_dir_str = global.data_path orelse ".beads";
+        const beads_dir = allocator.dupe(u8, beads_dir_str) catch {
+            return CommandError.OutOfMemory;
+        };
         const issues_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
+            allocator.free(beads_dir);
             return CommandError.OutOfMemory;
         };
         const events_path = std.fs.path.join(allocator, &.{ beads_dir, "events.jsonl" }) catch {
             allocator.free(issues_path);
+            allocator.free(beads_dir);
             return CommandError.OutOfMemory;
         };
 
@@ -66,11 +75,13 @@ pub const CommandContext = struct {
                 outputErrorGeneric(&output, global.isStructuredOutput(), "workspace not initialized. Run 'bz init' first.") catch {};
                 allocator.free(issues_path);
                 allocator.free(events_path);
+                allocator.free(beads_dir);
                 return null;
             }
             outputErrorGeneric(&output, global.isStructuredOutput(), "cannot access workspace") catch {};
             allocator.free(issues_path);
             allocator.free(events_path);
+            allocator.free(beads_dir);
             return CommandError.StorageError;
         };
 
@@ -85,24 +96,44 @@ pub const CommandContext = struct {
                 store.deinit();
                 allocator.free(issues_path);
                 allocator.free(events_path);
+                allocator.free(beads_dir);
                 return CommandError.StorageError;
             }
             // File not found is OK - empty workspace
+            var event_store_empty = EventStore.init(allocator, events_path);
+            event_store_empty.loadNextId() catch {};
             return CommandContext{
                 .allocator = allocator,
                 .output = output,
                 .store = store,
-                .event_store = EventStore.init(allocator, events_path),
+                .event_store = event_store_empty,
+                .beads_dir = beads_dir,
                 .issues_path = issues_path,
                 .events_path = events_path,
                 .global = global,
                 .corruption_count = 0,
                 .corrupt_lines = &.{},
+                .wal_entries_replayed = 0,
             };
         };
 
         corruption_count = load_result.jsonl_corruption_count;
         corrupt_lines = load_result.jsonl_corrupt_lines;
+
+        // Replay WAL entries onto the store for consistency
+        var wal_entries_replayed: usize = 0;
+        wal_replay: {
+            var wal_obj = storage.Wal.init(beads_dir, allocator) catch {
+                break :wal_replay;
+            };
+            defer wal_obj.deinit();
+
+            var replay_stats = wal_obj.replay(&store) catch {
+                break :wal_replay;
+            };
+            defer replay_stats.deinit(allocator);
+            wal_entries_replayed = replay_stats.applied;
+        }
 
         // Warn user about corruption (unless quiet/silent mode)
         if (corruption_count > 0 and !global.quiet and !global.silent and !global.isStructuredOutput()) {
@@ -119,17 +150,20 @@ pub const CommandContext = struct {
             .output = output,
             .store = store,
             .event_store = event_store,
+            .beads_dir = beads_dir,
             .issues_path = issues_path,
             .events_path = events_path,
             .global = global,
             .corruption_count = corruption_count,
             .corrupt_lines = corrupt_lines,
+            .wal_entries_replayed = wal_entries_replayed,
         };
     }
 
     /// Clean up resources.
     pub fn deinit(self: *CommandContext) void {
         self.store.deinit();
+        self.allocator.free(self.beads_dir);
         self.allocator.free(self.issues_path);
         self.allocator.free(self.events_path);
         if (self.corrupt_lines.len > 0) {
@@ -143,6 +177,7 @@ pub const CommandContext = struct {
     }
 
     /// Save the store to file if auto-flush is enabled.
+    /// Note: For single-issue writes, prefer appendToWal() for better performance.
     pub fn saveIfAutoFlush(self: *CommandContext) CommandError!void {
         if (!self.global.no_auto_flush) {
             self.store.saveToFile() catch {
@@ -150,6 +185,28 @@ pub const CommandContext = struct {
                 return CommandError.StorageError;
             };
         }
+    }
+
+    /// Append an issue to the WAL for fast persistence.
+    /// Use this for single-issue creates/updates instead of saveToFile().
+    pub fn appendToWal(self: *CommandContext, issue: @import("../models/issue.zig").Issue, op: storage.WalOp) CommandError!void {
+        if (self.global.no_auto_flush) return;
+
+        var wal_obj = storage.Wal.init(self.beads_dir, self.allocator) catch {
+            outputErrorGeneric(&self.output, self.global.isStructuredOutput(), "failed to initialize WAL") catch {};
+            return CommandError.StorageError;
+        };
+        defer wal_obj.deinit();
+
+        wal_obj.appendEntry(.{
+            .op = op,
+            .ts = std.time.timestamp(),
+            .id = issue.id,
+            .data = issue,
+        }) catch {
+            outputErrorGeneric(&self.output, self.global.isStructuredOutput(), "failed to write to WAL") catch {};
+            return CommandError.StorageError;
+        };
     }
 
     /// Create a dependency graph from the store.
