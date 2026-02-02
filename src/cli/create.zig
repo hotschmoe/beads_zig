@@ -34,6 +34,18 @@ pub const CreateResult = struct {
     message: ?[]const u8 = null,
 };
 
+pub const DryRunResult = struct {
+    dry_run: bool = true,
+    would_create: struct {
+        id: []const u8,
+        title: []const u8,
+        issue_type: []const u8,
+        priority: []const u8,
+        assignee: ?[]const u8 = null,
+        labels: []const []const u8 = &[_][]const u8{},
+    },
+};
+
 /// Run the create command.
 pub fn run(
     create_args: args.CreateArgs,
@@ -131,6 +143,30 @@ pub fn run(
     // Set labels on issue (will be persisted via WAL)
     if (create_args.labels.len > 0) {
         issue.labels = create_args.labels;
+    }
+
+    // Dry-run mode: preview without persisting
+    if (create_args.dry_run) {
+        if (structured_output) {
+            try output.printJson(DryRunResult{
+                .would_create = .{
+                    .id = issue_id,
+                    .title = create_args.title,
+                    .issue_type = issue_type.toString(),
+                    .priority = priority.toString(),
+                    .assignee = create_args.assignee,
+                    .labels = create_args.labels,
+                },
+            });
+        } else {
+            try output.info("Would create: {s} \"{s}\" ({s}, {s})", .{
+                issue_id,
+                create_args.title,
+                issue_type.toString(),
+                priority.toString(),
+            });
+        }
+        return;
     }
 
     // Insert into store (for in-memory state and duplicate check)

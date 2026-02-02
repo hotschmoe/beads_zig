@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g., v0.3.0)'
+        required: true
+        type: string
+
+env:
+  ZIG_VERSION: "0.15.2"
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            name: bz-linux-x86_64
+            archive: tar.gz
+          - target: aarch64-linux-gnu
+            name: bz-linux-aarch64
+            archive: tar.gz
+          - target: x86_64-macos
+            name: bz-macos-x86_64
+            archive: tar.gz
+          - target: aarch64-macos
+            name: bz-macos-aarch64
+            archive: tar.gz
+          - target: x86_64-windows-gnu
+            name: bz-windows-x86_64
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build for ${{ matrix.target }}
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          mkdir -p dist/${{ matrix.name }}
+          cp zig-out/bin/bz dist/${{ matrix.name }}/
+          cp README.md LICENSE* dist/${{ matrix.name }}/ 2>/dev/null || true
+          cd dist
+          tar -czvf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+          sha256sum ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        run: |
+          mkdir -p dist/${{ matrix.name }}
+          cp zig-out/bin/bz.exe dist/${{ matrix.name }}/
+          cp README.md LICENSE* dist/${{ matrix.name }}/ 2>/dev/null || true
+          cd dist
+          zip -r ${{ matrix.name }}.zip ${{ matrix.name }}
+          sha256sum ${{ matrix.name }}.zip > ${{ matrix.name }}.zip.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/${{ matrix.name }}.${{ matrix.archive }}
+            dist/${{ matrix.name }}.${{ matrix.archive }}.sha256
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          # Flatten artifact directories
+          for dir in artifacts/*/; do
+            cp "$dir"* release/ 2>/dev/null || true
+          done
+          ls -la release/
+          # Create combined checksums file
+          cd release
+          cat *.sha256 > checksums.txt
+          echo "=== Release files ==="
+          ls -la
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
+            release/*.tar.gz
+            release/*.zip
+            release/*.sha256
+            release/checksums.txt

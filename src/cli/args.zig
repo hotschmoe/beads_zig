@@ -137,6 +137,7 @@ pub const CreateArgs = struct {
     due: ?[]const u8 = null,
     estimate: ?i32 = null,
     ephemeral: bool = false, // Local-only, not written to JSONL
+    dry_run: bool = false, // Preview issue creation without persisting
 };
 
 /// Quick capture command arguments.
@@ -1059,6 +1060,8 @@ pub const ArgParser = struct {
                 result.estimate = std.fmt.parseInt(i32, val, 10) catch return error.InvalidArgument;
             } else if (self.consumeFlag(null, "--ephemeral")) {
                 result.ephemeral = true;
+            } else if (self.consumeFlag(null, "--dry-run")) {
+                result.dry_run = true;
             } else if (self.peekPositional()) |_| {
                 if (!title_set) {
                     result.title = self.next().?;
