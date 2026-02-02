@@ -509,8 +509,6 @@ pub const Output = struct {
                     const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{due});
                     defer self.allocator.free(ts);
                     try self.writeCsvValue(ts);
-                } else {
-                    try self.stdout.writeAll("");
                 }
             },
             .labels => {
@@ -518,8 +516,6 @@ pub const Output = struct {
                     const joined = try std.mem.join(self.allocator, ";", issue.labels);
                     defer self.allocator.free(joined);
                     try self.writeCsvValue(joined);
-                } else {
-                    try self.stdout.writeAll("");
                 }
             },
         }
