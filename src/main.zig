@@ -141,6 +141,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .backup => |backup_args| {
+            cli.runBackup(backup_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.BackupNotFound, error.RestoreFailed, error.CreateFailed => std.process.exit(1),
+                else => return err,
+            };
+        },
         .search => |search_args| {
             cli.runSearch(search_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),

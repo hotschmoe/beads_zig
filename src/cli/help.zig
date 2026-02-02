@@ -113,7 +113,7 @@ const commands = [_]CommandHelp{
     .{
         .name = "sync",
         .summary = "Sync with JSONL file",
-        .usage = "bz sync [--flush-only] [--import-only] [--status] [--manifest]",
+        .usage = "bz sync [--flush-only] [--import-only] [--status] [--manifest] [--error-policy POLICY] [--orphans POLICY] [--rename-prefix]",
         .description = "Synchronizes in-memory state with the JSONL file. By default, performs " ++
             "bidirectional sync. Use flags to limit to export or import only.",
         .flags = &[_]FlagHelp{
@@ -122,6 +122,9 @@ const commands = [_]CommandHelp{
             .{ .short = "-s", .long = "--status", .description = "Show sync status without changes" },
             .{ .short = null, .long = "--manifest", .description = "Write manifest.json with export metadata" },
             .{ .short = "-m", .long = "--merge", .description = "3-way merge with remote JSONL" },
+            .{ .short = null, .long = "--error-policy", .arg = "POLICY", .description = "Export error handling: strict (default), best-effort, partial" },
+            .{ .short = null, .long = "--orphans", .arg = "POLICY", .description = "Import orphan handling: strict (default), resurrect, skip" },
+            .{ .short = null, .long = "--rename-prefix", .description = "Fix issues with wrong prefix during import" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz sync", .description = "Full bidirectional sync" },
@@ -129,8 +132,11 @@ const commands = [_]CommandHelp{
             .{ .command = "bz sync --import-only", .description = "Import changes from JSONL" },
             .{ .command = "bz sync --status", .description = "Show DB/JSONL issue counts" },
             .{ .command = "bz sync --flush-only --manifest", .description = "Export with manifest file" },
+            .{ .command = "bz sync --flush-only --error-policy best-effort", .description = "Export, continuing on errors" },
+            .{ .command = "bz sync --import-only --orphans resurrect", .description = "Import, creating placeholders for orphans" },
+            .{ .command = "bz sync --import-only --rename-prefix", .description = "Import and fix wrong ID prefixes" },
         },
-        .see_also = &[_][]const u8{ "import", "add-batch" },
+        .see_also = &[_][]const u8{ "import", "add-batch", "backup" },
     },
     .{
         .name = "orphans",
@@ -638,6 +644,32 @@ const commands = [_]CommandHelp{
         .see_also = &[_][]const u8{"audit"},
     },
 
+    // Backup commands
+    .{
+        .name = "backup",
+        .aliases = &[_][]const u8{"backups"},
+        .summary = "Manage JSONL backup files",
+        .usage = "bz backup <subcommand> [args]",
+        .description = "Manage JSONL backup files. Create backups before major operations, " ++
+            "compare backups with current state, restore from backups, and prune old backups.",
+        .arguments = &[_]ArgHelp{
+            .{ .name = "subcommand", .description = "list, diff, restore, prune, or create" },
+        },
+        .flags = &[_]FlagHelp{
+            .{ .short = "-k", .long = "--keep", .arg = "N", .description = "Keep N most recent backups (prune, default: 10)" },
+            .{ .short = "-n", .long = "--dry-run", .description = "Show what would be done without making changes" },
+        },
+        .examples = &[_]ExampleHelp{
+            .{ .command = "bz backup list", .description = "List available backups" },
+            .{ .command = "bz backup create", .description = "Create a new backup" },
+            .{ .command = "bz backup diff issues.jsonl.bak.123", .description = "Compare backup with current" },
+            .{ .command = "bz backup restore issues.jsonl.bak.123", .description = "Restore from backup" },
+            .{ .command = "bz backup restore issues.jsonl.bak.123 --dry-run", .description = "Preview restore" },
+            .{ .command = "bz backup prune --keep 5", .description = "Keep only 5 most recent backups" },
+        },
+        .see_also = &[_][]const u8{ "sync", "import" },
+    },
+
     // System commands
     .{
         .name = "version",
@@ -783,6 +815,13 @@ fn showGeneralHelp(file: std.fs.File) !void {
         \\    history <id>      Show issue history
         \\    audit             Project-wide audit log
         \\    changelog         Generate changelog from closed issues
+        \\
+        \\  Backup:
+        \\    backup list       List available backups
+        \\    backup create     Create a new backup
+        \\    backup diff <f>   Compare backup with current
+        \\    backup restore <f> Restore from backup
+        \\    backup prune      Remove old backups
         \\
         \\  System:
         \\    help              Show this help

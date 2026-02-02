@@ -850,6 +850,35 @@ pub const IssueStore = struct {
         }
         self.allocator.free(suggestions);
     }
+
+    /// Get the ID prefix from existing issues, or return default "bd".
+    /// Infers the prefix from the first issue's ID format.
+    pub fn getPrefix(self: *Self) []const u8 {
+        for (self.issues.items) |issue| {
+            if (std.mem.indexOf(u8, issue.id, "-")) |dash_pos| {
+                return issue.id[0..dash_pos];
+            }
+        }
+        return "bd"; // Default prefix
+    }
+
+    /// Rebuild the ID index from current issues.
+    /// Used after modifying issue IDs or removing issues.
+    pub fn rebuildIndex(self: *Self) !void {
+        // Clear existing index
+        var id_it = self.id_index.keyIterator();
+        while (id_it.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.id_index.clearRetainingCapacity();
+
+        // Rebuild from issues array
+        for (self.issues.items, 0..) |issue, idx| {
+            const id_copy = try self.allocator.dupe(u8, issue.id);
+            errdefer self.allocator.free(id_copy);
+            try self.id_index.put(self.allocator, id_copy, idx);
+        }
+    }
 };
 
 /// Compute similarity score between target and candidate ID.

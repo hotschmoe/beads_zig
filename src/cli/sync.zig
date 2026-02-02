@@ -33,6 +33,10 @@ pub const SyncResult = struct {
     issues_imported: ?usize = null,
     issues_updated: ?usize = null,
     issues_added: ?usize = null,
+    issues_skipped: ?usize = null,
+    issues_renamed: ?usize = null,
+    orphans_created: ?usize = null,
+    errors: ?usize = null,
     message: ?[]const u8 = null,
     // Status-specific fields
     db_count: ?usize = null,
@@ -57,22 +61,37 @@ pub fn run(
     if (sync_args.status) {
         try runStatus(&ctx, structured_output, global.quiet, allocator);
     } else if (sync_args.flush_only) {
-        try runFlush(&ctx, structured_output, global.quiet, sync_args.manifest, allocator);
+        try runFlush(&ctx, structured_output, global.quiet, sync_args.manifest, sync_args.error_policy, allocator);
     } else if (sync_args.import_only) {
-        try runImport(&ctx, structured_output, global.quiet, allocator);
+        try runImport(&ctx, structured_output, global.quiet, sync_args.orphan_policy, sync_args.rename_prefix, allocator);
     } else if (sync_args.merge) {
-        try runMerge(&ctx, structured_output, global.quiet, allocator);
+        try runMerge(&ctx, structured_output, global.quiet, sync_args.orphan_policy, sync_args.rename_prefix, allocator);
     } else {
         try runBidirectional(&ctx, structured_output, global.quiet, allocator);
     }
 }
 
-fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_manifest: bool, allocator: std.mem.Allocator) !void {
+fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_manifest: bool, error_policy: args.ErrorPolicy, allocator: std.mem.Allocator) !void {
     const count = ctx.store.issues.items.len;
+    var errors: usize = 0;
 
-    ctx.store.saveToFile() catch {
-        try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to export issues");
-        return SyncError.ExportError;
+    ctx.store.saveToFile() catch |err| {
+        switch (error_policy) {
+            .strict => {
+                try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to export issues");
+                return SyncError.ExportError;
+            },
+            .best_effort => {
+                errors += 1;
+                if (!quiet and !structured_output) {
+                    try ctx.output.warn("Export error (continuing): {}", .{err});
+                }
+            },
+            .partial => {
+                errors += 1;
+                // Silent skip
+            },
+        }
     };
 
     // Write manifest if requested
@@ -84,20 +103,25 @@ fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_ma
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
-            .success = true,
+            .success = errors == 0,
             .action = "flush",
             .issues_exported = count,
+            .errors = if (errors > 0) errors else null,
             .manifest_path = manifest_path,
         });
     } else if (!quiet) {
-        try ctx.output.success("Exported {d} issue(s) to JSONL", .{count});
+        if (errors > 0) {
+            try ctx.output.warn("Exported {d} issue(s) to JSONL with {d} error(s)", .{ count, errors });
+        } else {
+            try ctx.output.success("Exported {d} issue(s) to JSONL", .{count});
+        }
         if (manifest_path) |path| {
             try ctx.output.info("Manifest written to {s}", .{path});
         }
     }
 }
 
-fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
+fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, orphan_policy: args.OrphanPolicy, rename_prefix: bool, allocator: std.mem.Allocator) !void {
     // Check for merge conflict markers in the JSONL file
     if (try hasMergeConflicts(ctx.store.jsonl_path, allocator)) {
         try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "JSONL file contains merge conflict markers - resolve conflicts first");
@@ -126,6 +150,100 @@ fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
         return SyncError.ImportError;
     };
 
+    var orphans_created: usize = 0;
+    var issues_skipped: usize = 0;
+    var issues_renamed: usize = 0;
+
+    // Get the expected prefix from config (default to "bd")
+    const expected_prefix = ctx.store.getPrefix();
+
+    // Process orphans and prefix renaming
+    var issues_to_remove: std.ArrayListUnmanaged(usize) = .{};
+    defer issues_to_remove.deinit(allocator);
+
+    var orphan_ids: std.ArrayListUnmanaged([]const u8) = .{};
+    defer {
+        for (orphan_ids.items) |id| allocator.free(id);
+        orphan_ids.deinit(allocator);
+    }
+
+    for (ctx.store.issues.items, 0..) |*issue, idx| {
+        // Check for wrong prefix and rename if requested
+        if (rename_prefix) {
+            if (issue.id.len >= 3) {
+                const dash_pos = std.mem.indexOf(u8, issue.id, "-");
+                if (dash_pos) |pos| {
+                    const current_prefix = issue.id[0..pos];
+                    if (!std.mem.eql(u8, current_prefix, expected_prefix)) {
+                        // Create new ID with correct prefix
+                        const suffix = issue.id[pos..];
+                        const new_id = try std.fmt.allocPrint(allocator, "{s}{s}", .{ expected_prefix, suffix });
+
+                        // Update the issue's ID (need to free old and set new)
+                        allocator.free(issue.id);
+                        issue.id = new_id;
+                        issues_renamed += 1;
+                    }
+                }
+            }
+        }
+
+        // Check for orphaned parent references (hierarchical IDs like bd-abc.1)
+        if (std.mem.indexOf(u8, issue.id, ".")) |dot_pos| {
+            const parent_id = issue.id[0..dot_pos];
+            const parent_exists = ctx.store.id_index.contains(parent_id);
+
+            if (!parent_exists) {
+                switch (orphan_policy) {
+                    .strict => {
+                        try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "orphan detected: parent not found for hierarchical ID");
+                        return SyncError.ImportError;
+                    },
+                    .resurrect => {
+                        // Create a placeholder parent issue
+                        const parent_id_copy = try allocator.dupe(u8, parent_id);
+                        try orphan_ids.append(allocator, parent_id_copy);
+                        orphans_created += 1;
+                    },
+                    .skip => {
+                        try issues_to_remove.append(allocator, idx);
+                        issues_skipped += 1;
+                    },
+                }
+            }
+        }
+    }
+
+    // Remove skipped issues (in reverse order to maintain indices)
+    var i = issues_to_remove.items.len;
+    while (i > 0) {
+        i -= 1;
+        const idx = issues_to_remove.items[i];
+        var removed = ctx.store.issues.orderedRemove(idx);
+        removed.deinit(allocator);
+    }
+
+    // Create placeholder parents for orphans (resurrect policy)
+    for (orphan_ids.items) |parent_id| {
+        if (!ctx.store.id_index.contains(parent_id)) {
+            const placeholder_title = try std.fmt.allocPrint(allocator, "[Placeholder] Parent of orphaned issue(s)", .{});
+            defer allocator.free(placeholder_title);
+
+            var placeholder = Issue.init(parent_id, placeholder_title, std.time.timestamp());
+            placeholder.id = try allocator.dupe(u8, parent_id);
+            placeholder.title = try allocator.dupe(u8, placeholder_title);
+            try ctx.store.insert(placeholder);
+        }
+    }
+
+    // Rebuild index after modifications
+    ctx.store.rebuildIndex() catch {};
+
+    // Mark dirty if we made changes
+    if (issues_renamed > 0 or orphans_created > 0) {
+        ctx.store.dirty = true;
+    }
+
     const new_count = ctx.store.issues.items.len;
 
     if (structured_output) {
@@ -133,6 +251,9 @@ fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
             .success = true,
             .action = "import",
             .issues_imported = new_count,
+            .issues_skipped = if (issues_skipped > 0) issues_skipped else null,
+            .issues_renamed = if (issues_renamed > 0) issues_renamed else null,
+            .orphans_created = if (orphans_created > 0) orphans_created else null,
         });
     } else if (!quiet) {
         if (new_count > old_count) {
@@ -141,6 +262,15 @@ fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
             try ctx.output.success("Imported {d} issue(s) from JSONL (-{d})", .{ new_count, old_count - new_count });
         } else {
             try ctx.output.success("Imported {d} issue(s) from JSONL (no change)", .{new_count});
+        }
+        if (issues_renamed > 0) {
+            try ctx.output.info("Renamed {d} issue(s) with wrong prefix", .{issues_renamed});
+        }
+        if (orphans_created > 0) {
+            try ctx.output.info("Created {d} placeholder parent(s) for orphans", .{orphans_created});
+        }
+        if (issues_skipped > 0) {
+            try ctx.output.info("Skipped {d} orphaned issue(s)", .{issues_skipped});
         }
     }
 }
@@ -189,7 +319,9 @@ fn runBidirectional(ctx: *CommandContext, structured_output: bool, quiet: bool, 
 /// - If only in local: keep
 /// - If only in remote: add
 /// - If in both: keep the one with newer updated_at timestamp
-fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
+fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, orphan_policy: args.OrphanPolicy, rename_prefix: bool, allocator: std.mem.Allocator) !void {
+    _ = orphan_policy; // TODO: implement orphan handling for merge
+    _ = rename_prefix; // TODO: implement prefix renaming for merge
     // Check for merge conflict markers
     if (try hasMergeConflicts(ctx.store.jsonl_path, allocator)) {
         try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "JSONL file contains merge conflict markers - resolve conflicts first");

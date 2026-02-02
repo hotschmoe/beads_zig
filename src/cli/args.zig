@@ -91,6 +91,9 @@ pub const Command = union(enum) {
     // Sync
     sync: SyncArgs,
 
+    // Backup
+    backup: BackupArgs,
+
     // System
     version: void,
     schema: void,
@@ -484,6 +487,34 @@ pub const ChangelogArgs = struct {
     group_by: ?[]const u8 = null, // Group by field (e.g., "type")
 };
 
+/// Error policy for export operations.
+pub const ErrorPolicy = enum {
+    strict, // Fail on any error
+    best_effort, // Continue on errors, report at end
+    partial, // Export what we can, skip errors silently
+
+    pub fn fromString(s: []const u8) ?ErrorPolicy {
+        if (std.ascii.eqlIgnoreCase(s, "strict")) return .strict;
+        if (std.ascii.eqlIgnoreCase(s, "best-effort") or std.ascii.eqlIgnoreCase(s, "best_effort")) return .best_effort;
+        if (std.ascii.eqlIgnoreCase(s, "partial")) return .partial;
+        return null;
+    }
+};
+
+/// Orphan handling policy for import operations.
+pub const OrphanPolicy = enum {
+    strict, // Fail if orphans detected
+    resurrect, // Create placeholder parents for orphans
+    skip, // Skip orphaned issues silently
+
+    pub fn fromString(s: []const u8) ?OrphanPolicy {
+        if (std.ascii.eqlIgnoreCase(s, "strict")) return .strict;
+        if (std.ascii.eqlIgnoreCase(s, "resurrect")) return .resurrect;
+        if (std.ascii.eqlIgnoreCase(s, "skip")) return .skip;
+        return null;
+    }
+};
+
 /// Sync command arguments.
 pub const SyncArgs = struct {
     flush_only: bool = false,
@@ -491,6 +522,31 @@ pub const SyncArgs = struct {
     merge: bool = false,
     status: bool = false,
     manifest: bool = false,
+    error_policy: ErrorPolicy = .strict,
+    orphan_policy: OrphanPolicy = .strict,
+    rename_prefix: bool = false,
+};
+
+/// Backup subcommand variants.
+pub const BackupSubcommand = union(enum) {
+    list: void,
+    diff: struct {
+        file: []const u8,
+    },
+    restore: struct {
+        file: []const u8,
+        dry_run: bool = false,
+    },
+    prune: struct {
+        keep: u32 = 10,
+        dry_run: bool = false,
+    },
+    create: void,
+};
+
+/// Backup command arguments.
+pub const BackupArgs = struct {
+    subcommand: BackupSubcommand,
 };
 
 /// Shell completion types.
@@ -862,6 +918,11 @@ pub const ArgParser = struct {
         // Sync
         if (std.mem.eql(u8, cmd, "sync") or std.mem.eql(u8, cmd, "flush") or std.mem.eql(u8, cmd, "export")) {
             return .{ .sync = try self.parseSyncArgs() };
+        }
+
+        // Backup
+        if (std.mem.eql(u8, cmd, "backup") or std.mem.eql(u8, cmd, "backups")) {
+            return .{ .backup = try self.parseBackupArgs() };
         }
 
         // System
@@ -1527,9 +1588,56 @@ pub const ArgParser = struct {
                 result.status = true;
             } else if (self.consumeFlag(null, "--manifest")) {
                 result.manifest = true;
+            } else if (self.consumeFlag(null, "--error-policy")) {
+                const policy_str = self.next() orelse return error.MissingFlagValue;
+                result.error_policy = ErrorPolicy.fromString(policy_str) orelse return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--orphans")) {
+                const policy_str = self.next() orelse return error.MissingFlagValue;
+                result.orphan_policy = OrphanPolicy.fromString(policy_str) orelse return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--rename-prefix")) {
+                result.rename_prefix = true;
             } else break;
         }
         return result;
+    }
+
+    fn parseBackupArgs(self: *Self) ParseError!BackupArgs {
+        const subcmd = self.next() orelse return .{ .subcommand = .{ .list = {} } };
+
+        if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
+            return .{ .subcommand = .{ .list = {} } };
+        }
+        if (std.mem.eql(u8, subcmd, "diff")) {
+            const file = self.next() orelse return error.MissingRequiredArgument;
+            return .{ .subcommand = .{ .diff = .{ .file = file } } };
+        }
+        if (std.mem.eql(u8, subcmd, "restore")) {
+            const file = self.next() orelse return error.MissingRequiredArgument;
+            var dry_run = false;
+            while (self.hasNext()) {
+                if (self.consumeFlag("-n", "--dry-run")) {
+                    dry_run = true;
+                } else break;
+            }
+            return .{ .subcommand = .{ .restore = .{ .file = file, .dry_run = dry_run } } };
+        }
+        if (std.mem.eql(u8, subcmd, "prune")) {
+            var keep: u32 = 10;
+            var dry_run = false;
+            while (self.hasNext()) {
+                if (self.consumeFlag("-k", "--keep")) {
+                    const keep_str = self.next() orelse return error.MissingFlagValue;
+                    keep = std.fmt.parseInt(u32, keep_str, 10) catch return error.InvalidArgument;
+                } else if (self.consumeFlag("-n", "--dry-run")) {
+                    dry_run = true;
+                } else break;
+            }
+            return .{ .subcommand = .{ .prune = .{ .keep = keep, .dry_run = dry_run } } };
+        }
+        if (std.mem.eql(u8, subcmd, "create") or std.mem.eql(u8, subcmd, "new")) {
+            return .{ .subcommand = .{ .create = {} } };
+        }
+        return error.UnknownSubcommand;
     }
 
     fn parseCompletionsArgs(self: *Self) ParseError!CompletionsArgs {

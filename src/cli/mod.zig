@@ -106,6 +106,12 @@ pub const SyncError = sync.SyncError;
 pub const SyncResult = sync.SyncResult;
 pub const runSync = sync.run;
 
+pub const backup = @import("backup.zig");
+pub const BackupError = backup.BackupError;
+pub const BackupResult = backup.BackupResult;
+pub const runBackup = backup.run;
+pub const BackupArgs = args.BackupArgs;
+
 pub const BatchError = batch.BatchError;
 pub const BatchResult = batch.BatchResult;
 pub const ImportResult = batch.ImportResult;
