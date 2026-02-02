@@ -340,6 +340,10 @@ pub const EpicSubcommand = union(enum) {
     list: struct {
         epic_id: []const u8,
     },
+    status: void,
+    close_eligible: struct {
+        dry_run: bool = false,
+    },
 };
 
 /// Epic command arguments.
@@ -484,6 +488,7 @@ pub const ChangelogArgs = struct {
 pub const SyncArgs = struct {
     flush_only: bool = false,
     import_only: bool = false,
+    merge: bool = false,
 };
 
 /// Shell completion types.
@@ -1411,6 +1416,18 @@ pub const ArgParser = struct {
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
             return .{ .subcommand = .{ .list = .{ .epic_id = self.next() orelse return error.MissingRequiredArgument } } };
         }
+        if (std.mem.eql(u8, subcmd, "status")) {
+            return .{ .subcommand = .{ .status = {} } };
+        }
+        if (std.mem.eql(u8, subcmd, "close-eligible")) {
+            var dry_run = false;
+            while (self.hasNext()) {
+                if (self.consumeFlag("-n", "--dry-run")) {
+                    dry_run = true;
+                } else break;
+            }
+            return .{ .subcommand = .{ .close_eligible = .{ .dry_run = dry_run } } };
+        }
         return error.UnknownSubcommand;
     }
 
@@ -1502,6 +1519,8 @@ pub const ArgParser = struct {
                 result.flush_only = true;
             } else if (self.consumeFlag("--import", "--import-only")) {
                 result.import_only = true;
+            } else if (self.consumeFlag("-m", "--merge")) {
+                result.merge = true;
             } else break;
         }
         return result;

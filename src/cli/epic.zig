@@ -43,6 +43,17 @@ pub const EpicResult = struct {
     action: ?[]const u8 = null,
     issues: ?[]const IssueInfo = null,
     message: ?[]const u8 = null,
+    epics: ?[]const EpicStatusInfo = null,
+    closed_count: ?usize = null,
+};
+
+const EpicStatusInfo = struct {
+    id: []const u8,
+    title: []const u8,
+    total: usize,
+    closed: usize,
+    percent_complete: u8,
+    eligible_for_close: bool,
 };
 
 const IssueInfo = struct {
@@ -62,6 +73,8 @@ pub fn run(
         .add => |add| try runAdd(add, global, allocator),
         .remove => |remove| try runRemove(remove, global, allocator),
         .list => |list| try runList(list, global, allocator),
+        .status => try runStatus(global, allocator),
+        .close_eligible => |ce| try runCloseEligible(ce, global, allocator),
     }
 }
 
@@ -359,6 +372,205 @@ fn runList(
             }
             try ctx.output.println("", .{});
             try ctx.output.println("Total: {d} issue(s)", .{issue_infos.items.len});
+        }
+    }
+}
+
+fn runStatus(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return EpicError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const structured_output = global.isStructuredOutput();
+    var graph = ctx.createGraph();
+
+    // Find all epics
+    var epic_statuses: std.ArrayListUnmanaged(EpicStatusInfo) = .{};
+    defer {
+        for (epic_statuses.items) |info| {
+            allocator.free(info.id);
+            allocator.free(info.title);
+        }
+        epic_statuses.deinit(allocator);
+    }
+
+    for (ctx.store.issues.items) |issue| {
+        if (issue.issue_type == .epic and issue.status != .tombstone) {
+            const children = try graph.getDependents(issue.id);
+            defer graph.freeDependencies(children);
+
+            var total: usize = 0;
+            var closed: usize = 0;
+
+            for (children) |dep| {
+                if (dep.dep_type == .parent_child) {
+                    total += 1;
+                    const child = try ctx.store.get(dep.issue_id);
+                    if (child) |c| {
+                        var child_issue = c;
+                        defer child_issue.deinit(allocator);
+                        if (child_issue.status == .closed or child_issue.status == .tombstone) {
+                            closed += 1;
+                        }
+                    }
+                }
+            }
+
+            const percent: u8 = if (total > 0) @intCast((closed * 100) / total) else 0;
+            const eligible = total > 0 and closed == total;
+
+            try epic_statuses.append(allocator, .{
+                .id = try allocator.dupe(u8, issue.id),
+                .title = try allocator.dupe(u8, issue.title),
+                .total = total,
+                .closed = closed,
+                .percent_complete = percent,
+                .eligible_for_close = eligible,
+            });
+        }
+    }
+
+    if (structured_output) {
+        try ctx.output.printJson(EpicResult{
+            .success = true,
+            .epics = epic_statuses.items,
+        });
+    } else {
+        if (epic_statuses.items.len == 0) {
+            try ctx.output.println("No epics found", .{});
+        } else {
+            for (epic_statuses.items) |info| {
+                if (info.eligible_for_close) {
+                    try ctx.output.print("{s}: {d}/{d} complete ({d}%) [eligible for close]\n", .{
+                        info.id,
+                        info.closed,
+                        info.total,
+                        info.percent_complete,
+                    });
+                } else {
+                    try ctx.output.print("{s}: {d}/{d} complete ({d}%)\n", .{
+                        info.id,
+                        info.closed,
+                        info.total,
+                        info.percent_complete,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn runCloseEligible(
+    ce_args: anytype,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return EpicError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const structured_output = global.isStructuredOutput();
+    var graph = ctx.createGraph();
+    const dry_run = ce_args.dry_run;
+
+    // Find all epics eligible for closing
+    var eligible_epics: std.ArrayListUnmanaged([]const u8) = .{};
+    defer {
+        for (eligible_epics.items) |id| {
+            allocator.free(id);
+        }
+        eligible_epics.deinit(allocator);
+    }
+
+    for (ctx.store.issues.items) |issue| {
+        if (issue.issue_type == .epic and issue.status != .tombstone and issue.status != .closed) {
+            const children = try graph.getDependents(issue.id);
+            defer graph.freeDependencies(children);
+
+            var total: usize = 0;
+            var closed: usize = 0;
+
+            for (children) |dep| {
+                if (dep.dep_type == .parent_child) {
+                    total += 1;
+                    const child = try ctx.store.get(dep.issue_id);
+                    if (child) |c| {
+                        var child_issue = c;
+                        defer child_issue.deinit(allocator);
+                        if (child_issue.status == .closed or child_issue.status == .tombstone) {
+                            closed += 1;
+                        }
+                    }
+                }
+            }
+
+            // Eligible if has children and all are closed
+            if (total > 0 and closed == total) {
+                try eligible_epics.append(allocator, try allocator.dupe(u8, issue.id));
+            }
+        }
+    }
+
+    if (dry_run) {
+        if (structured_output) {
+            // Build list of epic IDs for JSON output
+            var id_list: std.ArrayListUnmanaged([]const u8) = .{};
+            defer id_list.deinit(allocator);
+            for (eligible_epics.items) |id| {
+                try id_list.append(allocator, id);
+            }
+
+            try ctx.output.printJson(EpicResult{
+                .success = true,
+                .action = "dry-run",
+                .closed_count = eligible_epics.items.len,
+                .message = "epics eligible for close (dry-run)",
+            });
+        } else {
+            if (eligible_epics.items.len == 0) {
+                try ctx.output.println("No epics eligible for auto-close", .{});
+            } else {
+                try ctx.output.println("Would close {d} epic(s):", .{eligible_epics.items.len});
+                for (eligible_epics.items) |id| {
+                    try ctx.output.print("  {s}\n", .{id});
+                }
+            }
+        }
+    } else {
+        // Actually close the epics
+        var closed_count: usize = 0;
+        const now = std.time.timestamp();
+        const IssueUpdate = @import("../storage/mod.zig").IssueStore.IssueUpdate;
+
+        for (eligible_epics.items) |id| {
+            const updates = IssueUpdate{
+                .status = .closed,
+                .closed_at = now,
+                .close_reason = "all children closed",
+            };
+            ctx.store.update(id, updates, now) catch continue;
+            closed_count += 1;
+        }
+
+        try ctx.saveIfAutoFlush();
+
+        if (structured_output) {
+            try ctx.output.printJson(EpicResult{
+                .success = true,
+                .action = "close-eligible",
+                .closed_count = closed_count,
+            });
+        } else if (!global.quiet) {
+            if (closed_count == 0) {
+                try ctx.output.println("No epics eligible for auto-close", .{});
+            } else {
+                try ctx.output.success("Closed {d} epic(s)", .{closed_count});
+            }
         }
     }
 }

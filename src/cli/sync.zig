@@ -3,11 +3,13 @@
 //! `bz sync` - Bidirectional sync with JSONL file
 //! `bz sync --flush-only` - Export to JSONL only
 //! `bz sync --import-only` - Import from JSONL only
+//! `bz sync --merge` - 3-way merge of local DB and remote JSONL
 //!
 //! Handles synchronization between in-memory state and JSONL file.
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
+const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
@@ -30,6 +32,7 @@ pub const SyncResult = struct {
     issues_exported: ?usize = null,
     issues_imported: ?usize = null,
     issues_updated: ?usize = null,
+    issues_added: ?usize = null,
     message: ?[]const u8 = null,
 };
 
@@ -49,6 +52,8 @@ pub fn run(
         try runFlush(&ctx, structured_output, global.quiet);
     } else if (sync_args.import_only) {
         try runImport(&ctx, structured_output, global.quiet, allocator);
+    } else if (sync_args.merge) {
+        try runMerge(&ctx, structured_output, global.quiet, allocator);
     } else {
         try runBidirectional(&ctx, structured_output, global.quiet, allocator);
     }
@@ -156,6 +161,107 @@ fn runBidirectional(ctx: *CommandContext, structured_output: bool, quiet: bool, 
             });
         } else if (!quiet) {
             try ctx.output.info("No changes to sync", .{});
+        }
+    }
+}
+
+/// Perform 3-way merge of local DB and remote JSONL.
+/// For each issue:
+/// - If only in local: keep
+/// - If only in remote: add
+/// - If in both: keep the one with newer updated_at timestamp
+fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
+    // Check for merge conflict markers
+    if (try hasMergeConflicts(ctx.store.jsonl_path, allocator)) {
+        try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "JSONL file contains merge conflict markers - resolve conflicts first");
+        return SyncError.MergeConflictDetected;
+    }
+
+    // Load remote issues from JSONL file directly (without replacing store)
+    var remote_store = storage.IssueStore.init(allocator, ctx.store.jsonl_path);
+    defer remote_store.deinit();
+
+    remote_store.loadFromFile() catch |err| {
+        if (err != error.FileNotFound) {
+            try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to load remote JSONL");
+            return SyncError.ImportError;
+        }
+    };
+
+    var added: usize = 0;
+    var updated: usize = 0;
+
+    // Iterate through remote issues and merge into local store
+    for (remote_store.issues.items) |remote_issue| {
+        if (ctx.store.getRef(remote_issue.id)) |local_issue| {
+            // Issue exists in both - compare updated_at timestamps
+            const local_ts = local_issue.updated_at.value;
+            const remote_ts = remote_issue.updated_at.value;
+
+            if (remote_ts > local_ts) {
+                // Remote is newer - update local with remote data
+                // We need to copy the remote issue's data
+                const update = storage.IssueStore.IssueUpdate{
+                    .title = remote_issue.title,
+                    .description = remote_issue.description,
+                    .design = remote_issue.design,
+                    .acceptance_criteria = remote_issue.acceptance_criteria,
+                    .notes = remote_issue.notes,
+                    .status = remote_issue.status,
+                    .priority = remote_issue.priority,
+                    .issue_type = remote_issue.issue_type,
+                    .assignee = remote_issue.assignee,
+                    .owner = remote_issue.owner,
+                    .estimated_minutes = remote_issue.estimated_minutes,
+                    .closed_at = remote_issue.closed_at.value,
+                    .close_reason = remote_issue.close_reason,
+                    .due_at = remote_issue.due_at.value,
+                    .defer_until = remote_issue.defer_until.value,
+                    .external_ref = remote_issue.external_ref,
+                    .source_system = remote_issue.source_system,
+                    .pinned = remote_issue.pinned,
+                    .is_template = remote_issue.is_template,
+                };
+
+                ctx.store.update(remote_issue.id, update, remote_ts) catch continue;
+                updated += 1;
+            }
+            // If local is newer or equal, keep local (no action needed)
+        } else {
+            // Issue only in remote - add to local
+            // Clone the remote issue for insertion
+            var cloned = try remote_issue.clone(allocator);
+            ctx.store.insert(cloned) catch {
+                cloned.deinit(allocator);
+                continue;
+            };
+            added += 1;
+        }
+    }
+
+    // Save merged state if any changes were made
+    if (added > 0 or updated > 0 or ctx.store.dirty) {
+        ctx.store.saveToFile() catch {
+            try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to save merged issues");
+            return SyncError.ExportError;
+        };
+    }
+
+    const total = ctx.store.issues.items.len;
+
+    if (structured_output) {
+        try ctx.output.printJson(SyncResult{
+            .success = true,
+            .action = "merge",
+            .issues_added = added,
+            .issues_updated = updated,
+            .issues_exported = total,
+        });
+    } else if (!quiet) {
+        if (added == 0 and updated == 0) {
+            try ctx.output.info("No changes to merge", .{});
+        } else {
+            try ctx.output.success("Merged: {d} added, {d} updated ({d} total)", .{ added, updated, total });
         }
     }
 }
