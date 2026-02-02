@@ -6,11 +6,29 @@
 //! - Unknown field preservation for beads_rust compatibility
 
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
 const simd = @import("simd.zig");
 const mmap = @import("mmap.zig");
 const test_util = @import("../test_util.zig");
+
+// Windows API declarations (not exported by std.os.windows.kernel32)
+const windows_api = struct {
+    extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) u32;
+};
+
+/// Get the current process ID (cross-platform).
+fn getCurrentPid() i32 {
+    if (builtin.os.tag == .windows) {
+        return @intCast(windows_api.GetCurrentProcessId());
+    } else if (builtin.os.tag == .linux) {
+        return @bitCast(std.os.linux.getpid());
+    } else {
+        // macOS, FreeBSD, and other POSIX systems with libc
+        return std.c.getpid();
+    }
+}
 
 pub const JsonlError = error{
     InvalidJson,
@@ -158,7 +176,7 @@ pub const JsonlFile = struct {
         const tmp_path = std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp.{d}.{d}", .{
             self.path,
             std.time.milliTimestamp(),
-            std.os.linux.getpid(),
+            getCurrentPid(),
         }) catch return error.WriteError;
 
         // Ensure parent directory exists

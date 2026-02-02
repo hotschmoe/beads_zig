@@ -26,7 +26,6 @@ const Wal = @import("wal.zig").Wal;
 const JsonlFile = @import("jsonl.zig").JsonlFile;
 const IssueStore = @import("store.zig").IssueStore;
 const Generation = @import("generation.zig").Generation;
-const walstate = @import("walstate.zig");
 const fscheck = @import("fscheck.zig");
 const test_util = @import("../test_util.zig");
 
@@ -55,7 +54,6 @@ pub const CompactError = error{
     WriteError,
     AtomicRenameFailed,
     OutOfMemory,
-    WritersActive,
 };
 
 /// Thresholds for automatic compaction.
@@ -133,48 +131,17 @@ pub const Compactor = struct {
         };
     }
 
-    /// Trigger compaction if WAL exceeds threshold and no writers are active.
+    /// Trigger compaction if WAL exceeds threshold.
     /// Returns true if compaction was performed.
-    /// Returns false if compaction not needed or writers are active.
+    /// Returns false if compaction not needed.
     pub fn maybeCompact(self: *Self) !bool {
         const stats = try self.walStats();
         if (!stats.needs_compaction) {
             return false;
         }
 
-        // Check if writers are active - don't compact if they are
-        // This prevents compaction from starving under continuous load
-        const state = walstate.getGlobalState();
-        if (!state.canCompact()) {
-            return false;
-        }
-
         try self.compact();
         return true;
-    }
-
-    /// Trigger compaction if WAL exceeds threshold, waiting for writers to finish.
-    /// Unlike maybeCompact, this will wait briefly for writers to clear.
-    /// Returns true if compaction was performed.
-    pub fn maybeCompactWithWait(self: *Self) !bool {
-        const stats = try self.walStats();
-        if (!stats.needs_compaction) {
-            return false;
-        }
-
-        // Wait briefly for writers to finish (up to 100ms)
-        const state = walstate.getGlobalState();
-        var attempts: u32 = 0;
-        while (attempts < 10) : (attempts += 1) {
-            if (state.canCompact()) {
-                try self.compact();
-                return true;
-            }
-            std.Thread.sleep(10 * std.time.ns_per_ms);
-        }
-
-        // Writers still active after waiting
-        return false;
     }
 
     /// Compact WAL into main file with generation-based safety.
@@ -245,10 +212,6 @@ pub const Compactor = struct {
         // 8. Delete old generation's WAL file (safe now since generation incremented)
         // Readers that were mid-read will retry with new generation
         self.deleteOldWal(old_generation);
-
-        // 9. Record compaction in global state to reset WAL size tracking
-        const state = walstate.getGlobalState();
-        state.recordCompaction();
     }
 
     /// Delete old generation's WAL file.

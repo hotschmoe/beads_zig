@@ -29,8 +29,6 @@ const Issue = @import("../models/issue.zig").Issue;
 const BeadsLock = @import("lock.zig").BeadsLock;
 const IssueStore = @import("store.zig").IssueStore;
 const Generation = @import("generation.zig").Generation;
-const walstate = @import("walstate.zig");
-const fscheck = @import("fscheck.zig");
 const mmap = @import("mmap.zig");
 const test_util = @import("../test_util.zig");
 
@@ -300,14 +298,8 @@ pub const Wal = struct {
     /// Append an entry to the WAL under exclusive lock.
     /// Ensures durability via fsync before releasing lock.
     /// Assigns a monotonic sequence number to the entry.
-    /// Implements writer backoff when WAL is huge (>1MB) to allow compaction.
     pub fn appendEntry(self: *Self, entry: WalEntry) !void {
-        // Coordinate with global WAL state for backoff under heavy load
-        const state = walstate.getGlobalState();
-        _ = state.acquireWriter(); // May sleep if WAL is huge
-
         var lock = BeadsLock.acquire(self.lock_path) catch {
-            state.releaseWriter(0); // Release without size update on failure
             return WalError.LockFailed;
         };
         defer lock.release();
@@ -318,31 +310,7 @@ pub const Wal = struct {
         self.next_seq += 1;
 
         // Write the entry
-        self.appendEntryUnlocked(entry_with_seq) catch |err| {
-            state.releaseWriter(0);
-            return err;
-        };
-
-        // Update state with approximate entry size
-        // Frame header (12) + JSON + newline (1)
-        const entry_size: u64 = FRAME_HEADER_SIZE + self.estimateEntrySize(entry_with_seq) + 1;
-        state.releaseWriter(entry_size);
-    }
-
-    /// Estimate the size of a WAL entry for state tracking.
-    fn estimateEntrySize(self: *Self, entry: WalEntry) u64 {
-        _ = self;
-        // Rough estimate: base JSON overhead + issue data
-        // This doesn't need to be exact, just approximate for backoff decisions
-        var size: u64 = 100; // Base JSON structure
-        size += entry.id.len;
-        if (entry.data) |issue| {
-            size += issue.title.len;
-            if (issue.description) |d| size += d.len;
-            if (issue.design) |d| size += d.len;
-            if (issue.notes) |n| size += n.len;
-        }
-        return size;
+        try self.appendEntryUnlocked(entry_with_seq);
     }
 
     /// Append entry without acquiring lock (caller must hold lock).
@@ -386,16 +354,6 @@ pub const Wal = struct {
 
         // fsync file for durability
         file.sync() catch return WalError.WriteError;
-
-        // Also fsync the parent directory to ensure file metadata is durable.
-        // This ensures the file's existence and size survive an immediate system crash.
-        if (std.fs.path.dirname(self.wal_path)) |parent| {
-            if (dir.openDir(parent, .{})) |parent_dir_handle| {
-                var parent_dir = parent_dir_handle;
-                defer parent_dir.close();
-                fscheck.fsyncDir(parent_dir.fd);
-            } else |_| {}
-        }
     }
 
     /// Read all WAL entries with generation-aware consistency checking.

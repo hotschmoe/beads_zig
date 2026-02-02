@@ -24,7 +24,6 @@ pub const generation = @import("generation.zig");
 pub const metrics = @import("metrics.zig");
 pub const txlog = @import("txlog.zig");
 pub const fscheck = @import("fscheck.zig");
-pub const walstate = @import("walstate.zig");
 pub const mmap = @import("mmap.zig");
 pub const simd = @import("simd.zig");
 
@@ -78,11 +77,6 @@ pub const beginTx = txlog.begin;
 pub const FilesystemCheck = fscheck.FilesystemCheck;
 pub const FsType = fscheck.FsType;
 pub const checkFilesystemSafety = fscheck.checkFilesystemSafety;
-
-pub const WalState = walstate.WalState;
-pub const WalStateStats = walstate.WalStateStats;
-pub const getGlobalWalState = walstate.getGlobalState;
-pub const resetGlobalWalState = walstate.resetGlobalState;
 
 pub const MappedFile = mmap.MappedFile;
 pub const MmapError = mmap.MmapError;
