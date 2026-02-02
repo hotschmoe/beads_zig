@@ -445,21 +445,12 @@ fn installBinary(
 }
 
 fn installBinaryPosix(binary_data: []const u8, target_path: []const u8) !void {
-    const tmp_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var tmp_path: []const u8 = undefined;
-
     const dir_path = std.fs.path.dirname(target_path) orelse ".";
     const basename = std.fs.path.basename(target_path);
 
-    var prng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-    const random = prng.random();
-    var suffix: [8]u8 = undefined;
-    for (&suffix) |*c| {
-        c.* = "abcdefghijklmnopqrstuvwxyz0123456789"[random.intRangeAtMost(u8, 0, 35)];
-    }
-
-    var path_buf = tmp_path_buf;
-    tmp_path = std.fmt.bufPrint(&path_buf, "{s}/.{s}.tmp.{s}", .{ dir_path, basename, suffix }) catch {
+    const suffix = generateRandomSuffix();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmp_path = std.fmt.bufPrint(&path_buf, "{s}/.{s}.tmp.{s}", .{ dir_path, basename, suffix }) catch {
         return error.WriteError;
     };
 
@@ -498,21 +489,13 @@ fn installBinaryWindows(binary_data: []const u8, target_path: []const u8, alloca
     const dir_path = std.fs.path.dirname(target_path) orelse ".";
     const basename = std.fs.path.basename(target_path);
 
-    var prng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-    const random = prng.random();
-    var suffix: [8]u8 = undefined;
-    for (&suffix) |*c| {
-        c.* = "abcdefghijklmnopqrstuvwxyz0123456789"[random.intRangeAtMost(u8, 0, 35)];
-    }
-
-    const tmp_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var path_buf = tmp_path_buf;
-    const tmp_path = std.fmt.bufPrint(&path_buf, "{s}/.{s}.tmp.{s}", .{ dir_path, basename, suffix }) catch {
+    const suffix = generateRandomSuffix();
+    var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmp_path = std.fmt.bufPrint(&tmp_buf, "{s}/.{s}.tmp.{s}", .{ dir_path, basename, suffix }) catch {
         return error.WriteError;
     };
 
-    const old_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    var old_buf = old_path_buf;
+    var old_buf: [std.fs.max_path_bytes]u8 = undefined;
     const old_path = std.fmt.bufPrint(&old_buf, "{s}/{s}.old.{s}", .{ dir_path, basename, suffix }) catch {
         return error.WriteError;
     };
@@ -559,6 +542,17 @@ fn getSelfPath(allocator: std.mem.Allocator) ![]const u8 {
         return error.SelfPathError;
     };
     return try allocator.dupe(u8, path);
+}
+
+fn generateRandomSuffix() [8]u8 {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    var prng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    const random = prng.random();
+    var suffix: [8]u8 = undefined;
+    for (&suffix) |*c| {
+        c.* = chars[random.intRangeAtMost(u8, 0, 35)];
+    }
+    return suffix;
 }
 
 fn fetchLatestVersion(allocator: std.mem.Allocator) ![]const u8 {
