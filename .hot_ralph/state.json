@@ -3,9 +3,9 @@
     "phase": "simplifying",
     "output_file": null,
     "started_at": null,
-    "tasks_since_introspection": 22,
+    "tasks_since_introspection": 24,
     "plan_mode": true,
     "plan_phase": "executing",
     "current_plan_index": 0,
-    "planned_beads": ["bd-35a", "bd-267"]
+    "planned_beads": ["bd-14z", "bd-17x"]
 }
