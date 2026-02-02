@@ -539,6 +539,7 @@ pub const Output = struct {
             }
 
             if (fields.items.len == 0) {
+                fields.deinit(allocator);
                 return &default_csv_fields;
             }
             return fields.toOwnedSlice(allocator);
