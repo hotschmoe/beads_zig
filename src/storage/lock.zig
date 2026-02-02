@@ -353,7 +353,7 @@ const windows_lock = struct {
         nNumberOfBytesToLockLow: u32,
         nNumberOfBytesToLockHigh: u32,
         lpOverlapped: *std.os.windows.OVERLAPPED,
-    ) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+    ) callconv(.winapi) std.os.windows.BOOL;
 
     extern "kernel32" fn UnlockFileEx(
         hFile: std.os.windows.HANDLE,
@@ -361,7 +361,7 @@ const windows_lock = struct {
         nNumberOfBytesToUnlockLow: u32,
         nNumberOfBytesToUnlockHigh: u32,
         lpOverlapped: *std.os.windows.OVERLAPPED,
-    ) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+    ) callconv(.winapi) std.os.windows.BOOL;
 };
 
 fn lockExclusiveWindows(file: std.fs.File) !void {
