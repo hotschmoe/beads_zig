@@ -91,6 +91,7 @@ pub const Metadata = migrations.Metadata;
 pub const migrateIfNeeded = migrations.migrateIfNeeded;
 pub const checkSchemaVersion = migrations.checkSchemaVersion;
 pub const CURRENT_SCHEMA_VERSION = migrations.CURRENT_SCHEMA_VERSION;
+pub const BZ_VERSION = migrations.BZ_VERSION;
 
 test {
     std.testing.refAllDecls(@This());

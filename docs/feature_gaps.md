@@ -659,8 +659,9 @@ bz update --dry-run  # Show what would be updated
 
 ### 42. Migration Engine
 **Bead:** `bd-12y`
+**Status:** COMPLETE
 
-Implement migration engine for JSONL database upgrades between versions:
+Migration engine implemented in `src/storage/migrations.zig`:
 - Detect schema version on load
 - Apply migrations sequentially
 - Backup before migration
@@ -670,13 +671,15 @@ Implement migration engine for JSONL database upgrades between versions:
 
 ### 43. Schema Versioning
 **Bead:** `bd-29y`
+**Status:** COMPLETE
 
-Add JSONL schema versioning to metadata.json:
+Schema versioning implemented in metadata.json:
 ```json
 {
   "schema_version": 1,
-  "created_at": "...",
-  "bz_version": "0.2.0"
+  "created_at": "2026-01-15T10:30:00Z",
+  "bz_version": "0.1.5",
+  "prefix": "bd"
 }
 ```
 
@@ -727,10 +730,10 @@ Review bd ID generation algorithm:
 | Missing Create Options | 1 | bd-1wk |
 | Release & Distribution | 6 | bd-2y0, bd-21u, bd-jx2, bd-11l, bd-56p, bd-b6w |
 | Self-Update Infrastructure | 2 | bd-1nz, bd-3cy |
-| Database Migration | 2 | bd-12y, bd-29y |
+| Database Migration | 0 | bd-12y (DONE), bd-29y (DONE) |
 | Maintenance Tasks | 2 | bd-1nm, bd-2xi |
 | Bug Fixes | 1 | bd-2bq |
-| **Total** | **45** | (32 feature gaps + 12 infrastructure + 1 bug) |
+| **Total** | **43** | (32 feature gaps + 10 infrastructure + 1 bug) |
 
 ---
 

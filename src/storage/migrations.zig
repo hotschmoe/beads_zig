@@ -9,6 +9,9 @@
 
 const std = @import("std");
 
+/// Current bz version - should match cli/version.zig VERSION constant.
+pub const BZ_VERSION: []const u8 = "0.1.5";
+
 /// Current schema version expected by this build.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
@@ -68,12 +71,21 @@ pub const MigrationResult = struct {
 pub const Metadata = struct {
     schema_version: u32 = 1,
     created_at: ?[]const u8 = null,
-    issue_count: u32 = 0,
+    bz_version: ?[]const u8 = null,
+    prefix: ?[]const u8 = null,
 
     pub fn deinit(self: *Metadata, allocator: std.mem.Allocator) void {
         if (self.created_at) |s| {
             allocator.free(s);
             self.created_at = null;
+        }
+        if (self.bz_version) |s| {
+            allocator.free(s);
+            self.bz_version = null;
+        }
+        if (self.prefix) |s| {
+            allocator.free(s);
+            self.prefix = null;
         }
     }
 };
@@ -227,6 +239,7 @@ fn parseMetadata(allocator: std.mem.Allocator, content: []const u8) !Metadata {
     defer parsed.deinit();
 
     var metadata = Metadata{};
+    errdefer metadata.deinit(allocator);
 
     if (parsed.value.object.get("schema_version")) |v| {
         metadata.schema_version = @intCast(v.integer);
@@ -238,8 +251,16 @@ fn parseMetadata(allocator: std.mem.Allocator, content: []const u8) !Metadata {
         }
     }
 
-    if (parsed.value.object.get("issue_count")) |v| {
-        metadata.issue_count = @intCast(v.integer);
+    if (parsed.value.object.get("bz_version")) |v| {
+        if (v == .string) {
+            metadata.bz_version = try allocator.dupe(u8, v.string);
+        }
+    }
+
+    if (parsed.value.object.get("prefix")) |v| {
+        if (v == .string) {
+            metadata.prefix = try allocator.dupe(u8, v.string);
+        }
     }
 
     return metadata;
@@ -378,24 +399,25 @@ fn updateMetadataVersion(
 
     // Get existing values
     var created_at: []const u8 = "";
-    var issue_count: i64 = 0;
+    var prefix: []const u8 = "bd";
 
     if (parsed.value.object.get("created_at")) |v| {
         if (v == .string) created_at = v.string;
     }
-    if (parsed.value.object.get("issue_count")) |v| {
-        issue_count = v.integer;
+    if (parsed.value.object.get("prefix")) |v| {
+        if (v == .string) prefix = v.string;
     }
 
-    // Write updated metadata
+    // Write updated metadata with new schema version and current bz version
     const new_content = try std.fmt.allocPrint(allocator,
         \\{{
         \\  "schema_version": {d},
         \\  "created_at": "{s}",
-        \\  "issue_count": {d}
+        \\  "bz_version": "{s}",
+        \\  "prefix": "{s}"
         \\}}
         \\
-    , .{ new_version, created_at, issue_count });
+    , .{ new_version, created_at, BZ_VERSION, prefix });
     defer allocator.free(new_content);
 
     writeAtomically(metadata_path, new_content) catch {
@@ -488,14 +510,32 @@ test "MigrationResult struct initialization" {
 test "Metadata struct initialization" {
     var metadata = Metadata{
         .schema_version = 2,
-        .issue_count = 10,
     };
     try std.testing.expectEqual(@as(u32, 2), metadata.schema_version);
-    try std.testing.expectEqual(@as(u32, 10), metadata.issue_count);
+    try std.testing.expect(metadata.bz_version == null);
+    try std.testing.expect(metadata.prefix == null);
     metadata.deinit(std.testing.allocator);
 }
 
 test "parseMetadata parses valid JSON" {
+    const content =
+        \\{
+        \\  "schema_version": 1,
+        \\  "created_at": "2026-02-02T10:00:00Z",
+        \\  "bz_version": "0.1.5",
+        \\  "prefix": "bd"
+        \\}
+    ;
+    var metadata = try parseMetadata(std.testing.allocator, content);
+    defer metadata.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u32, 1), metadata.schema_version);
+    try std.testing.expectEqualStrings("2026-02-02T10:00:00Z", metadata.created_at.?);
+    try std.testing.expectEqualStrings("0.1.5", metadata.bz_version.?);
+    try std.testing.expectEqualStrings("bd", metadata.prefix.?);
+}
+
+test "parseMetadata handles legacy metadata without bz_version" {
     const content =
         \\{
         \\  "schema_version": 1,
@@ -507,8 +547,8 @@ test "parseMetadata parses valid JSON" {
     defer metadata.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(u32, 1), metadata.schema_version);
-    try std.testing.expectEqual(@as(u32, 5), metadata.issue_count);
-    try std.testing.expectEqualStrings("2026-02-02T10:00:00Z", metadata.created_at.?);
+    try std.testing.expect(metadata.bz_version == null);
+    try std.testing.expect(metadata.prefix == null);
 }
 
 test "getApplicableMigrations returns empty for no migrations needed" {

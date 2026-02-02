@@ -12,6 +12,7 @@ const OutputOptions = @import("../output/mod.zig").OutputOptions;
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 const storage = @import("../storage/mod.zig");
+const version_cmd = @import("version.zig");
 
 pub const InitError = error{
     AlreadyInitialized,
@@ -90,7 +91,7 @@ pub fn run(
     const metadata_path = try std.fs.path.join(allocator, &.{ beads_dir, "metadata.json" });
     defer allocator.free(metadata_path);
 
-    try writeMetadataJson(metadata_path, allocator);
+    try writeMetadataJson(metadata_path, init_args.prefix, allocator);
 
     // Create .gitignore
     const gitignore_path = try std.fs.path.join(allocator, &.{ beads_dir, ".gitignore" });
@@ -171,7 +172,7 @@ fn writeConfigYaml(path: []const u8, prefix: []const u8) !void {
     try file.writeAll(content);
 }
 
-fn writeMetadataJson(path: []const u8, allocator: std.mem.Allocator) !void {
+fn writeMetadataJson(path: []const u8, prefix: []const u8, allocator: std.mem.Allocator) !void {
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
 
@@ -196,12 +197,13 @@ fn writeMetadataJson(path: []const u8, allocator: std.mem.Allocator) !void {
         \\{{
         \\  "schema_version": 1,
         \\  "created_at": "{s}",
-        \\  "issue_count": 0
+        \\  "bz_version": "{s}",
+        \\  "prefix": "{s}"
         \\}}
         \\
     ;
 
-    const content = try std.fmt.allocPrint(allocator, metadata_template, .{timestamp_str});
+    const content = try std.fmt.allocPrint(allocator, metadata_template, .{ timestamp_str, version_cmd.VERSION, prefix });
     defer allocator.free(content);
 
     try file.writeAll(content);
@@ -330,12 +332,14 @@ test "init creates valid metadata.json" {
     const parsed = try std.json.parseFromSlice(struct {
         schema_version: i32,
         created_at: []const u8,
-        issue_count: i32,
+        bz_version: []const u8,
+        prefix: []const u8,
     }, allocator, content, .{});
     defer parsed.deinit();
 
     try std.testing.expectEqual(@as(i32, 1), parsed.value.schema_version);
-    try std.testing.expectEqual(@as(i32, 0), parsed.value.issue_count);
+    try std.testing.expectEqualStrings(version_cmd.VERSION, parsed.value.bz_version);
+    try std.testing.expectEqualStrings("bd", parsed.value.prefix);
 }
 
 test "init creates .gitignore with correct entries" {

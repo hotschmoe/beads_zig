@@ -1,5 +1,9 @@
 # Concurrency Critique: beads_zig
 
+> **Note:** This design review document references `beads.*` file names from the
+> original concurrent_writes.md spec. The actual implementation uses `issues.jsonl`,
+> `issues.wal`, and `.beads.lock`.
+
 ## Executive Summary
 
 The `concurrent_writes.md` document presents a solid foundation for handling concurrent agent writes. The Lock + WAL + Compact architecture is fundamentally sound and addresses the real failure modes you hit with SQLite.

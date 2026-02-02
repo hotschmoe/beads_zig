@@ -1,5 +1,9 @@
 # Concurrent Write Handling in beads_zig
 
+> **Note:** This design document uses `beads.*` file names. The actual implementation
+> uses `issues.jsonl`, `issues.wal`, and `.beads.lock`. The architecture and
+> principles are identical.
+
 ## The Problem You Just Hit
 
 ```
