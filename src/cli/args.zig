@@ -432,6 +432,8 @@ pub const GraphArgs = struct {
     id: ?[]const u8 = null, // Optional: show graph for specific issue, otherwise show all
     format: GraphFormat = .ascii,
     depth: ?u32 = null, // Max depth for tree traversal
+    all: bool = false, // Show dependency graph for all open issues
+    compact: bool = false, // Compact one-line-per-issue output
 };
 
 /// Label subcommand variants.
@@ -523,6 +525,8 @@ pub const AuditArgs = struct {
 pub const ChangelogArgs = struct {
     since: ?[]const u8 = null, // Start date filter (YYYY-MM-DD)
     until: ?[]const u8 = null, // End date filter (YYYY-MM-DD)
+    since_tag: ?[]const u8 = null, // Git tag for start date (e.g., "v1.0.0")
+    since_commit: ?[]const u8 = null, // Git commit for start date (e.g., "abc123")
     limit: ?u32 = null,
     group_by: ?[]const u8 = null, // Group by field (e.g., "type")
 };
@@ -1481,6 +1485,10 @@ pub const ArgParser = struct {
                 result.format = GraphFormat.fromString(fmt_str) orelse return error.InvalidArgument;
             } else if (self.consumeFlag("-d", "--depth")) {
                 result.depth = try self.consumeU32() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-a", "--all")) {
+                result.all = true;
+            } else if (self.consumeFlag("-c", "--compact")) {
+                result.compact = true;
             } else if (self.peekPositional()) |_| {
                 if (result.id == null) {
                     result.id = self.next().?;
@@ -1713,6 +1721,10 @@ pub const ArgParser = struct {
                 result.since = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag(null, "--until")) {
                 result.until = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--since-tag")) {
+                result.since_tag = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--since-commit")) {
+                result.since_commit = self.next() orelse return error.MissingFlagValue;
             } else if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
             } else if (self.consumeFlag("-g", "--group-by")) {

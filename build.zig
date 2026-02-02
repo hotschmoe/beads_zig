@@ -67,6 +67,8 @@ pub fn build(b: *std.Build) void {
     run_mod_tests.stdio = .inherit;
 
     const test_step = b.step("test", "Run tests");
+    // CLI tests require the binary to be built first
+    test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_mod_tests.step);
 
     // Format step

@@ -518,19 +518,23 @@ const commands = [_]CommandHelp{
     .{
         .name = "graph",
         .summary = "Show dependency graph",
-        .usage = "bz graph [ID] [--format FMT] [--depth N]",
+        .usage = "bz graph [ID] [--format FMT] [--depth N] [--all] [--compact]",
         .description = "Visualizes the dependency graph. Without an ID, shows all dependencies. " ++
-            "With an ID, shows that issue's dependency subgraph.",
+            "With an ID, shows that issue's dependency subgraph. Use --all for open issues only, --compact for one-line output.",
         .arguments = &[_]ArgHelp{
             .{ .name = "id", .description = "Issue ID (optional, shows all if omitted)", .required = false },
         },
         .flags = &[_]FlagHelp{
             .{ .short = "-f", .long = "--format", .arg = "FMT", .description = "Output format: ascii (default) or dot" },
             .{ .short = "-d", .long = "--depth", .arg = "N", .description = "Maximum tree depth" },
+            .{ .short = "-a", .long = "--all", .description = "Show graph for all open issues" },
+            .{ .short = "-c", .long = "--compact", .description = "Compact one-line-per-issue output" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz graph", .description = "Show full dependency graph (ASCII)" },
             .{ .command = "bz graph bd-abc", .description = "Show graph for specific issue" },
+            .{ .command = "bz graph --all", .description = "Show graph for all open issues" },
+            .{ .command = "bz graph bd-abc --compact", .description = "Compact output for specific issue" },
             .{ .command = "bz graph --format dot | dot -Tpng -o graph.png", .description = "Generate PNG via Graphviz" },
         },
         .see_also = &[_][]const u8{"dep"},
@@ -627,18 +631,22 @@ const commands = [_]CommandHelp{
     .{
         .name = "changelog",
         .summary = "Generate changelog from closed issues",
-        .usage = "bz changelog [--since DATE] [--until DATE] [--limit N] [--group-by FIELD]",
+        .usage = "bz changelog [--since DATE] [--until DATE] [--since-tag TAG] [--since-commit HASH] [--limit N] [--group-by FIELD]",
         .description = "Generates a changelog from recently closed issues, optionally filtered " ++
-            "by date range and grouped by type.",
+            "by date range and grouped by type. Can use git tags or commits for date references.",
         .flags = &[_]FlagHelp{
             .{ .short = null, .long = "--since", .arg = "DATE", .description = "Start date (YYYY-MM-DD)" },
             .{ .short = null, .long = "--until", .arg = "DATE", .description = "End date (YYYY-MM-DD)" },
+            .{ .short = null, .long = "--since-tag", .arg = "TAG", .description = "Start from git tag (e.g., v1.0.0)" },
+            .{ .short = null, .long = "--since-commit", .arg = "HASH", .description = "Start from git commit (e.g., abc123)" },
             .{ .short = "-n", .long = "--limit", .arg = "N", .description = "Maximum entries" },
             .{ .short = "-g", .long = "--group-by", .arg = "FIELD", .description = "Group by field (e.g., type)" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz changelog", .description = "Generate changelog" },
             .{ .command = "bz changelog --since 2024-01-01", .description = "Since specific date" },
+            .{ .command = "bz changelog --since-tag v1.0.0", .description = "Since git tag v1.0.0" },
+            .{ .command = "bz changelog --since-commit abc123", .description = "Since git commit" },
             .{ .command = "bz changelog --group-by type", .description = "Group by issue type" },
         },
         .see_also = &[_][]const u8{"audit"},

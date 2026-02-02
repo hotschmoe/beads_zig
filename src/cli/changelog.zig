@@ -20,6 +20,9 @@ pub const ChangelogError = error{
     InvalidDateFormat,
     StorageError,
     OutOfMemory,
+    GitTagNotFound,
+    GitCommitNotFound,
+    GitError,
 };
 
 pub const ChangelogResult = struct {
@@ -70,7 +73,26 @@ pub fn run(
     var filtered_issues: std.ArrayListUnmanaged(Issue) = .{};
     defer filtered_issues.deinit(allocator);
 
-    const since_ts = if (changelog_args.since) |s| parseDateToTimestamp(s) else null;
+    // Determine the since timestamp from various sources (priority: since_tag > since_commit > since)
+    var since_ts: ?i64 = null;
+    if (changelog_args.since_tag) |tag| {
+        since_ts = getTimestampFromGitTag(allocator, tag) catch |err| {
+            if (!global.isStructuredOutput()) {
+                try ctx.output.err("Failed to get timestamp for tag '{s}': {s}", .{ tag, @errorName(err) });
+            }
+            return err;
+        };
+    } else if (changelog_args.since_commit) |commit| {
+        since_ts = getTimestampFromGitCommit(allocator, commit) catch |err| {
+            if (!global.isStructuredOutput()) {
+                try ctx.output.err("Failed to get timestamp for commit '{s}': {s}", .{ commit, @errorName(err) });
+            }
+            return err;
+        };
+    } else if (changelog_args.since) |s| {
+        since_ts = parseDateToTimestamp(s);
+    }
+
     const until_ts = if (changelog_args.until) |u| parseDateToTimestamp(u) else null;
 
     for (issues) |issue| {
@@ -259,6 +281,48 @@ fn epochDayFromDate(year: i32, month: u4, day: u5) i64 {
     return era * 146097 + doe - 719468;
 }
 
+fn getTimestampFromGitTag(allocator: std.mem.Allocator, tag: []const u8) !i64 {
+    // Get the commit timestamp for the given tag
+    // Format: git log -1 --format=%ct <tag>
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "git", "log", "-1", "--format=%ct", tag },
+        .cwd = null,
+    }) catch return ChangelogError.GitError;
+
+    defer allocator.free(result.stderr);
+    defer allocator.free(result.stdout);
+
+    if (result.term.Exited != 0) {
+        return ChangelogError.GitTagNotFound;
+    }
+
+    // Parse the timestamp (trim newline)
+    const trimmed = std.mem.trim(u8, result.stdout, " \n\r\t");
+    return std.fmt.parseInt(i64, trimmed, 10) catch return ChangelogError.GitError;
+}
+
+fn getTimestampFromGitCommit(allocator: std.mem.Allocator, commit: []const u8) !i64 {
+    // Get the commit timestamp for the given commit hash
+    // Format: git log -1 --format=%ct <commit>
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "git", "log", "-1", "--format=%ct", commit },
+        .cwd = null,
+    }) catch return ChangelogError.GitError;
+
+    defer allocator.free(result.stderr);
+    defer allocator.free(result.stdout);
+
+    if (result.term.Exited != 0) {
+        return ChangelogError.GitCommitNotFound;
+    }
+
+    // Parse the timestamp (trim newline)
+    const trimmed = std.mem.trim(u8, result.stdout, " \n\r\t");
+    return std.fmt.parseInt(i64, trimmed, 10) catch return ChangelogError.GitError;
+}
+
 // --- Tests ---
 
 test "ChangelogError enum exists" {
@@ -321,4 +385,50 @@ test "parseDateToTimestamp returns null for invalid date" {
     try std.testing.expectEqual(@as(?i64, null), parseDateToTimestamp("invalid"));
     try std.testing.expectEqual(@as(?i64, null), parseDateToTimestamp("2024"));
     try std.testing.expectEqual(@as(?i64, null), parseDateToTimestamp(""));
+}
+
+test "ChangelogArgs supports since_tag field" {
+    const changelog_args = args.ChangelogArgs{
+        .since_tag = "v1.0.0",
+    };
+    try std.testing.expectEqualStrings("v1.0.0", changelog_args.since_tag.?);
+}
+
+test "ChangelogArgs supports since_commit field" {
+    const changelog_args = args.ChangelogArgs{
+        .since_commit = "abc123",
+    };
+    try std.testing.expectEqualStrings("abc123", changelog_args.since_commit.?);
+}
+
+test "parse changelog with since-tag flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "changelog", "--since-tag", "v1.0.0" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .changelog => |c| {
+            try std.testing.expect(c.since_tag != null);
+            try std.testing.expectEqualStrings("v1.0.0", c.since_tag.?);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse changelog with since-commit flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "changelog", "--since-commit", "abc123def" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .changelog => |c| {
+            try std.testing.expect(c.since_commit != null);
+            try std.testing.expectEqualStrings("abc123def", c.since_commit.?);
+        },
+        else => try std.testing.expect(false),
+    }
 }
