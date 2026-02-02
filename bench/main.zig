@@ -10,8 +10,7 @@ pub const Timer = struct {
     }
 
     pub fn elapsedMs(self: Timer) i64 {
-        const now = std.time.nanoTimestamp();
-        const elapsed_ns = now - self.start;
+        const elapsed_ns = std.time.nanoTimestamp() - self.start;
         return @intCast(@divTrunc(elapsed_ns, 1_000_000));
     }
 };
@@ -22,24 +21,30 @@ pub const RunResult = struct {
     elapsed_ms: i64,
 };
 
-/// Run a command and return exit code + elapsed time
-pub fn runCommand(allocator: Allocator, argv: []const []const u8, cwd: ?[]const u8) !RunResult {
-    const timer = Timer.begin();
-
+/// Spawn a child process with stdout/stderr ignored
+fn spawnChild(allocator: Allocator, argv: []const []const u8, cwd: ?[]const u8) std.process.Child {
     var child = std.process.Child.init(argv, allocator);
     child.cwd = cwd;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
+    return child;
+}
 
-    const term = try child.spawnAndWait();
-
-    const exit_code: u8 = switch (term) {
+/// Extract exit code from termination status
+fn exitCode(term: std.process.Child.Term) u8 {
+    return switch (term) {
         .Exited => |code| code,
         else => 255,
     };
+}
 
+/// Run a command and return exit code + elapsed time
+pub fn runCommand(allocator: Allocator, argv: []const []const u8, cwd: ?[]const u8) !RunResult {
+    const timer = Timer.begin();
+    var child = spawnChild(allocator, argv, cwd);
+    const term = try child.spawnAndWait();
     return .{
-        .exit_code = exit_code,
+        .exit_code = exitCode(term),
         .elapsed_ms = timer.elapsedMs(),
     };
 }
@@ -47,16 +52,10 @@ pub fn runCommand(allocator: Allocator, argv: []const []const u8, cwd: ?[]const 
 /// Run a command N times and return total elapsed time
 pub fn runCommandLoop(allocator: Allocator, argv: []const []const u8, cwd: ?[]const u8, count: usize) !i64 {
     const timer = Timer.begin();
-
     for (0..count) |_| {
-        var child = std.process.Child.init(argv, allocator);
-        child.cwd = cwd;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
-
+        var child = spawnChild(allocator, argv, cwd);
         _ = try child.spawnAndWait();
     }
-
     return timer.elapsedMs();
 }
 
@@ -68,16 +67,9 @@ pub const TempDir = struct {
     pub fn create(allocator: Allocator, prefix: []const u8) !TempDir {
         const timestamp = std.time.timestamp();
         const path = try std.fmt.allocPrint(allocator, "sandbox/{s}_{d}", .{ prefix, timestamp });
-
-        std.fs.cwd().makePath(path) catch |err| {
-            allocator.free(path);
-            return err;
-        };
-
-        return .{
-            .path = path,
-            .allocator = allocator,
-        };
+        errdefer allocator.free(path);
+        try std.fs.cwd().makePath(path);
+        return .{ .path = path, .allocator = allocator };
     }
 
     pub fn cleanup(self: *TempDir) void {
@@ -93,17 +85,12 @@ pub fn findBz(allocator: Allocator) ![]const u8 {
         return path;
     } else |_| {}
 
-    // Default: zig-out/bin/bz relative to cwd, converted to absolute
     const default = "zig-out/bin/bz";
-    std.fs.cwd().access(default, .{}) catch {
-        return error.BinaryNotFound;
-    };
+    std.fs.cwd().access(default, .{}) catch return error.BinaryNotFound;
 
-    // Get absolute path
     const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
-
-    return try std.fs.path.join(allocator, &.{ cwd_path, default });
+    return std.fs.path.join(allocator, &.{ cwd_path, default });
 }
 
 /// Find the br binary via BR_PATH env var or PATH
@@ -112,46 +99,39 @@ pub fn findBr(allocator: Allocator) ![]const u8 {
         return path;
     } else |_| {}
 
-    // Try to find 'br' in PATH using which and capture output
     var child = std.process.Child.init(&.{ "which", "br" }, allocator);
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
-
     _ = try child.spawn();
 
-    // Read stdout using a buffer
     var output_buf: [4096]u8 = undefined;
-    const stdout_file = child.stdout.?;
-    const bytes_read = try stdout_file.readAll(&output_buf);
-    const output = output_buf[0..bytes_read];
-
+    const bytes_read = try child.stdout.?.readAll(&output_buf);
     const term = try child.wait();
 
     if (term == .Exited and term.Exited == 0) {
-        // Remove trailing newline from which output
-        const trimmed = std.mem.trim(u8, output, "\n\r ");
-        return try allocator.dupe(u8, trimmed);
+        const trimmed = std.mem.trim(u8, output_buf[0..bytes_read], "\n\r ");
+        return allocator.dupe(u8, trimmed);
     }
-
     return error.BinaryNotFound;
 }
 
-/// Print formatted message to file
-pub fn print(allocator: Allocator, file: std.fs.File, comptime fmt: []const u8, args: anytype) !void {
+/// Simple print helper that allocates and writes
+pub fn print(allocator: Allocator, comptime fmt: []const u8, args: anytype) !void {
     const msg = try std.fmt.allocPrint(allocator, fmt, args);
     defer allocator.free(msg);
-    try file.writeAll(msg);
+    try std.fs.File.stdout().writeAll(msg);
 }
 
 /// Print a formatted table row (operation name + time)
-pub fn printRow(allocator: Allocator, file: std.fs.File, operation: []const u8, time_ms: i64) !void {
-    const ms: u64 = @intCast(time_ms);
-    try print(allocator, file, "{s: <20} {: >8}ms\n", .{ operation, ms });
+pub fn printRow(allocator: Allocator, operation: []const u8, time_ms: i64) !void {
+    try print(allocator, "{s: <20} {: >8}ms\n", .{ operation, @as(u64, @intCast(time_ms)) });
 }
 
 /// Print comparison table row (operation + bz time + br time)
-pub fn printCompareRow(allocator: Allocator, file: std.fs.File, operation: []const u8, bz_ms: i64, br_ms: i64) !void {
-    const bz: u64 = @intCast(bz_ms);
-    const br: u64 = @intCast(br_ms);
-    try print(allocator, file, "{s: <20} {: >8}ms {: >8}ms\n", .{ operation, bz, br });
+pub fn printCompareRow(allocator: Allocator, operation: []const u8, bz_ms: i64, br_ms: i64) !void {
+    try print(allocator, "{s: <20} {: >8}ms {: >8}ms\n", .{
+        operation,
+        @as(u64, @intCast(bz_ms)),
+        @as(u64, @intCast(br_ms)),
+    });
 }
