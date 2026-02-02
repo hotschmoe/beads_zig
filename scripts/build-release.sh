@@ -197,11 +197,7 @@ list_artifacts() {
     for file in "${RELEASE_DIR}"/${BINARY_NAME}-*; do
         if [[ -f "$file" && ! "$file" == *.sha256 ]]; then
             local size
-            if [[ "$(uname -s)" == "Darwin" ]]; then
-                size=$(du -h "$file" | cut -f1)
-            else
-                size=$(du -h "$file" | cut -f1)
-            fi
+            size=$(du -h "$file" | cut -f1)
 
             local checksum="none"
             if [[ -f "${file}.sha256" ]]; then

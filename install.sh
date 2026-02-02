@@ -58,7 +58,6 @@ if [ "$IS_TTY" -eq 1 ] && [ -z "${NO_COLOR:-}" ]; then
     # Cursor control
     CURSOR_HIDE='\033[?25l'
     CURSOR_SHOW='\033[?25h'
-    CURSOR_UP='\033[1A'
     CLEAR_LINE='\033[2K'
 else
     RED=''
@@ -71,7 +70,6 @@ else
     NC=''
     CURSOR_HIDE=''
     CURSOR_SHOW=''
-    CURSOR_UP=''
     CLEAR_LINE=''
 fi
 
