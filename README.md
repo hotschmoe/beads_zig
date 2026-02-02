@@ -44,6 +44,53 @@ beads_zig (`bz`) is a command-line issue tracker that lives in your git reposito
 
 No C dependencies. No SQLite. Pure Zig.
 
+## Installation
+
+### Download Pre-built Binary
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/hotschmoe/beads_zig/releases).
+
+**Linux (x86_64)**:
+```bash
+curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-linux-x86_64 -o bz
+chmod +x bz
+sudo mv bz /usr/local/bin/
+```
+
+**Linux (ARM64)**:
+```bash
+curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-linux-aarch64 -o bz
+chmod +x bz
+sudo mv bz /usr/local/bin/
+```
+
+**macOS (Apple Silicon)**:
+```bash
+curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-macos-aarch64 -o bz
+chmod +x bz
+sudo mv bz /usr/local/bin/
+```
+
+**macOS (Intel)**:
+```bash
+curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-macos-x86_64 -o bz
+chmod +x bz
+sudo mv bz /usr/local/bin/
+```
+
+**Windows (x86_64)**:
+```powershell
+# Download bz.exe from releases page and add to PATH
+# Or using PowerShell:
+Invoke-WebRequest -Uri "https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-windows-x86_64.exe" -OutFile "bz.exe"
+# Move to a directory in your PATH, e.g.:
+Move-Item bz.exe C:\Windows\System32\
+```
+
+### Build from Source
+
+Requires Zig 0.15.2 or later. See [Building](#building) below.
+
 ## Building
 
 Requires Zig 0.15.2 or later.

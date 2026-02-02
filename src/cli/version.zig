@@ -6,7 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const output = @import("../output/mod.zig");
 
-pub const VERSION = "0.1.0";
+pub const VERSION = "0.1.5";
 
 pub const VersionError = error{
     WriteError,
