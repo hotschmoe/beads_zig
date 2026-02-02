@@ -250,14 +250,10 @@ test "batch writes: 1 agent, 10 issues, zero corruption" {
     try testing.expectEqual(success_count, @as(u32, @intCast(parsed.value.issues.len)));
 }
 
-// Chaos test: spawn agents and send stop signals to simulate crashes.
+// Chaos test: spawn concurrent bz processes and kill some mid-execution.
 // Verifies that committed writes are visible and no corruption occurs.
-// Note: This test uses /bin/sh and is Unix-only.
+// Cross-platform: uses pure Zig process spawning (no shell required).
 test "chaos: concurrent writes with interrupts verify data integrity" {
-    if (builtin.os.tag == .windows) {
-        // Skip on Windows - requires /bin/sh
-        return error.SkipZigTest;
-    }
     const allocator = testing.allocator;
 
     // Create isolated test directory
@@ -277,48 +273,57 @@ test "chaos: concurrent writes with interrupts verify data integrity" {
     const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
     defer allocator.free(bz_path);
 
-    // Spawn agents with longer-running loops
+    // Spawn many concurrent bz processes to create chaos
     const num_agents = 5;
-    var children: [num_agents]?process.Child = [_]?process.Child{null} ** num_agents;
+    const writes_per_agent = 20;
+    const max_children = num_agents * writes_per_agent;
 
-    for (&children, 0..) |*child_ptr, i| {
-        var title_buf: [64]u8 = undefined;
-        const title = std.fmt.bufPrint(&title_buf, "Chaos{d}Issue", .{i}) catch continue;
+    var children = try std.ArrayList(process.Child).initCapacity(allocator, max_children);
+    defer children.deinit(allocator);
 
-        const shell_cmd = std.fmt.allocPrint(allocator, "for j in $(seq 0 49); do {s} q \"{s}$j\" --quiet 2>/dev/null || true; sleep 0.01; done", .{ bz_path, title }) catch continue;
-        defer allocator.free(shell_cmd);
+    // Pre-allocate title strings (must outlive child processes)
+    var titles: [max_children][]u8 = undefined;
+    var title_count: usize = 0;
 
-        var child = process.Child.init(&.{ "/bin/sh", "-c", shell_cmd }, allocator);
-        child.cwd = test_dir;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
+    // Spawn processes rapidly - they'll contend for locks
+    for (0..num_agents) |i| {
+        for (0..writes_per_agent) |j| {
+            const title = std.fmt.allocPrint(allocator, "Chaos{d}Issue{d}", .{ i, j }) catch continue;
+            titles[title_count] = title;
+            title_count += 1;
 
-        child.spawn() catch continue;
-        child_ptr.* = child;
-    }
+            var child = process.Child.init(&.{ bz_path, "q", title, "--quiet" }, allocator);
+            child.cwd = test_dir;
+            child.stdout_behavior = .Ignore;
+            child.stderr_behavior = .Ignore;
 
-    // Let agents run briefly, then terminate some
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    // Kill some agents mid-execution (simulating crashes)
-    for (&children, 0..) |*child_ptr, i| {
-        if (i % 2 == 0) {
-            if (child_ptr.*) |*child| {
-                // Terminate process to simulate crash (cross-platform)
-                _ = child.kill() catch null;
-            }
+            child.spawn() catch {
+                allocator.free(title);
+                title_count -= 1;
+                continue;
+            };
+            children.appendAssumeCapacity(child);
         }
     }
 
-    // Wait for remaining agents
-    for (&children) |*child_ptr| {
-        if (child_ptr.*) |*child| {
-            if (child.stdout) |stdout_file| {
-                const stdout_bytes = stdout_file.readToEndAlloc(allocator, 10 * 1024 * 1024) catch &[_]u8{};
-                allocator.free(stdout_bytes);
-            }
-            _ = child.wait() catch {};
+    // Let some processes run, then kill a subset to simulate crashes
+    std.Thread.sleep(30 * std.time.ns_per_ms);
+
+    // Kill every third process mid-execution
+    for (children.items, 0..) |*child, i| {
+        if (i % 3 == 0) {
+            _ = child.kill() catch {};
         }
+    }
+
+    // Wait for all processes to complete
+    for (children.items) |*child| {
+        _ = child.wait() catch {};
+    }
+
+    // Free title strings
+    for (titles[0..title_count]) |title| {
+        allocator.free(title);
     }
 
     // Verify data integrity
@@ -338,7 +343,8 @@ test "chaos: concurrent writes with interrupts verify data integrity" {
     };
     defer parsed.deinit();
 
-    // Core assertion: some issues should have been created
+    // Core assertion: some issues should have been created (despite kills)
+    std.debug.print("\nChaos test: {d} issues created\n", .{parsed.value.issues.len});
     try testing.expect(parsed.value.issues.len > 0);
 
     // Verify each visible issue has valid, uncorrupted data
