@@ -1,16 +1,4 @@
-# beads_zig configuration
-id:
-  prefix: "bd"
-  min_hash_length: 3
-  max_hash_length: 8
-
-defaults:
-  priority: 2
-  issue_type: "task"
-
-sync:
-  auto_flush: true
-  auto_import: true
-
-output:
-  color: true
+# Beads Project Configuration
+# issue_prefix: bd
+# default_priority: 2
+# default_type: task

@@ -8,7 +8,7 @@ Each gap has an associated bead for tracking implementation.
 ## Commands Missing in bz
 
 ### 1. `query` - Saved Queries
-**Bead:** `bd-34z`
+**Bead:** `bd-258`
 
 br supports saving, running, listing, and deleting named queries:
 ```bash
@@ -29,7 +29,7 @@ br query delete my-bugs
 ---
 
 ### 2. `upgrade` - Self-Upgrade
-**Bead:** `bd-idb`
+**Bead:** `bd-274`
 
 br can upgrade itself:
 ```bash
@@ -43,7 +43,7 @@ br upgrade --version 0.2.0  # Specific version
 ---
 
 ### 3. `where` - Show Active Directory
-**Bead:** `bd-moo`
+**Bead:** `bd-1ec`
 
 Simple utility to show the resolved .beads directory path:
 ```bash
@@ -58,7 +58,7 @@ Useful when .beads redirects are in play.
 ## Missing Fields on Issues
 
 ### 4. Issue Model Fields (CONSOLIDATED)
-**Bead:** `bd-20s` (consolidated from bd-20s, bd-p51, bd-7qo, bd-nf7)
+**Bead:** `bd-2oo`
 
 Add missing optional string fields to Issue model:
 
@@ -81,7 +81,7 @@ br create "Bug" --external-ref "https://github.com/org/repo/issues/123"
 ---
 
 ### 5. `ephemeral` Flag
-**Bead:** `bd-ph2`
+**Bead:** `bd-1h1`
 
 Mark issues as non-exported (not written to JSONL):
 ```bash
@@ -95,7 +95,7 @@ Useful for local-only tracking that shouldn't be committed.
 ---
 
 ### 6. `--claim` Flag
-**Bead:** `bd-1yr`
+**Bead:** `bd-kqn`
 
 Atomic operation: set assignee to actor AND status to in_progress:
 ```bash
@@ -107,7 +107,7 @@ br update BD-1 --claim  # Sets assignee=$ACTOR, status=in_progress
 ---
 
 ### 7. `--session` Tracking
-**Bead:** `bd-gyy`
+**Bead:** `bd-2zk`
 
 Track which session closed an issue:
 ```bash
@@ -124,7 +124,7 @@ Useful for agent/automation tracking.
 ## Missing Filter Options
 
 ### 8. `--label-any` (OR Logic)
-**Bead:** `bd-1n0`
+**Bead:** `bd-1xy`
 
 br supports both AND and OR logic for label filters:
 ```bash
@@ -139,7 +139,7 @@ bz currently only supports AND logic.
 ---
 
 ### 9. `--priority-min` / `--priority-max`
-**Bead:** `bd-2y0`
+**Bead:** `bd-2sa`
 
 Filter by priority range:
 ```bash
@@ -151,7 +151,7 @@ br list --priority-min 1 --priority-max 3  # P1, P2, or P3
 ---
 
 ### 10. `--title-contains` / `--desc-contains` / `--notes-contains`
-**Bead:** `bd-1no`
+**Bead:** `bd-3gs`
 
 Substring filters for specific fields:
 ```bash
@@ -167,7 +167,7 @@ More targeted than full-text search.
 ---
 
 ### 11. `--overdue` Filter
-**Bead:** `bd-uxk`
+**Bead:** `bd-1px`
 
 Filter for issues past their due date:
 ```bash
@@ -180,7 +180,7 @@ br ready --overdue  # Ready AND overdue
 ---
 
 ### 12. `--deferred` Include Flag
-**Bead:** `bd-2zh`
+**Bead:** `bd-3hb`
 
 Include deferred issues in list output:
 ```bash
@@ -193,7 +193,7 @@ bz may already filter these out by default.
 ---
 
 ### 13. `--parent` / `--recursive` Filters
-**Bead:** `bd-hbc`
+**Bead:** `bd-3ui`
 
 Filter to children of a parent issue:
 ```bash
@@ -208,7 +208,7 @@ br ready --parent BD-1 --recursive  # All descendants
 ## Missing Output Options
 
 ### 14. CSV Output Format
-**Bead:** `bd-225`
+**Bead:** `bd-3k1`
 
 Export as CSV:
 ```bash
@@ -220,8 +220,30 @@ br list --format csv --fields id,title,status,priority
 
 ---
 
-### 15. `--wrap` Long Lines
-**Bead:** `bd-2hx`
+### 15. JSON Output Field Completeness
+**Bead:** `bd-175`
+
+The `--json` output for ready/blocked/list is too minimal for agent consumption:
+
+| Field | bz ready | Agents need for |
+|-------|----------|-----------------|
+| id | Yes | Task identification |
+| title | Yes | Display |
+| priority | Yes | Sorting |
+| description | No | Display, context |
+| labels/tags | No | Grouping related tasks |
+| created_at | No | Priority tie-breaking (FIFO) |
+| blocks | No | Dependency chain analysis |
+| status | No | Filtering (defaults to open) |
+
+**Impact:** Agent functions like `getRelatedBeads()` fail because they can't group by tags or analyze dependency chains.
+
+**Solution:** Add `--full` flag or enrich default output to include commonly-needed fields.
+
+---
+
+### 16. `--wrap` Long Lines
+**Bead:** `bd-1jh`
 
 Wrap long text in terminal output:
 ```bash
@@ -233,8 +255,8 @@ br show BD-1 --wrap
 
 ---
 
-### 16. `--stats` Token Savings
-**Bead:** `bd-190`
+### 17. `--stats` Token Savings
+**Bead:** `bd-16g`
 
 Show TOON format token savings:
 ```bash
@@ -247,8 +269,8 @@ br list --toon --stats
 
 ---
 
-### 17. `--robot` Machine Output
-**Bead:** `bd-3q3`
+### 18. `--robot` Machine Output
+**Bead:** `bd-jup`
 
 Consistent machine-readable output mode:
 ```bash
@@ -262,8 +284,8 @@ Different from `--json` - simpler, line-oriented format.
 
 ## Missing Delete Options (CONSOLIDATED)
 
-### 18. Delete Command Enhancements
-**Bead:** `bd-3ps` (consolidated from bd-1jj, bd-3ps, bd-35o, bd-17w)
+### 19. Delete Command Enhancements
+**Bead:** `bd-18y`
 
 Add missing delete command options:
 
@@ -288,8 +310,8 @@ br delete BD-1 --cascade --dry-run
 
 ## Missing Dependency Features (CONSOLIDATED)
 
-### 19. Dependency Command Enhancements
-**Bead:** `bd-1ww` (consolidated from bd-1ww, bd-6jr, bd-1be, bd-12v)
+### 20. Dependency Command Enhancements
+**Bead:** `bd-1y3`
 
 Enhance the `dep` command with additional features:
 
@@ -321,8 +343,8 @@ br dep tree BD-1 --format mermaid
 
 ## Missing Label Features
 
-### 20. `label rename` Subcommand
-**Bead:** `bd-99t`
+### 21. `label rename` Subcommand
+**Bead:** `bd-82t`
 
 Rename a label across all issues:
 ```bash
@@ -335,8 +357,8 @@ br label rename old-name new-name
 
 ## Missing Epic Features (CONSOLIDATED)
 
-### 21. Epic Management Enhancements
-**Bead:** `bd-z94` (consolidated from bd-z94, bd-1xc)
+### 22. Epic Management Enhancements
+**Bead:** `bd-1rb`
 
 Add epic management subcommands:
 
@@ -358,8 +380,8 @@ br epic close-eligible
 
 ## Missing Sync Features
 
-### 22. `--merge` 3-Way Merge
-**Bead:** `bd-2jl`
+### 23. `--merge` 3-Way Merge
+**Bead:** `bd-199`
 
 Perform 3-way merge of local DB and remote JSONL:
 ```bash
@@ -370,8 +392,8 @@ Handles concurrent edits from multiple sources.
 
 ---
 
-### 23. `--status` Sync Status
-**Bead:** `bd-35p`
+### 24. `--status` Sync Status
+**Bead:** `bd-35a`
 
 Show sync status without making changes:
 ```bash
@@ -382,8 +404,8 @@ br sync --status
 
 ---
 
-### 24. `--manifest` Write Manifest
-**Bead:** `bd-148`
+### 25. `--manifest` Write Manifest
+**Bead:** `bd-267`
 
 Write manifest file with export summary:
 ```bash
@@ -393,8 +415,8 @@ br sync --flush-only --manifest
 
 ---
 
-### 25. Sync Policy Options (CONSOLIDATED)
-**Bead:** `bd-2m1` (consolidated from bd-2m1, bd-2sj, bd-60g)
+### 26. Sync Policy Options (CONSOLIDATED)
+**Bead:** `bd-14z`
 
 Add policy flags for sync edge case handling:
 
@@ -414,8 +436,8 @@ br sync --import-only --rename-prefix
 
 ## Missing History Features
 
-### 26. History Backup Management
-**Bead:** `bd-aqe`
+### 27. History Backup Management
+**Bead:** `bd-17x`
 
 br's `history` manages JSONL backups (bz uses it for issue events):
 ```bash
@@ -431,8 +453,8 @@ Consider adding as `backup` command to avoid conflict with bz's `history`.
 
 ## Missing Audit Features (CONSOLIDATED)
 
-### 27. Audit Command
-**Bead:** `bd-87v` (consolidated from bd-87v, bd-1wk, bd-2qc)
+### 28. Audit Command
+**Bead:** `bd-nks`
 
 Add `audit` command for LLM/tool interaction tracking:
 
@@ -455,8 +477,8 @@ br audit summary --days 7
 
 ## Missing Stats Features
 
-### 28. `--activity` Git-Based Stats
-**Bead:** `bd-5nf`
+### 29. `--activity` Git-Based Stats
+**Bead:** `bd-3el`
 
 Show git-based activity statistics:
 ```bash
@@ -470,8 +492,8 @@ Correlates issue activity with git commits.
 
 ## Missing Changelog Features
 
-### 29. `--since-tag` / `--since-commit`
-**Bead:** `bd-1qm`
+### 30. `--since-tag` / `--since-commit`
+**Bead:** `bd-3uk`
 
 Git-aware date references for changelog:
 ```bash
@@ -483,8 +505,8 @@ br changelog --since-commit abc123
 
 ## Missing Graph Features (CONSOLIDATED)
 
-### 30. Graph Command Enhancements
-**Bead:** `bd-2is` (consolidated from bd-2is, bd-1yt)
+### 31. Graph Command Enhancements
+**Bead:** `bd-24r`
 
 Add graph output options:
 
@@ -502,8 +524,8 @@ br graph BD-1 --compact
 
 ## Missing Create Options
 
-### 31. `--dry-run` on Create
-**Bead:** `bd-1t4`
+### 32. `--dry-run` on Create
+**Bead:** `bd-1wk`
 
 Preview issue creation:
 ```bash
@@ -513,65 +535,239 @@ br create "New feature" --type feature --dry-run
 
 ---
 
+## Bug Fixes
+
+### 33. Global Flags Before Subcommand
+**Bead:** `bd-2bq`
+
+Global flags like `--json` only work after the subcommand, not before:
+
+```bash
+bz ready --json    # Works (correct)
+bz --json ready    # Fails (wrong)
+```
+
+**Expected:** Both orderings should work, matching CLI conventions (git, docker, etc.).
+
+**Affected flags:** `--json`, `--toon`, `--quiet`, `--format`
+
+**Files:** `src/cli/args.zig`
+
+---
+
+## Release & Distribution Infrastructure
+
+These are bz-specific infrastructure tasks (not feature gaps vs br).
+
+### 34. GitHub Actions Release Workflow
+**Bead:** `bd-2y0`
+
+Add automated workflow for cross-platform binary releases:
+```yaml
+# .github/workflows/release.yml
+# Triggers on tag push, builds for:
+# - Linux x86_64, ARM64
+# - macOS Intel, Silicon
+# - Windows x86_64
+# Uploads tarballs + SHA256 checksums to GitHub releases
+```
+
+---
+
+### 35. Installer Script
+**Bead:** `bd-21u`
+
+Create one-liner installer script with platform detection:
+```bash
+curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
+# Detects: Linux x86_64/ARM64, macOS Intel/Silicon
+# Downloads appropriate binary, installs to ~/.local/bin or /usr/local/bin
+```
+
+---
+
+### 36. Build Release Script
+**Bead:** `bd-jx2`
+
+Create `scripts/build-release.sh` for local cross-compilation testing:
+```bash
+./scripts/build-release.sh
+# Builds all targets locally for testing before CI release
+```
+
+---
+
+### 37. Rich Installer Output
+**Bead:** `bd-11l`
+
+Add rich terminal output to install.sh:
+- Colors for success/warning/error
+- Progress spinners during download
+- Progress bars for large downloads
+
+---
+
+### 38. Easy Mode for Installer
+**Bead:** `bd-56p`
+
+Add `--easy-mode` flag to install.sh:
+```bash
+curl -fsSL .../install.sh | bash -s -- --easy-mode
+# Auto-adds binary to PATH (modifies .bashrc/.zshrc)
+```
+
+---
+
+### 39. Checksum Verification
+**Bead:** `bd-b6w`
+
+Add SHA256 checksum verification to install.sh and `bz update`:
+```bash
+# Installer verifies downloaded binary against .sha256 file
+# bz update --verify (default: on)
+```
+
+---
+
+## Self-Update Infrastructure
+
+### 40. `bz update` Command
+**Bead:** `bd-1nz`
+
+Implement self-updating binary command:
+```bash
+bz update           # Update to latest release
+bz update --version 0.3.0  # Specific version
+```
+
+Downloads from GitHub releases, replaces current binary.
+
+---
+
+### 41. Update Command Flags
+**Bead:** `bd-3cy`
+
+Add `--check` and `--dry-run` flags to `bz update`:
+```bash
+bz update --check    # Check for updates without installing
+bz update --dry-run  # Show what would be updated
+```
+
+---
+
+## Database Migration Infrastructure
+
+### 42. Migration Engine
+**Bead:** `bd-12y`
+
+Implement migration engine for JSONL database upgrades between versions:
+- Detect schema version on load
+- Apply migrations sequentially
+- Backup before migration
+- Rollback on failure
+
+---
+
+### 43. Schema Versioning
+**Bead:** `bd-29y`
+
+Add JSONL schema versioning to metadata.json:
+```json
+{
+  "schema_version": 1,
+  "created_at": "...",
+  "bz_version": "0.2.0"
+}
+```
+
+Enables migration engine to know which migrations to apply.
+
+---
+
+## Maintenance Tasks
+
+### 44. Document Cleanup
+**Bead:** `bd-1nm`
+
+Review, clean up, and archive floating documents:
+- Identify outdated docs
+- Consolidate overlapping content
+- Archive deprecated files to `.archive/`
+
+---
+
+### 45. ID Generation Review
+**Bead:** `bd-2xi`
+
+Review bd ID generation algorithm:
+- Current implementation may have over-simplified
+- Evaluate collision probability
+- Consider length vs. readability tradeoffs
+
+---
+
 ## Summary
 
 | Category | Count | Primary Bead |
 |----------|-------|--------------|
-| Missing Commands | 3 | bd-34z, bd-idb, bd-moo |
-| Missing Fields | 4 | bd-20s (consolidated), bd-ph2, bd-1yr, bd-gyy |
-| Missing Filters | 6 | bd-1n0, bd-2y0, bd-1no, bd-uxk, bd-2zh, bd-hbc |
-| Missing Output Options | 4 | bd-225, bd-2hx, bd-190, bd-3q3 |
-| Missing Delete Options | 1 | bd-3ps (consolidated) |
-| Missing Dependency Features | 1 | bd-1ww (consolidated) |
-| Missing Label Features | 1 | bd-99t |
-| Missing Epic Features | 1 | bd-z94 (consolidated) |
-| Missing Sync Features | 4 | bd-2jl, bd-35p, bd-148, bd-2m1 (consolidated) |
-| Missing History Features | 1 | bd-aqe |
-| Missing Audit Features | 1 | bd-87v (consolidated) |
-| Missing Stats Features | 1 | bd-5nf |
-| Missing Changelog Features | 1 | bd-1qm |
-| Missing Graph Features | 1 | bd-2is (consolidated) |
-| Missing Create Options | 1 | bd-1t4 |
-| **Total** | **31** | (was 46, consolidated 15) |
+| Missing Commands | 3 | bd-258, bd-274, bd-1ec |
+| Missing Fields | 4 | bd-2oo (consolidated), bd-1h1, bd-kqn, bd-2zk |
+| Missing Filters | 6 | bd-1xy, bd-2sa, bd-3gs, bd-1px, bd-3hb, bd-3ui |
+| Missing Output Options | 5 | bd-3k1, bd-175, bd-1jh, bd-16g, bd-jup |
+| Missing Delete Options | 1 | bd-18y (consolidated) |
+| Missing Dependency Features | 1 | bd-1y3 (consolidated) |
+| Missing Label Features | 1 | bd-82t |
+| Missing Epic Features | 1 | bd-1rb (consolidated) |
+| Missing Sync Features | 4 | bd-199, bd-35a, bd-267, bd-14z (consolidated) |
+| Missing History Features | 1 | bd-17x |
+| Missing Audit Features | 1 | bd-nks (consolidated) |
+| Missing Stats Features | 1 | bd-3el |
+| Missing Changelog Features | 1 | bd-3uk |
+| Missing Graph Features | 1 | bd-24r (consolidated) |
+| Missing Create Options | 1 | bd-1wk |
+| Release & Distribution | 6 | bd-2y0, bd-21u, bd-jx2, bd-11l, bd-56p, bd-b6w |
+| Self-Update Infrastructure | 2 | bd-1nz, bd-3cy |
+| Database Migration | 2 | bd-12y, bd-29y |
+| Maintenance Tasks | 2 | bd-1nm, bd-2xi |
+| Bug Fixes | 1 | bd-2bq |
+| **Total** | **45** | (32 feature gaps + 12 infrastructure + 1 bug) |
 
 ---
 
-## Consolidation Summary
+## Consolidation Notes
 
-The following beads were consolidated:
+The following beads represent consolidated features (multiple related items combined into one bead):
 
-| Primary Bead | Absorbed Beads | Reason |
-|--------------|----------------|--------|
-| bd-20s | bd-p51, bd-7qo, bd-nf7 | All add optional string fields to Issue model |
-| bd-3ps | bd-1jj, bd-35o, bd-17w | All delete command enhancements |
-| bd-1ww | bd-6jr, bd-1be, bd-12v | All dependency command enhancements |
-| bd-z94 | bd-1xc | Both epic subcommands |
-| bd-2m1 | bd-2sj, bd-60g | All sync policy options |
-| bd-87v | bd-1wk, bd-2qc | All audit command subcommands |
-| bd-2is | bd-1yt | Both graph output enhancements |
-
-**Beads to close:** bd-p51, bd-7qo, bd-nf7, bd-1jj, bd-35o, bd-17w, bd-6jr, bd-1be, bd-12v, bd-1xc, bd-2sj, bd-60g, bd-1wk, bd-2qc, bd-1yt
+| Bead | Consolidated Scope |
+|------|-------------------|
+| bd-2oo | Issue model fields: owner, design, acceptance_criteria, external_ref |
+| bd-18y | Delete enhancements: --from-file, --cascade, --hard, --dry-run |
+| bd-1y3 | Dependency enhancements: types, --metadata, --direction, mermaid |
+| bd-1rb | Epic management: status, close-eligible |
+| bd-14z | Sync policy: --error-policy, --orphans, --rename-prefix |
+| bd-nks | Audit command: record, label, log, summary |
+| bd-24r | Graph enhancements: --all, --compact |
 
 ---
 
 ## Priority Guide
 
 **P1 - High Value (implement first):**
-- bd-1yr: `--claim` flag (atomic assignee + in_progress)
-- bd-1n0: `--label-any` (OR logic)
-- bd-99t: `label rename` subcommand
-- bd-3ps: Delete enhancements (consolidated)
-- bd-z94: Epic management (consolidated)
+- bd-kqn: `--claim` flag (atomic assignee + in_progress)
+- bd-1xy: `--label-any` (OR logic)
+- bd-82t: `label rename` subcommand
+- bd-18y: Delete enhancements (consolidated)
+- bd-1rb: Epic management (consolidated)
 
 **P2 - Medium Value:**
-- bd-34z: `query` saved queries
-- bd-20s: Issue model fields (consolidated)
-- bd-225: CSV output format
-- bd-uxk: `--overdue` filter
-- bd-87v: Audit command (consolidated)
+- bd-258: `query` saved queries
+- bd-2oo: Issue model fields (consolidated)
+- bd-3k1: CSV output format
+- bd-1px: `--overdue` filter
+- bd-nks: Audit command (consolidated)
 
 **P3 - Lower Value:**
-- bd-idb: `upgrade` command
-- bd-moo: `where` command
-- bd-1ww: Dependency enhancements (consolidated)
-- bd-190: `--stats` token savings
+- bd-274: `upgrade` command
+- bd-1ec: `where` command
+- bd-1y3: Dependency enhancements (consolidated)
+- bd-16g: `--stats` token savings
