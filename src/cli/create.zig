@@ -119,6 +119,10 @@ pub fn run(
     issue.priority = priority;
     issue.issue_type = issue_type;
     issue.assignee = create_args.assignee;
+    issue.owner = create_args.owner;
+    issue.design = create_args.design;
+    issue.acceptance_criteria = create_args.acceptance_criteria;
+    issue.external_ref = create_args.external_ref;
     issue.created_by = actor;
     issue.due_at = .{ .value = due_at };
     issue.estimated_minutes = create_args.estimate;

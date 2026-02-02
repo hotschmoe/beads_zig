@@ -77,6 +77,22 @@ pub fn run(
         updates.assignee = a;
     }
 
+    if (update_args.owner) |o| {
+        updates.owner = o;
+    }
+
+    if (update_args.design) |d| {
+        updates.design = d;
+    }
+
+    if (update_args.acceptance_criteria) |ac| {
+        updates.acceptance_criteria = ac;
+    }
+
+    if (update_args.external_ref) |er| {
+        updates.external_ref = er;
+    }
+
     // Optimistic locking: pass expected version for compare-and-swap
     if (update_args.expected_version) |v| {
         updates.expected_version = v;

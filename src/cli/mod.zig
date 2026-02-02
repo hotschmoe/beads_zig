@@ -44,6 +44,7 @@ pub const metrics_cmd = @import("metrics.zig");
 pub const help = @import("help.zig");
 pub const query = @import("query.zig");
 pub const upgrade = @import("upgrade.zig");
+pub const where = @import("where.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -208,6 +209,10 @@ pub const UpgradeError = upgrade.UpgradeError;
 pub const UpgradeResult = upgrade.UpgradeResult;
 pub const runUpgrade = upgrade.run;
 pub const UpgradeArgs = args.UpgradeArgs;
+
+pub const WhereError = where.WhereError;
+pub const WhereResult = where.WhereResult;
+pub const runWhere = where.run;
 
 test {
     std.testing.refAllDecls(@This());

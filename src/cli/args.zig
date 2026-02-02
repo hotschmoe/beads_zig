@@ -35,6 +35,7 @@ pub const Command = union(enum) {
     config: ConfigArgs,
     orphans: OrphansArgs,
     lint: LintArgs,
+    where: void,
 
     // Issue CRUD
     create: CreateArgs,
@@ -110,6 +111,10 @@ pub const CreateArgs = struct {
     issue_type: ?[]const u8 = null,
     priority: ?[]const u8 = null,
     assignee: ?[]const u8 = null,
+    owner: ?[]const u8 = null,
+    design: ?[]const u8 = null,
+    acceptance_criteria: ?[]const u8 = null,
+    external_ref: ?[]const u8 = null,
     labels: []const []const u8 = &[_][]const u8{},
     deps: []const []const u8 = &[_][]const u8{},
     due: ?[]const u8 = null,
@@ -137,6 +142,10 @@ pub const UpdateArgs = struct {
     issue_type: ?[]const u8 = null,
     priority: ?[]const u8 = null,
     assignee: ?[]const u8 = null,
+    owner: ?[]const u8 = null,
+    design: ?[]const u8 = null,
+    acceptance_criteria: ?[]const u8 = null,
+    external_ref: ?[]const u8 = null,
     status: ?[]const u8 = null,
     /// Expected version for optimistic locking (compare-and-swap).
     expected_version: ?u64 = null,
@@ -637,6 +646,9 @@ pub const ArgParser = struct {
         if (std.mem.eql(u8, cmd, "lint")) {
             return .{ .lint = try self.parseLintArgs() };
         }
+        if (std.mem.eql(u8, cmd, "where")) {
+            return .{ .where = {} };
+        }
 
         // Issue CRUD
         if (std.mem.eql(u8, cmd, "create") or std.mem.eql(u8, cmd, "add") or std.mem.eql(u8, cmd, "new")) {
@@ -795,6 +807,14 @@ pub const ArgParser = struct {
                 result.priority = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-a", "--assignee")) {
                 result.assignee = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-o", "--owner")) {
+                result.owner = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--design")) {
+                result.design = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--acceptance-criteria")) {
+                result.acceptance_criteria = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--external-ref")) {
+                result.external_ref = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-l", "--label")) {
                 labels.append(self.allocator, self.next() orelse return error.MissingFlagValue) catch return error.InvalidArgument;
             } else if (self.consumeFlag("--depends-on", "--dep")) {
@@ -879,6 +899,14 @@ pub const ArgParser = struct {
                 result.priority = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-a", "--assignee")) {
                 result.assignee = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-o", "--owner")) {
+                result.owner = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--design")) {
+                result.design = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--acceptance-criteria")) {
+                result.acceptance_criteria = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--external-ref")) {
+                result.external_ref = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-s", "--status")) {
                 result.status = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-v", "--version")) {

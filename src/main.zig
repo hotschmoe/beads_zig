@@ -274,6 +274,11 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .where => {
+            _ = cli.runWhere(result.global, allocator) catch |err| switch (err) {
+                error.WriteError, error.WorkspaceNotFound => std.process.exit(1),
+            };
+        },
     }
 }
 
