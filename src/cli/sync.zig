@@ -34,6 +34,12 @@ pub const SyncResult = struct {
     issues_updated: ?usize = null,
     issues_added: ?usize = null,
     message: ?[]const u8 = null,
+    // Status-specific fields
+    db_count: ?usize = null,
+    jsonl_count: ?usize = null,
+    pending_export: ?usize = null,
+    // Manifest-specific fields
+    manifest_path: ?[]const u8 = null,
 };
 
 pub fn run(
@@ -48,8 +54,10 @@ pub fn run(
 
     const structured_output = global.isStructuredOutput();
 
-    if (sync_args.flush_only) {
-        try runFlush(&ctx, structured_output, global.quiet);
+    if (sync_args.status) {
+        try runStatus(&ctx, structured_output, global.quiet, allocator);
+    } else if (sync_args.flush_only) {
+        try runFlush(&ctx, structured_output, global.quiet, sync_args.manifest, allocator);
     } else if (sync_args.import_only) {
         try runImport(&ctx, structured_output, global.quiet, allocator);
     } else if (sync_args.merge) {
@@ -59,7 +67,7 @@ pub fn run(
     }
 }
 
-fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool) !void {
+fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_manifest: bool, allocator: std.mem.Allocator) !void {
     const count = ctx.store.issues.items.len;
 
     ctx.store.saveToFile() catch {
@@ -67,14 +75,25 @@ fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool) !void {
         return SyncError.ExportError;
     };
 
+    // Write manifest if requested
+    var manifest_path: ?[]const u8 = null;
+    if (write_manifest) {
+        manifest_path = try writeManifest(ctx, count, allocator);
+    }
+    defer if (manifest_path) |path| allocator.free(path);
+
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
             .success = true,
             .action = "flush",
             .issues_exported = count,
+            .manifest_path = manifest_path,
         });
     } else if (!quiet) {
         try ctx.output.success("Exported {d} issue(s) to JSONL", .{count});
+        if (manifest_path) |path| {
+            try ctx.output.info("Manifest written to {s}", .{path});
+        }
     }
 }
 
@@ -266,6 +285,86 @@ fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocato
     }
 }
 
+/// Show sync status without making changes.
+/// Reports: DB issue count, JSONL issue count, pending export count.
+fn runStatus(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
+    const db_count = ctx.store.issues.items.len;
+
+    // Count issues in JSONL file (without loading into store)
+    const jsonl_count = countJsonlIssues(ctx.store.jsonl_path, allocator) catch |err| switch (err) {
+        error.FileNotFound => 0,
+        else => return err,
+    };
+
+    // Count pending exports (dirty issues)
+    const pending_export = ctx.store.dirty_ids.count();
+
+    if (structured_output) {
+        try ctx.output.printJson(SyncResult{
+            .success = true,
+            .action = "status",
+            .db_count = db_count,
+            .jsonl_count = jsonl_count,
+            .pending_export = pending_export,
+        });
+    } else if (!quiet) {
+        try ctx.output.print("DB: {d} issues, JSONL: {d} issues\n", .{ db_count, jsonl_count });
+        if (pending_export > 0) {
+            try ctx.output.print("{d} issues pending export\n", .{pending_export});
+        } else {
+            try ctx.output.info("No pending changes", .{});
+        }
+    }
+}
+
+/// Count the number of issues in a JSONL file without fully parsing them.
+fn countJsonlIssues(path: []const u8, allocator: std.mem.Allocator) !usize {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 50); // 50MB max
+    defer allocator.free(content);
+
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len > 0 and trimmed[0] == '{') {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+/// Write a manifest file with export metadata.
+fn writeManifest(ctx: *CommandContext, issue_count: usize, allocator: std.mem.Allocator) ![]const u8 {
+    // Derive manifest path from jsonl_path
+    const dir_path = std.fs.path.dirname(ctx.store.jsonl_path) orelse ".beads";
+    const manifest_path = try std.fs.path.join(allocator, &.{ dir_path, "manifest.json" });
+    errdefer allocator.free(manifest_path);
+
+    const timestamp = std.time.timestamp();
+
+    // Build manifest JSON
+    var json_buf: std.ArrayListUnmanaged(u8) = .{};
+    defer json_buf.deinit(allocator);
+
+    const writer = json_buf.writer(allocator);
+    try writer.writeAll("{\n");
+    try writer.print("  \"exported_at\": {d},\n", .{timestamp});
+    try writer.print("  \"issue_count\": {d},\n", .{issue_count});
+    try writer.print("  \"jsonl_path\": \"{s}\",\n", .{ctx.store.jsonl_path});
+    try writer.print("  \"version\": \"0.1.0\"\n", .{});
+    try writer.writeAll("}\n");
+
+    // Write to file
+    const file = try std.fs.cwd().createFile(manifest_path, .{});
+    defer file.close();
+    try file.writeAll(json_buf.items);
+
+    return manifest_path;
+}
+
 /// Check if the JSONL file contains git merge conflict markers
 fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
     const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
@@ -350,4 +449,65 @@ test "hasMergeConflicts returns true for conflicted file" {
 test "hasMergeConflicts returns false for missing file" {
     const has_conflicts = try hasMergeConflicts("/nonexistent/path.jsonl", std.testing.allocator);
     try std.testing.expect(!has_conflicts);
+}
+
+test "countJsonlIssues counts valid JSON lines" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "sync_count");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    const test_path = try std.fs.path.join(allocator, &.{ test_dir, "count.jsonl" });
+    defer allocator.free(test_path);
+
+    const file = try std.fs.cwd().createFile(test_path, .{});
+    try file.writeAll("{\"id\":\"bd-1\"}\n{\"id\":\"bd-2\"}\n{\"id\":\"bd-3\"}\n");
+    file.close();
+
+    const count = try countJsonlIssues(test_path, allocator);
+    try std.testing.expectEqual(@as(usize, 3), count);
+}
+
+test "countJsonlIssues handles empty lines" {
+    const allocator = std.testing.allocator;
+    const test_dir = try test_util.createTestDir(allocator, "sync_count_empty");
+    defer allocator.free(test_dir);
+    defer test_util.cleanupTestDir(test_dir);
+
+    const test_path = try std.fs.path.join(allocator, &.{ test_dir, "count_empty.jsonl" });
+    defer allocator.free(test_path);
+
+    const file = try std.fs.cwd().createFile(test_path, .{});
+    try file.writeAll("{\"id\":\"bd-1\"}\n\n{\"id\":\"bd-2\"}\n  \n{\"id\":\"bd-3\"}\n");
+    file.close();
+
+    const count = try countJsonlIssues(test_path, allocator);
+    try std.testing.expectEqual(@as(usize, 3), count);
+}
+
+test "SyncResult with status fields" {
+    const result = SyncResult{
+        .success = true,
+        .action = "status",
+        .db_count = 45,
+        .jsonl_count = 43,
+        .pending_export = 2,
+    };
+    try std.testing.expect(result.success);
+    try std.testing.expectEqualStrings("status", result.action.?);
+    try std.testing.expectEqual(@as(usize, 45), result.db_count.?);
+    try std.testing.expectEqual(@as(usize, 43), result.jsonl_count.?);
+    try std.testing.expectEqual(@as(usize, 2), result.pending_export.?);
+}
+
+test "SyncArgs parses status flag" {
+    const sync_args = args.SyncArgs{ .status = true };
+    try std.testing.expect(sync_args.status);
+    try std.testing.expect(!sync_args.flush_only);
+}
+
+test "SyncArgs parses manifest flag" {
+    const sync_args = args.SyncArgs{ .manifest = true, .flush_only = true };
+    try std.testing.expect(sync_args.manifest);
+    try std.testing.expect(sync_args.flush_only);
 }

@@ -113,17 +113,22 @@ const commands = [_]CommandHelp{
     .{
         .name = "sync",
         .summary = "Sync with JSONL file",
-        .usage = "bz sync [--flush-only] [--import-only]",
+        .usage = "bz sync [--flush-only] [--import-only] [--status] [--manifest]",
         .description = "Synchronizes in-memory state with the JSONL file. By default, performs " ++
             "bidirectional sync. Use flags to limit to export or import only.",
         .flags = &[_]FlagHelp{
             .{ .short = null, .long = "--flush-only", .description = "Only export (write to JSONL)" },
             .{ .short = null, .long = "--import-only", .description = "Only import (read from JSONL)" },
+            .{ .short = "-s", .long = "--status", .description = "Show sync status without changes" },
+            .{ .short = null, .long = "--manifest", .description = "Write manifest.json with export metadata" },
+            .{ .short = "-m", .long = "--merge", .description = "3-way merge with remote JSONL" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz sync", .description = "Full bidirectional sync" },
             .{ .command = "bz sync --flush-only", .description = "Export changes to JSONL" },
             .{ .command = "bz sync --import-only", .description = "Import changes from JSONL" },
+            .{ .command = "bz sync --status", .description = "Show DB/JSONL issue counts" },
+            .{ .command = "bz sync --flush-only --manifest", .description = "Export with manifest file" },
         },
         .see_also = &[_][]const u8{ "import", "add-batch" },
     },

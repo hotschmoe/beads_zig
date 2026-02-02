@@ -489,6 +489,8 @@ pub const SyncArgs = struct {
     flush_only: bool = false,
     import_only: bool = false,
     merge: bool = false,
+    status: bool = false,
+    manifest: bool = false,
 };
 
 /// Shell completion types.
@@ -1521,6 +1523,10 @@ pub const ArgParser = struct {
                 result.import_only = true;
             } else if (self.consumeFlag("-m", "--merge")) {
                 result.merge = true;
+            } else if (self.consumeFlag("-s", "--status")) {
+                result.status = true;
+            } else if (self.consumeFlag(null, "--manifest")) {
+                result.manifest = true;
             } else break;
         }
         return result;
