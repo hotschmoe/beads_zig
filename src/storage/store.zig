@@ -365,6 +365,8 @@ pub const IssueStore = struct {
             results.deinit(self.allocator);
         }
 
+        const now = if (filters.overdue) std.time.timestamp() else 0;
+
         for (self.issues.items) |issue| {
             // Filter tombstones
             if (!filters.include_tombstones and statusEql(issue.status, .tombstone)) {
@@ -374,13 +376,9 @@ pub const IssueStore = struct {
             // Apply filters
             if (filters.status) |s| {
                 // When include_deferred is set, allow deferred issues through even when filtering for open
-                if (!statusEql(issue.status, s)) {
-                    if (filters.include_deferred and statusEql(issue.status, .deferred)) {
-                        // Allow deferred issues through
-                    } else {
-                        continue;
-                    }
-                }
+                const status_matches = statusEql(issue.status, s);
+                const deferred_allowed = filters.include_deferred and statusEql(issue.status, .deferred);
+                if (!status_matches and !deferred_allowed) continue;
             }
             if (filters.priority) |p| {
                 if (issue.priority.value != p.value) continue;
@@ -443,7 +441,6 @@ pub const IssueStore = struct {
 
             // Overdue filter: only include issues past their due date
             if (filters.overdue) {
-                const now = std.time.timestamp();
                 if (issue.due_at.value) |due_time| {
                     if (due_time >= now) continue;
                 } else continue;
