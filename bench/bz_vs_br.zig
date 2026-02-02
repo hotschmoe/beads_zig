@@ -41,7 +41,7 @@ pub fn main() !void {
     try bench.print(allocator, "{d}ms\n", .{br_init_ms});
 
     // Step 2: Create 10 beads and capture one ID for later tests
-    try stdout.writeAll("[2/8] Creating 10 beads (sequential)...\n");
+    try stdout.writeAll("[2/11] Creating 10 beads (sequential)...\n");
 
     try stdout.writeAll("  bz create x10: ");
     const bz_create_result = try bench.runCommandLoopCapture(allocator, &.{ bz_path, "q", "TestBead" }, bz_temp.path, 10);
@@ -57,8 +57,19 @@ pub fn main() !void {
     defer if (br_issue_id) |id| allocator.free(id);
     try bench.print(allocator, "{d}ms (avg: {d}ms per bead)\n", .{ br_create_ms, @divTrunc(br_create_ms, 10) });
 
+    // Step 2b: Bulk create 90 more beads for concurrent tests
+    try stdout.writeAll("[2b/11] Bulk creating 90 more beads...\n");
+
+    try stdout.writeAll("  bz create x90: ");
+    const bz_bulk_ms = try bench.runCommandLoop(allocator, &.{ bz_path, "q", "BulkBead" }, bz_temp.path, 90);
+    try bench.print(allocator, "{d}ms (avg: {d}ms per bead)\n", .{ bz_bulk_ms, @divTrunc(bz_bulk_ms, 90) });
+
+    try stdout.writeAll("  br create x90: ");
+    const br_bulk_ms = try bench.runCommandLoop(allocator, &.{ br_path, "q", "BulkBead" }, br_temp.path, 90);
+    try bench.print(allocator, "{d}ms (avg: {d}ms per bead)\n", .{ br_bulk_ms, @divTrunc(br_bulk_ms, 90) });
+
     // Step 3: Show issue details
-    try stdout.writeAll("[3/8] Showing issue details...\n");
+    try stdout.writeAll("[3/11] Showing issue details...\n");
 
     var bz_show_ms: i64 = 0;
     var br_show_ms: i64 = 0;
@@ -80,7 +91,7 @@ pub fn main() !void {
     }
 
     // Step 4: Update issue
-    try stdout.writeAll("[4/8] Updating issue...\n");
+    try stdout.writeAll("[4/11] Updating issue...\n");
 
     var bz_update_ms: i64 = 0;
     var br_update_ms: i64 = 0;
@@ -102,7 +113,7 @@ pub fn main() !void {
     }
 
     // Step 5: Search issues
-    try stdout.writeAll("[5/8] Searching issues...\n");
+    try stdout.writeAll("[5/11] Searching issues...\n");
 
     try stdout.writeAll("  bz search: ");
     const bz_search_ms = (try bench.runCommand(allocator, &.{ bz_path, "search", "TestBead" }, bz_temp.path)).elapsed_ms;
@@ -113,7 +124,7 @@ pub fn main() !void {
     try bench.print(allocator, "{d}ms\n", .{br_search_ms});
 
     // Step 6: List all beads
-    try stdout.writeAll("[6/8] Listing all beads...\n");
+    try stdout.writeAll("[6/11] Listing all beads...\n");
 
     try stdout.writeAll("  bz list: ");
     const bz_list_ms = (try bench.runCommand(allocator, &.{ bz_path, "list", "--all" }, bz_temp.path)).elapsed_ms;
@@ -124,7 +135,7 @@ pub fn main() !void {
     try bench.print(allocator, "{d}ms\n", .{br_list_ms});
 
     // Step 7: Count and stats
-    try stdout.writeAll("[7/8] Count and stats...\n");
+    try stdout.writeAll("[7/11] Count and stats...\n");
 
     try stdout.writeAll("  bz count: ");
     const bz_count_ms = (try bench.runCommand(allocator, &.{ bz_path, "count" }, bz_temp.path)).elapsed_ms;
@@ -142,8 +153,92 @@ pub fn main() !void {
     const br_stats_ms = (try bench.runCommand(allocator, &.{ br_path, "stats" }, br_temp.path)).elapsed_ms;
     try bench.print(allocator, "{d}ms\n", .{br_stats_ms});
 
-    // Step 8: Close issue
-    try stdout.writeAll("[8/8] Closing issue...\n");
+    // Step 8: Concurrent reads (5 parallel list commands)
+    // SQLite WAL mode excels at concurrent reads; let's see how JSONL compares
+    try stdout.writeAll("[8/11] Concurrent reads (5 parallel list --all)...\n");
+
+    try stdout.writeAll("  bz list x5 parallel: ");
+    const bz_parallel_read_ms = try bench.runCommandParallel(allocator, &.{ bz_path, "list", "--all" }, bz_temp.path, 5);
+    try bench.print(allocator, "{d}ms\n", .{bz_parallel_read_ms});
+
+    try stdout.writeAll("  br list x5 parallel: ");
+    const br_parallel_read_ms = try bench.runCommandParallel(allocator, &.{ br_path, "list", "--all" }, br_temp.path, 5);
+    try bench.print(allocator, "{d}ms\n", .{br_parallel_read_ms});
+
+    // Step 9: Concurrent writes (5 parallel creates)
+    // bz uses flock (sequential acquisition), br uses SQLite (BUSY retries)
+    try stdout.writeAll("[9/11] Concurrent writes (5 parallel creates)...\n");
+
+    try stdout.writeAll("  bz create x5 parallel: ");
+    const bz_parallel_write_ms = try bench.runCommandParallel(allocator, &.{ bz_path, "q", "ConcurrentBead" }, bz_temp.path, 5);
+    try bench.print(allocator, "{d}ms\n", .{bz_parallel_write_ms});
+
+    try stdout.writeAll("  br create x5 parallel: ");
+    const br_parallel_write_ms = try bench.runCommandParallel(allocator, &.{ br_path, "q", "ConcurrentBead" }, br_temp.path, 5);
+    try bench.print(allocator, "{d}ms\n", .{br_parallel_write_ms});
+
+    // Step 10: Concurrent mixed (reads during writes simulation)
+    // Spawn 3 list + 2 create simultaneously
+    try stdout.writeAll("[10/11] Concurrent mixed (3 list + 2 create simultaneously)...\n");
+
+    try stdout.writeAll("  bz mixed x5: ");
+    const bz_mixed_ms = blk: {
+        const timer = bench.Timer.begin();
+
+        var children: [5]std.process.Child = undefined;
+        // 3 reads
+        for (0..3) |i| {
+            children[i] = std.process.Child.init(&.{ bz_path, "list", "--all" }, allocator);
+            children[i].cwd = bz_temp.path;
+            children[i].stdout_behavior = .Ignore;
+            children[i].stderr_behavior = .Ignore;
+            _ = try children[i].spawn();
+        }
+        // 2 writes
+        for (3..5) |i| {
+            children[i] = std.process.Child.init(&.{ bz_path, "q", "MixedBead" }, allocator);
+            children[i].cwd = bz_temp.path;
+            children[i].stdout_behavior = .Ignore;
+            children[i].stderr_behavior = .Ignore;
+            _ = try children[i].spawn();
+        }
+        for (&children) |*child| {
+            _ = try child.wait();
+        }
+        break :blk timer.elapsedMs();
+    };
+    try bench.print(allocator, "{d}ms\n", .{bz_mixed_ms});
+
+    try stdout.writeAll("  br mixed x5: ");
+    const br_mixed_ms = blk: {
+        const timer = bench.Timer.begin();
+
+        var children: [5]std.process.Child = undefined;
+        // 3 reads
+        for (0..3) |i| {
+            children[i] = std.process.Child.init(&.{ br_path, "list", "--all" }, allocator);
+            children[i].cwd = br_temp.path;
+            children[i].stdout_behavior = .Ignore;
+            children[i].stderr_behavior = .Ignore;
+            _ = try children[i].spawn();
+        }
+        // 2 writes
+        for (3..5) |i| {
+            children[i] = std.process.Child.init(&.{ br_path, "q", "MixedBead" }, allocator);
+            children[i].cwd = br_temp.path;
+            children[i].stdout_behavior = .Ignore;
+            children[i].stderr_behavior = .Ignore;
+            _ = try children[i].spawn();
+        }
+        for (&children) |*child| {
+            _ = try child.wait();
+        }
+        break :blk timer.elapsedMs();
+    };
+    try bench.print(allocator, "{d}ms\n", .{br_mixed_ms});
+
+    // Step 11: Close issue
+    try stdout.writeAll("[11/11] Closing issue...\n");
 
     var bz_close_ms: i64 = 0;
     var br_close_ms: i64 = 0;
@@ -172,12 +267,16 @@ pub fn main() !void {
     try bench.print(allocator, "{s: <20} {s: >10} {s: >10}\n", .{ "---------", "--------", "---------" });
     try bench.printCompareRow(allocator, "init", bz_init_ms, br_init_ms);
     try bench.printCompareRow(allocator, "create x10", bz_create_ms, br_create_ms);
+    try bench.printCompareRow(allocator, "bulk x90", bz_bulk_ms, br_bulk_ms);
     try bench.printCompareRow(allocator, "show", bz_show_ms, br_show_ms);
     try bench.printCompareRow(allocator, "update", bz_update_ms, br_update_ms);
     try bench.printCompareRow(allocator, "search", bz_search_ms, br_search_ms);
     try bench.printCompareRow(allocator, "list", bz_list_ms, br_list_ms);
     try bench.printCompareRow(allocator, "count", bz_count_ms, br_count_ms);
     try bench.printCompareRow(allocator, "stats", bz_stats_ms, br_stats_ms);
+    try bench.printCompareRow(allocator, "parallel read x5", bz_parallel_read_ms, br_parallel_read_ms);
+    try bench.printCompareRow(allocator, "parallel write x5", bz_parallel_write_ms, br_parallel_write_ms);
+    try bench.printCompareRow(allocator, "mixed r/w x5", bz_mixed_ms, br_mixed_ms);
     try bench.printCompareRow(allocator, "close", bz_close_ms, br_close_ms);
     try stdout.writeAll("\nDone.\n");
 }

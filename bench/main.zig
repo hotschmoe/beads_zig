@@ -179,3 +179,24 @@ pub fn printCompareRow(allocator: Allocator, operation: []const u8, bz_ms: i64, 
         @as(u64, @intCast(br_ms)),
     });
 }
+
+/// Run N copies of a command in parallel, return total elapsed time
+pub fn runCommandParallel(allocator: Allocator, argv: []const []const u8, cwd: ?[]const u8, count: usize) !i64 {
+    const timer = Timer.begin();
+
+    // Spawn all children
+    var children = try allocator.alloc(std.process.Child, count);
+    defer allocator.free(children);
+
+    for (0..count) |i| {
+        children[i] = spawnChild(allocator, argv, cwd);
+        _ = try children[i].spawn();
+    }
+
+    // Wait for all to complete
+    for (children) |*child| {
+        _ = try child.wait();
+    }
+
+    return timer.elapsedMs();
+}

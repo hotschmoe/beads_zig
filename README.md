@@ -236,6 +236,30 @@ src/
 - Rich terminal output with TTY detection
 - Hash-based IDs prevent merge conflicts
 
+## Performance: bz vs br (Rust/SQLite)
+
+Benchmark comparing beads_zig (`bz`) against beads_rust (`br`) with SQLite:
+
+| Operation | bz (Zig) | br (Rust) | Notes |
+|-----------|----------|-----------|-------|
+| init | 1ms | 444ms | bz ~444x faster |
+| create x10 | 100ms | 593ms | bz ~6x faster |
+| bulk x90 | 812ms | 5135ms | bz ~6x faster |
+| show | 52ms | 34ms | br faster (warm connection) |
+| update | 70ms | 34ms | br faster (warm connection) |
+| search | 74ms | 46ms | br faster (warm connection) |
+| list | 94ms | 36ms | br faster (warm connection) |
+| parallel read x5 | 118ms | 165ms | bz ~1.4x faster |
+| parallel write x5 | 83ms | 269ms | bz ~3x faster |
+| mixed r/w x5 | 102ms | 203ms | bz ~2x faster |
+
+**Key findings:**
+- **bz dominates writes**: flock + WAL architecture avoids SQLite's BUSY retry storms
+- **bz wins all concurrent operations**: flock serialization beats SQLite contention
+- **br wins single reads**: SQLite connection pooling benefits repeated queries
+
+Run benchmarks: `zig build bench-compare` (requires `br` in PATH)
+
 ## Global Options
 
 ```
