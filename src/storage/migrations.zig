@@ -15,8 +15,8 @@ pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 /// Minimum schema version that can be migrated from.
 pub const MIN_SUPPORTED_VERSION: u32 = 1;
 
-/// Maximum number of backup files to keep during migration.
-const MAX_MIGRATION_BACKUPS: usize = 3;
+/// Default number of backup files to keep during cleanup.
+pub const DEFAULT_BACKUP_KEEP_COUNT: usize = 3;
 
 pub const MigrationError = error{
     /// metadata.json not found or unreadable

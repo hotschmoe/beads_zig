@@ -175,25 +175,20 @@ fn runDryRun(
 
     const update_available = !std.mem.eql(u8, target_version, VERSION) and isNewerVersion(target_version, VERSION);
 
-    // Build binary name and URL
-    const version_tag = blk: {
-        if (target_version.len > 0 and target_version[0] != 'v') {
-            break :blk try std.fmt.allocPrint(allocator, "v{s}", .{target_version});
+    var info = buildBinaryInfo(allocator, target_version, target_platform) catch {
+        if (structured_output) {
+            try out.printJson(UpgradeResult{
+                .success = false,
+                .current_version = VERSION,
+                .dry_run = true,
+                .message = "Failed to build binary info",
+            });
+        } else {
+            try out.err("Failed to build binary info", .{});
         }
-        break :blk try allocator.dupe(u8, target_version);
+        return;
     };
-    defer allocator.free(version_tag);
-
-    const binary_name = blk: {
-        if (std.mem.eql(u8, target_platform, "windows-x86_64")) {
-            break :blk try std.fmt.allocPrint(allocator, "bz-{s}.exe", .{target_platform});
-        }
-        break :blk try std.fmt.allocPrint(allocator, "bz-{s}", .{target_platform});
-    };
-    defer allocator.free(binary_name);
-
-    const binary_url = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ GITHUB_DOWNLOAD_URL, version_tag, binary_name });
-    defer allocator.free(binary_url);
+    defer info.deinit(allocator);
 
     // Get install path
     const install_path = getSelfPath(allocator) catch {
@@ -218,7 +213,7 @@ fn runDryRun(
             .latest_version = target_version,
             .update_available = update_available,
             .dry_run = true,
-            .would_download = binary_url,
+            .would_download = info.binary_url,
             .install_path = install_path,
         });
     } else {
@@ -232,7 +227,7 @@ fn runDryRun(
             try out.print(" (older version)\n", .{});
         }
         try out.print("\n", .{});
-        try out.print("Would download: {s}\n", .{binary_url});
+        try out.print("Would download: {s}\n", .{info.binary_url});
         try out.print("Would install to: {s}\n", .{install_path});
     }
 }
@@ -324,37 +319,21 @@ fn performUpgrade(
         try out.print("Upgrading bz: {s} -> {s}\n", .{ VERSION, target_version });
     }
 
-    const version_tag = blk: {
-        if (target_version.len > 0 and target_version[0] != 'v') {
-            break :blk try std.fmt.allocPrint(allocator, "v{s}", .{target_version});
-        }
-        break :blk try allocator.dupe(u8, target_version);
-    };
-    defer allocator.free(version_tag);
+    var info = try buildBinaryInfo(allocator, target_version, target_platform);
+    defer info.deinit(allocator);
 
-    const binary_name = blk: {
-        if (std.mem.eql(u8, target_platform, "windows-x86_64")) {
-            break :blk try std.fmt.allocPrint(allocator, "bz-{s}.exe", .{target_platform});
-        }
-        break :blk try std.fmt.allocPrint(allocator, "bz-{s}", .{target_platform});
-    };
-    defer allocator.free(binary_name);
-
-    const binary_url = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ GITHUB_DOWNLOAD_URL, version_tag, binary_name });
-    defer allocator.free(binary_url);
-
-    const checksum_url = try std.fmt.allocPrint(allocator, "{s}.sha256", .{binary_url});
+    const checksum_url = try std.fmt.allocPrint(allocator, "{s}.sha256", .{info.binary_url});
     defer allocator.free(checksum_url);
 
     if (verbose and !structured_output) {
-        try out.info("Binary URL: {s}", .{binary_url});
+        try out.info("Binary URL: {s}", .{info.binary_url});
         try out.info("Checksum URL: {s}", .{checksum_url});
     }
 
     if (!structured_output) {
         try out.print("Downloading binary...\n", .{});
     }
-    const binary_data = downloadFile(allocator, binary_url) catch {
+    const binary_data = downloadFile(allocator, info.binary_url) catch {
         const msg = "Failed to download binary (network error)";
         if (structured_output) {
             try out.printJson(UpgradeResult{
@@ -365,7 +344,7 @@ fn performUpgrade(
             });
         } else {
             try out.err("{s}", .{msg});
-            try out.info("Download URL: {s}", .{binary_url});
+            try out.info("Download URL: {s}", .{info.binary_url});
         }
         return UpgradeError.DownloadFailed;
     };
@@ -496,6 +475,44 @@ fn parseChecksum(data: []const u8) ?[]const u8 {
         return hash;
     }
     return null;
+}
+
+const BinaryInfo = struct {
+    version_tag: []const u8,
+    binary_name: []const u8,
+    binary_url: []const u8,
+
+    fn deinit(self: *BinaryInfo, allocator: std.mem.Allocator) void {
+        allocator.free(self.version_tag);
+        allocator.free(self.binary_name);
+        allocator.free(self.binary_url);
+    }
+};
+
+fn buildBinaryInfo(allocator: std.mem.Allocator, target_version: []const u8, target_platform: []const u8) !BinaryInfo {
+    const version_tag = blk: {
+        if (target_version.len > 0 and target_version[0] != 'v') {
+            break :blk try std.fmt.allocPrint(allocator, "v{s}", .{target_version});
+        }
+        break :blk try allocator.dupe(u8, target_version);
+    };
+    errdefer allocator.free(version_tag);
+
+    const binary_name = blk: {
+        if (std.mem.eql(u8, target_platform, "windows-x86_64")) {
+            break :blk try std.fmt.allocPrint(allocator, "bz-{s}.exe", .{target_platform});
+        }
+        break :blk try std.fmt.allocPrint(allocator, "bz-{s}", .{target_platform});
+    };
+    errdefer allocator.free(binary_name);
+
+    const binary_url = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ GITHUB_DOWNLOAD_URL, version_tag, binary_name });
+
+    return .{
+        .version_tag = version_tag,
+        .binary_name = binary_name,
+        .binary_url = binary_url,
+    };
 }
 
 fn downloadFile(allocator: std.mem.Allocator, url: []const u8) ![]const u8 {
