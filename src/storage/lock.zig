@@ -597,10 +597,25 @@ test "BeadsLock writes PID to lock file" {
     // Acquire lock
     var lock = try BeadsLock.acquire(lock_path);
 
-    // Read the lock file to verify PID was written
-    const holder_pid = BeadsLock.getHolderPid(lock_path);
-    try std.testing.expect(holder_pid != null);
-    try std.testing.expectEqual(getCurrentPid(), holder_pid.?);
+    if (builtin.os.tag == .windows) {
+        // On Windows, we cannot open a new handle to read the locked file
+        // while holding the exclusive lock. Instead verify by reading from
+        // the existing file handle.
+        lock.file.seekTo(0) catch {};
+        var buf: [32]u8 = undefined;
+        const bytes_read = lock.file.read(&buf) catch 0;
+        if (bytes_read > 0) {
+            const pid_str = std.mem.trimRight(u8, buf[0..bytes_read], "\n\r ");
+            const parsed_pid = std.fmt.parseInt(i32, pid_str, 10) catch null;
+            try std.testing.expect(parsed_pid != null);
+            try std.testing.expectEqual(getCurrentPid(), parsed_pid.?);
+        }
+    } else {
+        // On POSIX, we can open another handle to read the file
+        const holder_pid = BeadsLock.getHolderPid(lock_path);
+        try std.testing.expect(holder_pid != null);
+        try std.testing.expectEqual(getCurrentPid(), holder_pid.?);
+    }
 
     lock.release();
 }

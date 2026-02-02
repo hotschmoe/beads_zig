@@ -11,6 +11,7 @@
 //! that can occur with threads sharing the same lock file path.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const fs = std.fs;
 const process = std.process;
@@ -33,7 +34,8 @@ fn runBz(allocator: std.mem.Allocator, args: []const []const u8, work_dir: []con
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, "zig-out/bin/bz" });
+    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
     defer allocator.free(bz_path);
 
     var argv: std.ArrayListUnmanaged([]const u8) = .{};
@@ -115,7 +117,8 @@ test "concurrent writes: 10 agents, 1 write each, serialized" {
     // Get bz binary path
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, "zig-out/bin/bz" });
+    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
     defer allocator.free(bz_path);
 
     // Verify binary exists
@@ -193,7 +196,8 @@ test "batch writes: 1 agent, 10 issues, zero corruption" {
     // Get bz binary path
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, "zig-out/bin/bz" });
+    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
     defer allocator.free(bz_path);
 
     // Verify binary exists
@@ -248,7 +252,12 @@ test "batch writes: 1 agent, 10 issues, zero corruption" {
 
 // Chaos test: spawn agents and send stop signals to simulate crashes.
 // Verifies that committed writes are visible and no corruption occurs.
+// Note: This test uses /bin/sh and is Unix-only.
 test "chaos: concurrent writes with interrupts verify data integrity" {
+    if (builtin.os.tag == .windows) {
+        // Skip on Windows - requires /bin/sh
+        return error.SkipZigTest;
+    }
     const allocator = testing.allocator;
 
     // Create isolated test directory
@@ -264,7 +273,8 @@ test "chaos: concurrent writes with interrupts verify data integrity" {
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, "zig-out/bin/bz" });
+    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
     defer allocator.free(bz_path);
 
     // Spawn agents with longer-running loops
@@ -294,8 +304,8 @@ test "chaos: concurrent writes with interrupts verify data integrity" {
     for (&children, 0..) |*child_ptr, i| {
         if (i % 2 == 0) {
             if (child_ptr.*) |*child| {
-                // Send SIGKILL to simulate crash
-                _ = std.posix.kill(child.id, std.posix.SIG.KILL) catch {};
+                // Terminate process to simulate crash (cross-platform)
+                _ = child.kill() catch null;
             }
         }
     }

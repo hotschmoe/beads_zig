@@ -13,6 +13,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
+const windows = std.os.windows;
 
 /// Page size used for mmap alignment.
 const page_size = std.heap.page_size_min;
@@ -33,6 +34,8 @@ pub const MappedFile = struct {
     mapped_slice: ?[]align(page_size) u8,
     /// File handle (kept open for the duration of the mapping).
     file: std.fs.File,
+    /// Windows file mapping handle (null on POSIX).
+    mapping_handle: if (builtin.os.tag == .windows) ?windows.HANDLE else void,
 
     const Self = @This();
 
@@ -60,14 +63,16 @@ pub const MappedFile = struct {
             return Self{
                 .mapped_slice = null,
                 .file = file,
+                .mapping_handle = if (builtin.os.tag == .windows) null else {},
             };
         }
 
-        const mapped = mapFile(file, size) catch return MmapError.MmapFailed;
+        const map_result = mapFile(file, size) catch return MmapError.MmapFailed;
 
         return Self{
-            .mapped_slice = mapped,
+            .mapped_slice = map_result.slice,
             .file = file,
+            .mapping_handle = if (builtin.os.tag == .windows) map_result.handle else {},
         };
     }
 
@@ -91,14 +96,24 @@ pub const MappedFile = struct {
     /// Close the mapping and file.
     pub fn close(self: *Self) void {
         if (self.mapped_slice) |slice| {
-            unmapFile(slice);
+            if (builtin.os.tag == .windows) {
+                unmapFileWindows(slice, self.mapping_handle);
+            } else {
+                unmapFilePosix(slice);
+            }
         }
         self.file.close();
         self.* = undefined;
     }
 
+    /// Result of mapping a file.
+    const MapResult = struct {
+        slice: []align(page_size) u8,
+        handle: if (builtin.os.tag == .windows) ?windows.HANDLE else void,
+    };
+
     /// Platform-specific mmap implementation.
-    fn mapFile(file: std.fs.File, size: usize) ![]align(page_size) u8 {
+    fn mapFile(file: std.fs.File, size: usize) !MapResult {
         if (builtin.os.tag == .windows) {
             return mapFileWindows(file, size);
         } else {
@@ -107,8 +122,8 @@ pub const MappedFile = struct {
     }
 
     /// POSIX mmap implementation.
-    fn mapFilePosix(file: std.fs.File, size: usize) ![]align(page_size) u8 {
-        return posix.mmap(
+    fn mapFilePosix(file: std.fs.File, size: usize) !MapResult {
+        const slice = try posix.mmap(
             null,
             size,
             posix.PROT.READ,
@@ -116,24 +131,59 @@ pub const MappedFile = struct {
             file.handle,
             0,
         );
+        return .{ .slice = slice, .handle = {} };
     }
 
-    /// Windows memory mapping implementation.
-    fn mapFileWindows(file: std.fs.File, size: usize) ![]align(page_size) u8 {
-        _ = file;
-        _ = size;
-        // Windows implementation would use CreateFileMappingW and MapViewOfFile
-        // For now, return error - Windows support can be added later
-        return error.MemoryMappingNotSupported;
-    }
+    /// Windows memory mapping implementation using CreateFileMappingW and MapViewOfFile.
+    fn mapFileWindows(file: std.fs.File, size: usize) !MapResult {
+        const kernel32 = struct {
+            extern "kernel32" fn CreateFileMappingW(
+                hFile: windows.HANDLE,
+                lpFileMappingAttributes: ?*anyopaque,
+                flProtect: windows.DWORD,
+                dwMaximumSizeHigh: windows.DWORD,
+                dwMaximumSizeLow: windows.DWORD,
+                lpName: ?[*:0]const u16,
+            ) callconv(.winapi) ?windows.HANDLE;
 
-    /// Platform-specific unmap implementation.
-    fn unmapFile(slice: []align(page_size) u8) void {
-        if (builtin.os.tag == .windows) {
-            unmapFileWindows(slice);
-        } else {
-            unmapFilePosix(slice);
-        }
+            extern "kernel32" fn MapViewOfFile(
+                hFileMappingObject: windows.HANDLE,
+                dwDesiredAccess: windows.DWORD,
+                dwFileOffsetHigh: windows.DWORD,
+                dwFileOffsetLow: windows.DWORD,
+                dwNumberOfBytesToMap: usize,
+            ) callconv(.winapi) ?[*]align(page_size) u8;
+
+            extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(.winapi) windows.BOOL;
+        };
+
+        const PAGE_READONLY: windows.DWORD = 0x02;
+        const FILE_MAP_READ: windows.DWORD = 0x0004;
+
+        // Create file mapping object
+        const mapping_handle = kernel32.CreateFileMappingW(
+            file.handle,
+            null,
+            PAGE_READONLY,
+            0,
+            0,
+            null,
+        ) orelse return error.MmapFailed;
+        errdefer _ = kernel32.CloseHandle(mapping_handle);
+
+        // Map view of the file
+        const ptr = kernel32.MapViewOfFile(
+            mapping_handle,
+            FILE_MAP_READ,
+            0,
+            0,
+            size,
+        ) orelse return error.MmapFailed;
+
+        return .{
+            .slice = ptr[0..size],
+            .handle = mapping_handle,
+        };
     }
 
     /// POSIX munmap implementation.
@@ -141,10 +191,17 @@ pub const MappedFile = struct {
         posix.munmap(slice);
     }
 
-    /// Windows unmap implementation.
-    fn unmapFileWindows(slice: []align(page_size) u8) void {
-        _ = slice;
-        // Windows implementation would use UnmapViewOfFile
+    /// Windows unmap implementation using UnmapViewOfFile.
+    fn unmapFileWindows(slice: []align(page_size) u8, mapping_handle: ?windows.HANDLE) void {
+        const kernel32 = struct {
+            extern "kernel32" fn UnmapViewOfFile(lpBaseAddress: [*]const u8) callconv(.winapi) windows.BOOL;
+            extern "kernel32" fn CloseHandle(hObject: windows.HANDLE) callconv(.winapi) windows.BOOL;
+        };
+
+        _ = kernel32.UnmapViewOfFile(slice.ptr);
+        if (mapping_handle) |handle| {
+            _ = kernel32.CloseHandle(handle);
+        }
     }
 };
 

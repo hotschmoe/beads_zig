@@ -407,15 +407,29 @@ test "run creates issue successfully" {
 
     try run(create_args, global, allocator);
 
-    // Verify issue was created by reading the file
-    const file = try std.fs.cwd().openFile(issues_path, .{});
-    defer file.close();
+    // Verify issue was created by loading via IssueStore (which replays WAL)
+    var store = IssueStore.init(allocator, issues_path);
+    defer store.deinit();
+    try store.loadFromFile();
 
-    const content = try file.readToEndAlloc(allocator, 8192);
-    defer allocator.free(content);
+    // Replay WAL to get the created issue
+    var wal = try storage.Wal.init(data_path, allocator);
+    defer wal.deinit();
+    _ = try wal.replay(&store);
 
-    try std.testing.expect(std.mem.indexOf(u8, content, "Test issue") != null);
-    try std.testing.expect(std.mem.indexOf(u8, content, "bug") != null);
+    // Find the created issue
+    const issues = store.getAllRef();
+    try std.testing.expect(issues.len > 0);
+
+    var found = false;
+    for (issues) |issue| {
+        if (std.mem.indexOf(u8, issue.title, "Test issue") != null) {
+            found = true;
+            try std.testing.expectEqual(models.IssueType.bug, issue.issue_type);
+            break;
+        }
+    }
+    try std.testing.expect(found);
 }
 
 test "run detects uninitialized workspace" {

@@ -865,8 +865,11 @@ test "Wal.init and deinit" {
     defer wal.deinit();
 
     // Generation-aware path (generation 1 by default)
-    try std.testing.expect(std.mem.endsWith(u8, wal.wal_path, "/beads.wal.1"));
-    try std.testing.expect(std.mem.endsWith(u8, wal.lock_path, "/beads.lock"));
+    // Use platform-agnostic check - path ends with beads.wal.1 regardless of separator
+    const wal_basename = std.fs.path.basename(wal.wal_path);
+    const lock_basename = std.fs.path.basename(wal.lock_path);
+    try std.testing.expectEqualStrings("beads.wal.1", wal_basename);
+    try std.testing.expectEqualStrings("beads.lock", lock_basename);
     try std.testing.expectEqual(@as(u64, 1), wal.generation);
 }
 

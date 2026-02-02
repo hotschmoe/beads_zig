@@ -6,6 +6,7 @@
 //! - Correct behavior in isolated temp directories
 
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = std.fs;
 const process = std.process;
 const testing = std.testing;
@@ -42,7 +43,8 @@ fn runBzFromRoot(allocator: std.mem.Allocator, args: []const []const u8, work_di
     const cwd_path = try fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
-    const bz_path = try fs.path.join(allocator, &.{ cwd_path, "zig-out/bin/bz" });
+    const bz_exe = if (builtin.os.tag == .windows) "zig-out/bin/bz.exe" else "zig-out/bin/bz";
+    const bz_path = try fs.path.join(allocator, &.{ cwd_path, bz_exe });
     defer allocator.free(bz_path);
 
     var argv: std.ArrayListUnmanaged([]const u8) = .{};
