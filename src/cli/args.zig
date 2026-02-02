@@ -199,6 +199,18 @@ pub const ImportArgs = struct {
     dry_run: bool = false, // Show what would be imported without importing
 };
 
+/// Output format for list/ready commands.
+pub const OutputFormat = enum {
+    default,
+    csv,
+
+    pub fn fromString(s: []const u8) ?OutputFormat {
+        if (std.ascii.eqlIgnoreCase(s, "default") or std.ascii.eqlIgnoreCase(s, "plain")) return .default;
+        if (std.ascii.eqlIgnoreCase(s, "csv")) return .csv;
+        return null;
+    }
+};
+
 /// Sort field options for list command.
 pub const SortField = enum {
     created_at,
@@ -232,6 +244,10 @@ pub const ListArgs = struct {
     include_deferred: bool = false,
     sort: SortField = .created_at,
     sort_desc: bool = true,
+    parent: ?[]const u8 = null,
+    recursive: bool = false,
+    format: OutputFormat = .default,
+    fields: ?[]const u8 = null,
 };
 
 /// Ready command arguments.
@@ -244,6 +260,10 @@ pub const ReadyArgs = struct {
     notes_contains: ?[]const u8 = null,
     overdue: bool = false,
     include_deferred: bool = false,
+    parent: ?[]const u8 = null,
+    recursive: bool = false,
+    format: OutputFormat = .default,
+    fields: ?[]const u8 = null,
 };
 
 /// Blocked command arguments.
@@ -1067,6 +1087,15 @@ pub const ArgParser = struct {
                 result.sort_desc = false;
             } else if (self.consumeFlag(null, "--desc")) {
                 result.sort_desc = true;
+            } else if (self.consumeFlag(null, "--parent")) {
+                result.parent = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-r", "--recursive")) {
+                result.recursive = true;
+            } else if (self.consumeFlag("-f", "--format")) {
+                const fmt_str = self.next() orelse return error.MissingFlagValue;
+                result.format = OutputFormat.fromString(fmt_str) orelse return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--fields")) {
+                result.fields = self.next() orelse return error.MissingFlagValue;
             } else break;
         }
 
@@ -1096,6 +1125,15 @@ pub const ArgParser = struct {
                 result.overdue = true;
             } else if (self.consumeFlag(null, "--include-deferred")) {
                 result.include_deferred = true;
+            } else if (self.consumeFlag(null, "--parent")) {
+                result.parent = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-r", "--recursive")) {
+                result.recursive = true;
+            } else if (self.consumeFlag("-f", "--format")) {
+                const fmt_str = self.next() orelse return error.MissingFlagValue;
+                result.format = OutputFormat.fromString(fmt_str) orelse return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--fields")) {
+                result.fields = self.next() orelse return error.MissingFlagValue;
             } else break;
         }
         return result;

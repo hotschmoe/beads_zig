@@ -386,6 +386,164 @@ pub const Output = struct {
         defer self.allocator.free(msg);
         try self.stdout.writeAll(msg);
     }
+
+    // ========================================================================
+    // CSV Mode Helpers
+    // ========================================================================
+
+    /// Available fields for CSV output.
+    pub const CsvField = enum {
+        id,
+        title,
+        status,
+        priority,
+        issue_type,
+        assignee,
+        owner,
+        description,
+        created_at,
+        updated_at,
+        due_at,
+        labels,
+
+        pub fn fromString(s: []const u8) ?CsvField {
+            if (std.mem.eql(u8, s, "id")) return .id;
+            if (std.mem.eql(u8, s, "title")) return .title;
+            if (std.mem.eql(u8, s, "status")) return .status;
+            if (std.mem.eql(u8, s, "priority")) return .priority;
+            if (std.mem.eql(u8, s, "type") or std.mem.eql(u8, s, "issue_type")) return .issue_type;
+            if (std.mem.eql(u8, s, "assignee")) return .assignee;
+            if (std.mem.eql(u8, s, "owner")) return .owner;
+            if (std.mem.eql(u8, s, "description") or std.mem.eql(u8, s, "desc")) return .description;
+            if (std.mem.eql(u8, s, "created_at") or std.mem.eql(u8, s, "created")) return .created_at;
+            if (std.mem.eql(u8, s, "updated_at") or std.mem.eql(u8, s, "updated")) return .updated_at;
+            if (std.mem.eql(u8, s, "due_at") or std.mem.eql(u8, s, "due")) return .due_at;
+            if (std.mem.eql(u8, s, "labels")) return .labels;
+            return null;
+        }
+
+        pub fn toString(self: CsvField) []const u8 {
+            return switch (self) {
+                .id => "id",
+                .title => "title",
+                .status => "status",
+                .priority => "priority",
+                .issue_type => "type",
+                .assignee => "assignee",
+                .owner => "owner",
+                .description => "description",
+                .created_at => "created_at",
+                .updated_at => "updated_at",
+                .due_at => "due_at",
+                .labels => "labels",
+            };
+        }
+    };
+
+    /// Default fields for CSV output.
+    pub const default_csv_fields = [_]CsvField{ .id, .title, .status, .priority };
+
+    /// Parse a comma-separated field list into CsvField array.
+    pub fn parseCsvFields(allocator: std.mem.Allocator, fields_str: ?[]const u8) ![]const CsvField {
+        if (fields_str) |str| {
+            var fields: std.ArrayListUnmanaged(CsvField) = .{};
+            errdefer fields.deinit(allocator);
+
+            var it = std.mem.splitSequence(u8, str, ",");
+            while (it.next()) |field_name| {
+                const trimmed = std.mem.trim(u8, field_name, " ");
+                if (CsvField.fromString(trimmed)) |field| {
+                    try fields.append(allocator, field);
+                }
+            }
+
+            if (fields.items.len == 0) {
+                return &default_csv_fields;
+            }
+            return fields.toOwnedSlice(allocator);
+        }
+        return &default_csv_fields;
+    }
+
+    /// Print a list of issues in CSV format.
+    pub fn printIssueListCsv(self: *Self, issues: []const Issue, fields: []const CsvField) !void {
+        // Write header
+        for (fields, 0..) |field, i| {
+            if (i > 0) try self.stdout.writeAll(",");
+            try self.stdout.writeAll(field.toString());
+        }
+        try self.stdout.writeAll("\n");
+
+        // Write data rows
+        for (issues) |issue| {
+            for (fields, 0..) |field, i| {
+                if (i > 0) try self.stdout.writeAll(",");
+                try self.writeCsvField(issue, field);
+            }
+            try self.stdout.writeAll("\n");
+        }
+    }
+
+    fn writeCsvField(self: *Self, issue: Issue, field: CsvField) !void {
+        switch (field) {
+            .id => try self.writeCsvValue(issue.id),
+            .title => try self.writeCsvValue(issue.title),
+            .status => try self.writeCsvValue(issue.status.toString()),
+            .priority => try self.writeCsvValue(issue.priority.toString()),
+            .issue_type => try self.writeCsvValue(issue.issue_type.toString()),
+            .assignee => try self.writeCsvValue(issue.assignee orelse ""),
+            .owner => try self.writeCsvValue(issue.owner orelse ""),
+            .description => try self.writeCsvValue(issue.description orelse ""),
+            .created_at => {
+                const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{issue.created_at.value});
+                defer self.allocator.free(ts);
+                try self.writeCsvValue(ts);
+            },
+            .updated_at => {
+                const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{issue.updated_at.value});
+                defer self.allocator.free(ts);
+                try self.writeCsvValue(ts);
+            },
+            .due_at => {
+                if (issue.due_at.value) |due| {
+                    const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{due});
+                    defer self.allocator.free(ts);
+                    try self.writeCsvValue(ts);
+                } else {
+                    try self.stdout.writeAll("");
+                }
+            },
+            .labels => {
+                if (issue.labels.len > 0) {
+                    const joined = try std.mem.join(self.allocator, ";", issue.labels);
+                    defer self.allocator.free(joined);
+                    try self.writeCsvValue(joined);
+                } else {
+                    try self.stdout.writeAll("");
+                }
+            },
+        }
+    }
+
+    /// Write a CSV value with proper escaping.
+    fn writeCsvValue(self: *Self, value: []const u8) !void {
+        // Check if escaping is needed (contains comma, quote, or newline)
+        const needs_quoting = std.mem.indexOfAny(u8, value, ",\"\n\r") != null;
+
+        if (needs_quoting) {
+            try self.stdout.writeAll("\"");
+            for (value) |c| {
+                if (c == '"') {
+                    try self.stdout.writeAll("\"\"");
+                } else {
+                    try self.stdout.writeAll(&[_]u8{c});
+                }
+            }
+            try self.stdout.writeAll("\"");
+        } else {
+            try self.stdout.writeAll(value);
+        }
+    }
 };
 
 // ============================================================================

@@ -79,7 +79,24 @@ pub fn run(
     }
 
     var graph = ctx.createGraph();
-    const issues = try graph.getReadyIssues(ready_args.include_deferred);
+    var issues = try graph.getReadyIssues(ready_args.include_deferred);
+
+    // Apply parent filter if specified (before other filters for efficiency)
+    if (ready_args.parent) |parent_id| {
+        var parent_filtered: std.ArrayListUnmanaged(Issue) = .{};
+        errdefer parent_filtered.deinit(allocator);
+
+        for (issues) |issue| {
+            if (graph.isChildOf(issue.id, parent_id, ready_args.recursive)) {
+                try parent_filtered.append(allocator, issue);
+            } else {
+                var i = issue;
+                i.deinit(allocator);
+            }
+        }
+        allocator.free(issues);
+        issues = try parent_filtered.toOwnedSlice(allocator);
+    }
     defer graph.freeIssues(issues);
 
     // Apply filters
@@ -87,6 +104,15 @@ pub fn run(
     defer allocator.free(filtered);
 
     const display_issues = applyLimit(filtered, ready_args.limit);
+
+    // Handle CSV output format
+    if (ready_args.format == .csv) {
+        const Output = common.Output;
+        const fields = try Output.parseCsvFields(allocator, ready_args.fields);
+        defer if (ready_args.fields != null) allocator.free(fields);
+        try ctx.output.printIssueListCsv(display_issues, fields);
+        return;
+    }
 
     if (global.isStructuredOutput()) {
         var compact_issues = try allocator.alloc(ReadyResult.IssueCompact, display_issues.len);

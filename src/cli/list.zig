@@ -125,13 +125,40 @@ pub fn run(
     };
     filters.order_desc = list_args.sort_desc;
 
-    const issues = try ctx.store.list(filters);
+    var issues = try ctx.store.list(filters);
     defer {
         for (issues) |*issue| {
             var i = issue.*;
             i.deinit(allocator);
         }
         allocator.free(issues);
+    }
+
+    // Apply parent filter if specified
+    if (list_args.parent) |parent_id| {
+        var graph = ctx.createGraph();
+        var filtered: std.ArrayListUnmanaged(Issue) = .{};
+        errdefer filtered.deinit(allocator);
+
+        for (issues) |issue| {
+            if (graph.isChildOf(issue.id, parent_id, list_args.recursive)) {
+                try filtered.append(allocator, issue);
+            } else {
+                var i = issue;
+                i.deinit(allocator);
+            }
+        }
+        allocator.free(issues);
+        issues = try filtered.toOwnedSlice(allocator);
+    }
+
+    // Handle CSV output format
+    if (list_args.format == .csv) {
+        const Output = common.Output;
+        const fields = try Output.parseCsvFields(allocator, list_args.fields);
+        defer if (list_args.fields != null) allocator.free(fields);
+        try ctx.output.printIssueListCsv(issues, fields);
+        return;
     }
 
     if (global.isStructuredOutput()) {
