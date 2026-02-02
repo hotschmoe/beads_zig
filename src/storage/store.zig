@@ -331,10 +331,15 @@ pub const IssueStore = struct {
     pub const ListFilters = struct {
         status: ?Status = null,
         priority: ?Priority = null,
+        priority_min: ?Priority = null,
+        priority_max: ?Priority = null,
         issue_type: ?IssueType = null,
         assignee: ?[]const u8 = null,
         label: ?[]const u8 = null,
         label_any: []const []const u8 = &[_][]const u8{},
+        title_contains: ?[]const u8 = null,
+        desc_contains: ?[]const u8 = null,
+        notes_contains: ?[]const u8 = null,
         include_tombstones: bool = false,
         limit: ?u32 = null,
         offset: ?u32 = null,
@@ -402,6 +407,29 @@ pub const IssueStore = struct {
                     if (found_any) break;
                 }
                 if (!found_any) continue;
+            }
+
+            // Priority range filters (lower value = higher priority)
+            if (filters.priority_min) |min_p| {
+                if (issue.priority.value < min_p.value) continue;
+            }
+            if (filters.priority_max) |max_p| {
+                if (issue.priority.value > max_p.value) continue;
+            }
+
+            // Substring filters (case-insensitive)
+            if (filters.title_contains) |query| {
+                if (!containsIgnoreCase(issue.title, query)) continue;
+            }
+            if (filters.desc_contains) |query| {
+                if (issue.description) |desc| {
+                    if (!containsIgnoreCase(desc, query)) continue;
+                } else continue;
+            }
+            if (filters.notes_contains) |query| {
+                if (issue.notes) |notes| {
+                    if (!containsIgnoreCase(notes, query)) continue;
+                } else continue;
             }
 
             try results.append(self.allocator, try issue.clone(self.allocator));
@@ -832,6 +860,26 @@ fn issueTypeEql(a: IssueType, b: IssueType) bool {
     const tag_b: Tag = b;
     if (tag_a != tag_b) return false;
     return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+
+    const end = haystack.len - needle.len + 1;
+    var i: usize = 0;
+    while (i < end) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |nc, j| {
+            const hc = haystack[i + j];
+            if (std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
 }
 
 fn cloneStatus(status: Status, allocator: std.mem.Allocator) !Status {

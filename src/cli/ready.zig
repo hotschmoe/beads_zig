@@ -12,6 +12,7 @@ const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
+const Priority = models.Priority;
 const CommandContext = common.CommandContext;
 const DependencyGraph = common.DependencyGraph;
 
@@ -19,6 +20,7 @@ pub const ReadyError = error{
     WorkspaceNotInitialized,
     StorageError,
     OutOfMemory,
+    InvalidFilter,
 };
 
 pub const ReadyResult = struct {
@@ -58,11 +60,31 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    // Parse priority filters
+    var priority_min: ?Priority = null;
+    var priority_max: ?Priority = null;
+    if (ready_args.priority_min) |p| {
+        priority_min = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-min value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+    if (ready_args.priority_max) |p| {
+        priority_max = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-max value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+
     var graph = ctx.createGraph();
     const issues = try graph.getReadyIssues();
     defer graph.freeIssues(issues);
 
-    const display_issues = applyLimit(issues, ready_args.limit);
+    // Apply filters
+    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, ready_args.title_contains, ready_args.desc_contains, ready_args.notes_contains);
+    defer allocator.free(filtered);
+
+    const display_issues = applyLimit(filtered, ready_args.limit);
 
     if (global.isStructuredOutput()) {
         var compact_issues = try allocator.alloc(ReadyResult.IssueCompact, display_issues.len);
@@ -99,11 +121,31 @@ pub fn runBlocked(
     };
     defer ctx.deinit();
 
+    // Parse priority filters
+    var priority_min: ?Priority = null;
+    var priority_max: ?Priority = null;
+    if (blocked_args.priority_min) |p| {
+        priority_min = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-min value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+    if (blocked_args.priority_max) |p| {
+        priority_max = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-max value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+
     var graph = ctx.createGraph();
     const issues = try graph.getBlockedIssues();
     defer graph.freeIssues(issues);
 
-    const display_issues = applyLimit(issues, blocked_args.limit);
+    // Apply filters
+    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains);
+    defer allocator.free(filtered);
+
+    const display_issues = applyLimit(filtered, blocked_args.limit);
 
     if (global.isStructuredOutput()) {
         var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssue, display_issues.len);
@@ -166,6 +208,73 @@ fn applyLimit(issues: []Issue, limit: ?u32) []Issue {
         }
     }
     return issues;
+}
+
+fn applyFilters(
+    allocator: std.mem.Allocator,
+    issues: []Issue,
+    priority_min: ?Priority,
+    priority_max: ?Priority,
+    title_contains: ?[]const u8,
+    desc_contains: ?[]const u8,
+    notes_contains: ?[]const u8,
+) ![]Issue {
+    // No filters - return original slice
+    if (priority_min == null and priority_max == null and title_contains == null and desc_contains == null and notes_contains == null) {
+        return try allocator.dupe(Issue, issues);
+    }
+
+    var filtered: std.ArrayListUnmanaged(Issue) = .{};
+    errdefer filtered.deinit(allocator);
+
+    for (issues) |issue| {
+        // Priority range filters (lower value = higher priority)
+        if (priority_min) |min_p| {
+            if (issue.priority.value < min_p.value) continue;
+        }
+        if (priority_max) |max_p| {
+            if (issue.priority.value > max_p.value) continue;
+        }
+
+        // Substring filters (case-insensitive)
+        if (title_contains) |query| {
+            if (!containsIgnoreCase(issue.title, query)) continue;
+        }
+        if (desc_contains) |query| {
+            if (issue.description) |desc| {
+                if (!containsIgnoreCase(desc, query)) continue;
+            } else continue;
+        }
+        if (notes_contains) |query| {
+            if (issue.notes) |notes| {
+                if (!containsIgnoreCase(notes, query)) continue;
+            } else continue;
+        }
+
+        try filtered.append(allocator, issue);
+    }
+
+    return filtered.toOwnedSlice(allocator);
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+
+    const end = haystack.len - needle.len + 1;
+    var i: usize = 0;
+    while (i < end) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |nc, j| {
+            const hc = haystack[i + j];
+            if (std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
 }
 
 // --- Tests ---

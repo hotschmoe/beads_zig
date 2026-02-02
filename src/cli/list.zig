@@ -65,6 +65,20 @@ pub fn run(
         };
     }
 
+    if (list_args.priority_min) |p| {
+        filters.priority_min = Priority.fromString(p) catch {
+            try outputError(&ctx.output, global.isStructuredOutput(), "invalid priority-min value");
+            return ListError.InvalidFilter;
+        };
+    }
+
+    if (list_args.priority_max) |p| {
+        filters.priority_max = Priority.fromString(p) catch {
+            try outputError(&ctx.output, global.isStructuredOutput(), "invalid priority-max value");
+            return ListError.InvalidFilter;
+        };
+    }
+
     if (list_args.issue_type) |t| {
         filters.issue_type = IssueType.fromString(t);
     }
@@ -79,6 +93,18 @@ pub fn run(
 
     if (list_args.label_any.len > 0) {
         filters.label_any = list_args.label_any;
+    }
+
+    if (list_args.title_contains) |t| {
+        filters.title_contains = t;
+    }
+
+    if (list_args.desc_contains) |d| {
+        filters.desc_contains = d;
+    }
+
+    if (list_args.notes_contains) |n| {
+        filters.notes_contains = n;
     }
 
     if (list_args.limit) |n| {

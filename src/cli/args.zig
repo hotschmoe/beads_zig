@@ -217,10 +217,15 @@ pub const SortField = enum {
 pub const ListArgs = struct {
     status: ?[]const u8 = null,
     priority: ?[]const u8 = null,
+    priority_min: ?[]const u8 = null,
+    priority_max: ?[]const u8 = null,
     issue_type: ?[]const u8 = null,
     assignee: ?[]const u8 = null,
     label: ?[]const u8 = null,
     label_any: []const []const u8 = &[_][]const u8{},
+    title_contains: ?[]const u8 = null,
+    desc_contains: ?[]const u8 = null,
+    notes_contains: ?[]const u8 = null,
     limit: ?u32 = null,
     all: bool = false,
     sort: SortField = .created_at,
@@ -230,11 +235,21 @@ pub const ListArgs = struct {
 /// Ready command arguments.
 pub const ReadyArgs = struct {
     limit: ?u32 = null,
+    priority_min: ?[]const u8 = null,
+    priority_max: ?[]const u8 = null,
+    title_contains: ?[]const u8 = null,
+    desc_contains: ?[]const u8 = null,
+    notes_contains: ?[]const u8 = null,
 };
 
 /// Blocked command arguments.
 pub const BlockedArgs = struct {
     limit: ?u32 = null,
+    priority_min: ?[]const u8 = null,
+    priority_max: ?[]const u8 = null,
+    title_contains: ?[]const u8 = null,
+    desc_contains: ?[]const u8 = null,
+    notes_contains: ?[]const u8 = null,
 };
 
 /// Search command arguments.
@@ -1015,6 +1030,10 @@ pub const ArgParser = struct {
                 result.status = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-p", "--priority")) {
                 result.priority = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--priority-min")) {
+                result.priority_min = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--priority-max")) {
+                result.priority_max = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-t", "--type")) {
                 result.issue_type = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-a", "--assignee")) {
@@ -1023,6 +1042,12 @@ pub const ArgParser = struct {
                 result.label = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag(null, "--label-any")) {
                 label_any_list.append(self.allocator, self.next() orelse return error.MissingFlagValue) catch return error.InvalidArgument;
+            } else if (self.consumeFlag(null, "--title-contains")) {
+                result.title_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--desc-contains")) {
+                result.desc_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--notes-contains")) {
+                result.notes_contains = self.next() orelse return error.MissingFlagValue;
             } else if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
             } else if (self.consumeFlag("-A", "--all")) {
@@ -1049,6 +1074,16 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
+            } else if (self.consumeFlag(null, "--priority-min")) {
+                result.priority_min = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--priority-max")) {
+                result.priority_max = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--title-contains")) {
+                result.title_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--desc-contains")) {
+                result.desc_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--notes-contains")) {
+                result.notes_contains = self.next() orelse return error.MissingFlagValue;
             } else break;
         }
         return result;
@@ -1059,6 +1094,16 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
+            } else if (self.consumeFlag(null, "--priority-min")) {
+                result.priority_min = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--priority-max")) {
+                result.priority_max = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--title-contains")) {
+                result.title_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--desc-contains")) {
+                result.desc_contains = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--notes-contains")) {
+                result.notes_contains = self.next() orelse return error.MissingFlagValue;
             } else break;
         }
         return result;
