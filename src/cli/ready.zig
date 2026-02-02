@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
+const store = @import("../storage/store.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
@@ -15,6 +16,7 @@ const Issue = models.Issue;
 const Priority = models.Priority;
 const CommandContext = common.CommandContext;
 const DependencyGraph = common.DependencyGraph;
+const containsIgnoreCase = store.containsIgnoreCase;
 
 pub const ReadyError = error{
     WorkspaceNotInitialized,
@@ -255,26 +257,6 @@ fn applyFilters(
     }
 
     return filtered.toOwnedSlice(allocator);
-}
-
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (needle.len > haystack.len) return false;
-
-    const end = haystack.len - needle.len + 1;
-    var i: usize = 0;
-    while (i < end) : (i += 1) {
-        var match = true;
-        for (needle, 0..) |nc, j| {
-            const hc = haystack[i + j];
-            if (std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return true;
-    }
-    return false;
 }
 
 // --- Tests ---

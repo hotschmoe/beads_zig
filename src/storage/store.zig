@@ -862,7 +862,7 @@ fn issueTypeEql(a: IssueType, b: IssueType) bool {
     return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
 }
 
-fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (needle.len > haystack.len) return false;
 
