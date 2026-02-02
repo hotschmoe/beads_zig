@@ -130,6 +130,7 @@ pub const Issue = struct {
     updated_at: Rfc3339Timestamp,
     closed_at: OptionalRfc3339Timestamp,
     close_reason: ?[]const u8,
+    closed_by_session: ?[]const u8 = null,
 
     // Scheduling
     due_at: OptionalRfc3339Timestamp,
@@ -181,6 +182,7 @@ pub const Issue = struct {
         if (a.updated_at.value != b.updated_at.value) return false;
         if (a.closed_at.value != b.closed_at.value) return false;
         if (!optionalStrEql(a.close_reason, b.close_reason)) return false;
+        if (!optionalStrEql(a.closed_by_session, b.closed_by_session)) return false;
         if (a.due_at.value != b.due_at.value) return false;
         if (a.defer_until.value != b.defer_until.value) return false;
         if (a.estimated_minutes != b.estimated_minutes) return false;
@@ -240,6 +242,9 @@ pub const Issue = struct {
         result.closed_at = self.closed_at;
         result.close_reason = if (self.close_reason) |r| try allocator.dupe(u8, r) else null;
         errdefer if (result.close_reason) |r| allocator.free(r);
+
+        result.closed_by_session = if (self.closed_by_session) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.closed_by_session) |s| allocator.free(s);
 
         result.due_at = self.due_at;
         result.defer_until = self.defer_until;
@@ -337,6 +342,7 @@ pub const Issue = struct {
         if (self.owner) |o| allocator.free(o);
         if (self.created_by) |c| allocator.free(c);
         if (self.close_reason) |r| allocator.free(r);
+        if (self.closed_by_session) |s| allocator.free(s);
         if (self.external_ref) |e| allocator.free(e);
         if (self.source_system) |s| allocator.free(s);
 
@@ -389,6 +395,7 @@ pub const Issue = struct {
             .updated_at = .{ .value = now },
             .closed_at = .{ .value = null },
             .close_reason = null,
+            .closed_by_session = null,
             .due_at = .{ .value = null },
             .defer_until = .{ .value = null },
             .estimated_minutes = null,
@@ -667,6 +674,7 @@ test "Issue.deinit frees all memory" {
         .updated_at = .{ .value = 1706540000 },
         .closed_at = .{ .value = null },
         .close_reason = null,
+        .closed_by_session = null,
         .due_at = .{ .value = null },
         .defer_until = .{ .value = null },
         .estimated_minutes = 60,

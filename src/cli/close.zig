@@ -62,6 +62,10 @@ pub fn run(
         updates.close_reason = r;
     }
 
+    if (close_args.session) |s| {
+        updates.closed_by_session = s;
+    }
+
     ctx.store.update(close_args.id, updates, now) catch {
         try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to close issue");
         return CloseError.StorageError;

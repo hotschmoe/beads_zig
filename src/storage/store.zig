@@ -205,6 +205,7 @@ pub const IssueStore = struct {
         estimated_minutes: ?i32 = null,
         closed_at: ?i64 = null,
         close_reason: ?[]const u8 = null,
+        closed_by_session: ?[]const u8 = null,
         due_at: ?i64 = null,
         defer_until: ?i64 = null,
         external_ref: ?[]const u8 = null,
@@ -289,6 +290,10 @@ pub const IssueStore = struct {
             if (issue.close_reason) |r| self.allocator.free(r);
             issue.close_reason = try self.allocator.dupe(u8, v);
         }
+        if (updates.closed_by_session) |v| {
+            if (issue.closed_by_session) |s| self.allocator.free(s);
+            issue.closed_by_session = try self.allocator.dupe(u8, v);
+        }
         if (updates.due_at) |v| {
             issue.due_at = OptionalRfc3339Timestamp{ .value = v };
         }
@@ -329,6 +334,7 @@ pub const IssueStore = struct {
         issue_type: ?IssueType = null,
         assignee: ?[]const u8 = null,
         label: ?[]const u8 = null,
+        label_any: []const []const u8 = &[_][]const u8{},
         include_tombstones: bool = false,
         limit: ?u32 = null,
         offset: ?u32 = null,
@@ -381,6 +387,21 @@ pub const IssueStore = struct {
                     }
                 }
                 if (!found) continue;
+            }
+
+            // label_any: OR logic - issue must have at least ONE of the specified labels
+            if (filters.label_any.len > 0) {
+                var found_any = false;
+                for (filters.label_any) |any_label| {
+                    for (issue.labels) |issue_label| {
+                        if (std.mem.eql(u8, issue_label, any_label)) {
+                            found_any = true;
+                            break;
+                        }
+                    }
+                    if (found_any) break;
+                }
+                if (!found_any) continue;
             }
 
             try results.append(self.allocator, try issue.clone(self.allocator));

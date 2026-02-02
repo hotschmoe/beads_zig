@@ -77,6 +77,10 @@ pub fn run(
         filters.label = l;
     }
 
+    if (list_args.label_any.len > 0) {
+        filters.label_any = list_args.label_any;
+    }
+
     if (list_args.limit) |n| {
         filters.limit = n;
     }

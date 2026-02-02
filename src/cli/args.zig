@@ -158,6 +158,7 @@ pub const UpdateArgs = struct {
 pub const CloseArgs = struct {
     id: []const u8,
     reason: ?[]const u8 = null,
+    session: ?[]const u8 = null,
 };
 
 /// Reopen command arguments.
@@ -219,6 +220,7 @@ pub const ListArgs = struct {
     issue_type: ?[]const u8 = null,
     assignee: ?[]const u8 = null,
     label: ?[]const u8 = null,
+    label_any: []const []const u8 = &[_][]const u8{},
     limit: ?u32 = null,
     all: bool = false,
     sort: SortField = .created_at,
@@ -498,6 +500,9 @@ pub const ParseResult = struct {
             .create => |create| {
                 if (create.labels.len > 0) allocator.free(create.labels);
                 if (create.deps.len > 0) allocator.free(create.deps);
+            },
+            .list => |list_cmd| {
+                if (list_cmd.label_any.len > 0) allocator.free(list_cmd.label_any);
             },
             .label => |label_cmd| {
                 switch (label_cmd.subcommand) {
@@ -938,6 +943,8 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (self.consumeFlag("-r", "--reason")) {
                 result.reason = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-s", "--session")) {
+                result.session = self.next() orelse return error.MissingFlagValue;
             } else if (self.peekPositional()) |_| {
                 if (!id_set) {
                     result.id = self.next().?;
@@ -1001,6 +1008,8 @@ pub const ArgParser = struct {
 
     fn parseListArgs(self: *Self) ParseError!ListArgs {
         var result = ListArgs{};
+        var label_any_list: std.ArrayListUnmanaged([]const u8) = .{};
+
         while (self.hasNext()) {
             if (self.consumeFlag("-s", "--status")) {
                 result.status = self.next() orelse return error.MissingFlagValue;
@@ -1012,6 +1021,8 @@ pub const ArgParser = struct {
                 result.assignee = self.next() orelse return error.MissingFlagValue;
             } else if (self.consumeFlag("-l", "--label")) {
                 result.label = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--label-any")) {
+                label_any_list.append(self.allocator, self.next() orelse return error.MissingFlagValue) catch return error.InvalidArgument;
             } else if (try self.parseLimitFlag()) |limit| {
                 result.limit = limit;
             } else if (self.consumeFlag("-A", "--all")) {
@@ -1025,6 +1036,11 @@ pub const ArgParser = struct {
                 result.sort_desc = true;
             } else break;
         }
+
+        if (label_any_list.items.len > 0) {
+            result.label_any = label_any_list.toOwnedSlice(self.allocator) catch return error.InvalidArgument;
+        }
+
         return result;
     }
 
