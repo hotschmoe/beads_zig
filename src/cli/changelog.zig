@@ -281,12 +281,10 @@ fn epochDayFromDate(year: i32, month: u4, day: u5) i64 {
     return era * 146097 + doe - 719468;
 }
 
-fn getTimestampFromGitTag(allocator: std.mem.Allocator, tag: []const u8) !i64 {
-    // Get the commit timestamp for the given tag
-    // Format: git log -1 --format=%ct <tag>
+fn getTimestampFromGitRef(allocator: std.mem.Allocator, git_ref: []const u8, not_found_error: ChangelogError) !i64 {
     const result = std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "git", "log", "-1", "--format=%ct", tag },
+        .argv = &[_][]const u8{ "git", "log", "-1", "--format=%ct", git_ref },
         .cwd = null,
     }) catch return ChangelogError.GitError;
 
@@ -294,33 +292,19 @@ fn getTimestampFromGitTag(allocator: std.mem.Allocator, tag: []const u8) !i64 {
     defer allocator.free(result.stdout);
 
     if (result.term.Exited != 0) {
-        return ChangelogError.GitTagNotFound;
+        return not_found_error;
     }
 
-    // Parse the timestamp (trim newline)
     const trimmed = std.mem.trim(u8, result.stdout, " \n\r\t");
     return std.fmt.parseInt(i64, trimmed, 10) catch return ChangelogError.GitError;
 }
 
+fn getTimestampFromGitTag(allocator: std.mem.Allocator, tag: []const u8) !i64 {
+    return getTimestampFromGitRef(allocator, tag, ChangelogError.GitTagNotFound);
+}
+
 fn getTimestampFromGitCommit(allocator: std.mem.Allocator, commit: []const u8) !i64 {
-    // Get the commit timestamp for the given commit hash
-    // Format: git log -1 --format=%ct <commit>
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{ "git", "log", "-1", "--format=%ct", commit },
-        .cwd = null,
-    }) catch return ChangelogError.GitError;
-
-    defer allocator.free(result.stderr);
-    defer allocator.free(result.stdout);
-
-    if (result.term.Exited != 0) {
-        return ChangelogError.GitCommitNotFound;
-    }
-
-    // Parse the timestamp (trim newline)
-    const trimmed = std.mem.trim(u8, result.stdout, " \n\r\t");
-    return std.fmt.parseInt(i64, trimmed, 10) catch return ChangelogError.GitError;
+    return getTimestampFromGitRef(allocator, commit, ChangelogError.GitCommitNotFound);
 }
 
 // --- Tests ---
