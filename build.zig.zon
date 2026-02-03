@@ -33,12 +33,12 @@
     // internet connectivity.
     .dependencies = .{
         .rich_zig = .{
-            .url = "https://github.com/hotschmoe/rich_zig/archive/refs/tags/v1.1.1.tar.gz",
-            .hash = "rich_zig-1.1.0-cZcAnP4JCwDrRB-w46dA_rXDaa9V65UsRtt-53A1SROO",
+            .url = "https://github.com/hotschmoe/rich_zig/archive/refs/tags/v1.2.1.tar.gz",
+            .hash = "rich_zig-1.2.1-cZcAnFIcCwDU93JY4wtdrarTgEAvrj9Js8ezJzr9Db1Q",
         },
         .toon_zig = .{
-            .url = "https://github.com/hotschmoe/toon_zig/archive/refs/tags/v0.1.5.tar.gz",
-            .hash = "toon_zig-0.1.5-k_hmCPp2BQDaa0LBM1gdu8BTNzIdBqW8y7eH6dM99BcU",
+            .url = "https://github.com/hotschmoe/toon_zig/archive/refs/tags/v0.1.8.tar.gz",
+            .hash = "toon_zig-0.1.8-k_hmCJZ5BQDIuXGsxovT8Q9uWn0I_6CHh__xlFeYaV1l",
         },
     },
     .paths = .{
