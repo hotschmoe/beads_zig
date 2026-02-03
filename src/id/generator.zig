@@ -70,15 +70,51 @@ pub const IdGenerator = struct {
 
     /// Adaptive hash length based on issue count.
     /// Uses birthday problem approximation for collision resistance.
+    ///
+    /// Target: <0.1% collision probability per generation.
+    /// Formula: P(collision) ~ n^2 / (2 * S) where S = 36^length
+    ///
+    /// Thresholds chosen conservatively:
+    /// - 3 chars (46,656 space): safe for <100 issues (P < 0.1%)
+    /// - 4 chars (1.68M space): safe for <1,000 issues (P < 0.03%)
+    /// - 5 chars (60.5M space): safe for <10,000 issues (P < 0.008%)
+    /// - 6 chars (2.18B space): safe for <100,000 issues
+    /// - 7 chars (78.4B space): safe for <1,000,000 issues
+    /// - 8 chars (2.82T space): safe for any practical count
     fn adaptiveLength(self: IdGenerator, count: usize) u8 {
-        // 36^3 = 46,656 - safe for <1000 issues
-        // 36^4 = 1,679,616 - safe for <50,000 issues
-        // 36^5 = 60,466,176 - safe for <1,000,000 issues
-        // 36^6 = 2,176,782,336 - safe for >1,000,000 issues
-        if (count < 1000) return @max(self.min_length, 3);
-        if (count < 50000) return @max(self.min_length, 4);
-        if (count < 1000000) return @max(self.min_length, 5);
-        return @min(self.max_length, 6);
+        if (count < 100) return @max(self.min_length, 3);
+        if (count < 1000) return @max(self.min_length, 4);
+        if (count < 10000) return @max(self.min_length, 5);
+        if (count < 100000) return @max(self.min_length, 6);
+        if (count < 1000000) return @max(self.min_length, 7);
+        return @min(self.max_length, 8);
+    }
+
+    /// Generate a unique issue ID with collision checking.
+    /// Retries up to max_retries times if ID already exists.
+    /// Returns error.CollisionLimitExceeded if all retries fail.
+    pub fn generateUnique(
+        self: *IdGenerator,
+        allocator: std.mem.Allocator,
+        issue_count: usize,
+        existing_ids: anytype,
+    ) ![]u8 {
+        const max_retries = 10;
+        var attempts: usize = 0;
+
+        while (attempts < max_retries) : (attempts += 1) {
+            const id = try self.generate(allocator, issue_count);
+
+            // Check if ID already exists
+            if (!existing_ids.contains(id)) {
+                return id;
+            }
+
+            // ID collision - free and retry
+            allocator.free(id);
+        }
+
+        return error.CollisionLimitExceeded;
     }
 
     /// Generate child ID for hierarchical issues.
@@ -174,19 +210,19 @@ test "IdGenerator.generate adaptive length increases with count" {
     const parsed_small = try parseId(id_small);
     try std.testing.expect(parsed_small.hash.len >= 3);
 
-    // With 50000 issues, should use longer hashes
+    // With 1000 issues, should use 5-char hashes (new threshold)
     var gen2 = IdGenerator.initWithSeed("bd", 12345);
-    const id_medium = try gen2.generate(allocator, 50000);
+    const id_medium = try gen2.generate(allocator, 1000);
     defer allocator.free(id_medium);
     const parsed_medium = try parseId(id_medium);
-    try std.testing.expect(parsed_medium.hash.len >= 4);
+    try std.testing.expect(parsed_medium.hash.len >= 5);
 
-    // With 1000000 issues, should use even longer hashes
+    // With 1000000 issues, should use 8-char hashes (max)
     var gen3 = IdGenerator.initWithSeed("bd", 12345);
     const id_large = try gen3.generate(allocator, 1000000);
     defer allocator.free(id_large);
     const parsed_large = try parseId(id_large);
-    try std.testing.expect(parsed_large.hash.len >= 5);
+    try std.testing.expect(parsed_large.hash.len >= 8);
 }
 
 test "IdGenerator.generateChild creates hierarchical ID" {
@@ -264,10 +300,10 @@ test "generated IDs are unique" {
     }
 
     // Generate IDs and check for collisions.
-    // Pass issue_count=1000 to use 4-char hashes (36^4 = 1,679,616 space).
-    // With 50 IDs, birthday collision probability is negligible (~0.07%).
+    // Pass issue_count=10000 to use 6-char hashes (36^6 = 2.18B space).
+    // With 50 IDs, birthday collision probability is negligible.
     const count = 50;
-    const base_count = 1000; // Force 4-char hashes for better uniqueness
+    const base_count = 10000; // Force 6-char hashes for better uniqueness
     for (0..count) |i| {
         const id = try gen.generate(allocator, base_count + i);
         errdefer allocator.free(id);
@@ -292,4 +328,25 @@ test "custom prefix works" {
 
     try std.testing.expect(std.mem.startsWith(u8, id, "myapp-"));
     try std.testing.expect(validateId(id));
+}
+
+test "generateUnique avoids collisions" {
+    const allocator = std.testing.allocator;
+    var gen = IdGenerator.initWithSeed("bd", 42);
+
+    // Create a set with one pre-existing ID
+    var existing = std.StringHashMap(void).init(allocator);
+    defer existing.deinit();
+
+    // Generate first ID
+    const id1 = try gen.generate(allocator, 0);
+    defer allocator.free(id1);
+    try existing.put(id1, {});
+
+    // generateUnique should return a different ID
+    const id2 = try gen.generateUnique(allocator, 0, existing);
+    defer allocator.free(id2);
+
+    try std.testing.expect(!std.mem.eql(u8, id1, id2));
+    try std.testing.expect(!existing.contains(id2));
 }

@@ -113,19 +113,30 @@ const commands = [_]CommandHelp{
     .{
         .name = "sync",
         .summary = "Sync with JSONL file",
-        .usage = "bz sync [--flush-only] [--import-only]",
+        .usage = "bz sync [--flush-only] [--import-only] [--status] [--manifest] [--error-policy POLICY] [--orphans POLICY] [--rename-prefix]",
         .description = "Synchronizes in-memory state with the JSONL file. By default, performs " ++
             "bidirectional sync. Use flags to limit to export or import only.",
         .flags = &[_]FlagHelp{
             .{ .short = null, .long = "--flush-only", .description = "Only export (write to JSONL)" },
             .{ .short = null, .long = "--import-only", .description = "Only import (read from JSONL)" },
+            .{ .short = "-s", .long = "--status", .description = "Show sync status without changes" },
+            .{ .short = null, .long = "--manifest", .description = "Write manifest.json with export metadata" },
+            .{ .short = "-m", .long = "--merge", .description = "3-way merge with remote JSONL" },
+            .{ .short = null, .long = "--error-policy", .arg = "POLICY", .description = "Export error handling: strict (default), best-effort, partial" },
+            .{ .short = null, .long = "--orphans", .arg = "POLICY", .description = "Import orphan handling: strict (default), resurrect, skip" },
+            .{ .short = null, .long = "--rename-prefix", .description = "Fix issues with wrong prefix during import" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz sync", .description = "Full bidirectional sync" },
             .{ .command = "bz sync --flush-only", .description = "Export changes to JSONL" },
             .{ .command = "bz sync --import-only", .description = "Import changes from JSONL" },
+            .{ .command = "bz sync --status", .description = "Show DB/JSONL issue counts" },
+            .{ .command = "bz sync --flush-only --manifest", .description = "Export with manifest file" },
+            .{ .command = "bz sync --flush-only --error-policy best-effort", .description = "Export, continuing on errors" },
+            .{ .command = "bz sync --import-only --orphans resurrect", .description = "Import, creating placeholders for orphans" },
+            .{ .command = "bz sync --import-only --rename-prefix", .description = "Import and fix wrong ID prefixes" },
         },
-        .see_also = &[_][]const u8{ "import", "add-batch" },
+        .see_also = &[_][]const u8{ "import", "add-batch", "backup" },
     },
     .{
         .name = "orphans",
@@ -507,19 +518,23 @@ const commands = [_]CommandHelp{
     .{
         .name = "graph",
         .summary = "Show dependency graph",
-        .usage = "bz graph [ID] [--format FMT] [--depth N]",
+        .usage = "bz graph [ID] [--format FMT] [--depth N] [--all] [--compact]",
         .description = "Visualizes the dependency graph. Without an ID, shows all dependencies. " ++
-            "With an ID, shows that issue's dependency subgraph.",
+            "With an ID, shows that issue's dependency subgraph. Use --all for open issues only, --compact for one-line output.",
         .arguments = &[_]ArgHelp{
             .{ .name = "id", .description = "Issue ID (optional, shows all if omitted)", .required = false },
         },
         .flags = &[_]FlagHelp{
             .{ .short = "-f", .long = "--format", .arg = "FMT", .description = "Output format: ascii (default) or dot" },
             .{ .short = "-d", .long = "--depth", .arg = "N", .description = "Maximum tree depth" },
+            .{ .short = "-a", .long = "--all", .description = "Show graph for all open issues" },
+            .{ .short = "-c", .long = "--compact", .description = "Compact one-line-per-issue output" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz graph", .description = "Show full dependency graph (ASCII)" },
             .{ .command = "bz graph bd-abc", .description = "Show graph for specific issue" },
+            .{ .command = "bz graph --all", .description = "Show graph for all open issues" },
+            .{ .command = "bz graph bd-abc --compact", .description = "Compact output for specific issue" },
             .{ .command = "bz graph --format dot | dot -Tpng -o graph.png", .description = "Generate PNG via Graphviz" },
         },
         .see_also = &[_][]const u8{"dep"},
@@ -616,21 +631,51 @@ const commands = [_]CommandHelp{
     .{
         .name = "changelog",
         .summary = "Generate changelog from closed issues",
-        .usage = "bz changelog [--since DATE] [--until DATE] [--limit N] [--group-by FIELD]",
+        .usage = "bz changelog [--since DATE] [--until DATE] [--since-tag TAG] [--since-commit HASH] [--limit N] [--group-by FIELD]",
         .description = "Generates a changelog from recently closed issues, optionally filtered " ++
-            "by date range and grouped by type.",
+            "by date range and grouped by type. Can use git tags or commits for date references.",
         .flags = &[_]FlagHelp{
             .{ .short = null, .long = "--since", .arg = "DATE", .description = "Start date (YYYY-MM-DD)" },
             .{ .short = null, .long = "--until", .arg = "DATE", .description = "End date (YYYY-MM-DD)" },
+            .{ .short = null, .long = "--since-tag", .arg = "TAG", .description = "Start from git tag (e.g., v1.0.0)" },
+            .{ .short = null, .long = "--since-commit", .arg = "HASH", .description = "Start from git commit (e.g., abc123)" },
             .{ .short = "-n", .long = "--limit", .arg = "N", .description = "Maximum entries" },
             .{ .short = "-g", .long = "--group-by", .arg = "FIELD", .description = "Group by field (e.g., type)" },
         },
         .examples = &[_]ExampleHelp{
             .{ .command = "bz changelog", .description = "Generate changelog" },
             .{ .command = "bz changelog --since 2024-01-01", .description = "Since specific date" },
+            .{ .command = "bz changelog --since-tag v1.0.0", .description = "Since git tag v1.0.0" },
+            .{ .command = "bz changelog --since-commit abc123", .description = "Since git commit" },
             .{ .command = "bz changelog --group-by type", .description = "Group by issue type" },
         },
         .see_also = &[_][]const u8{"audit"},
+    },
+
+    // Backup commands
+    .{
+        .name = "backup",
+        .aliases = &[_][]const u8{"backups"},
+        .summary = "Manage JSONL backup files",
+        .usage = "bz backup <subcommand> [args]",
+        .description = "Manage JSONL backup files. Create backups before major operations, " ++
+            "compare backups with current state, restore from backups, and prune old backups.",
+        .arguments = &[_]ArgHelp{
+            .{ .name = "subcommand", .description = "list, diff, restore, prune, or create" },
+        },
+        .flags = &[_]FlagHelp{
+            .{ .short = "-k", .long = "--keep", .arg = "N", .description = "Keep N most recent backups (prune, default: 10)" },
+            .{ .short = "-n", .long = "--dry-run", .description = "Show what would be done without making changes" },
+        },
+        .examples = &[_]ExampleHelp{
+            .{ .command = "bz backup list", .description = "List available backups" },
+            .{ .command = "bz backup create", .description = "Create a new backup" },
+            .{ .command = "bz backup diff issues.jsonl.bak.123", .description = "Compare backup with current" },
+            .{ .command = "bz backup restore issues.jsonl.bak.123", .description = "Restore from backup" },
+            .{ .command = "bz backup restore issues.jsonl.bak.123 --dry-run", .description = "Preview restore" },
+            .{ .command = "bz backup prune --keep 5", .description = "Keep only 5 most recent backups" },
+        },
+        .see_also = &[_][]const u8{ "sync", "import" },
     },
 
     // System commands
@@ -652,6 +697,30 @@ const commands = [_]CommandHelp{
         .examples = &[_]ExampleHelp{
             .{ .command = "bz schema", .description = "Show schema documentation" },
         },
+    },
+    .{
+        .name = "upgrade",
+        .summary = "Upgrade bz to latest version",
+        .usage = "bz upgrade [--check] [--dry-run] [--version <version>] [--no-verify] [--force]",
+        .description =
+        \\Downloads and installs the latest bz release from GitHub.
+        \\Verifies SHA256 checksum by default for security.
+        ,
+        .flags = &[_]FlagHelp{
+            .{ .short = "-c", .long = "--check", .description = "Check for updates without installing" },
+            .{ .short = "-n", .long = "--dry-run", .description = "Show what would be updated without installing" },
+            .{ .short = "-V", .long = "--version", .arg = "VERSION", .description = "Upgrade to a specific version" },
+            .{ .short = null, .long = "--no-verify", .description = "Skip SHA256 checksum verification" },
+            .{ .short = "-f", .long = "--force", .description = "Force upgrade even if same version" },
+        },
+        .examples = &[_]ExampleHelp{
+            .{ .command = "bz upgrade", .description = "Upgrade to latest version" },
+            .{ .command = "bz upgrade --check", .description = "Check for updates" },
+            .{ .command = "bz upgrade --dry-run", .description = "Show what would be updated" },
+            .{ .command = "bz upgrade --version 0.2.0", .description = "Upgrade to specific version" },
+            .{ .command = "bz upgrade --no-verify", .description = "Skip checksum verification" },
+        },
+        .see_also = &[_][]const u8{"version"},
     },
     .{
         .name = "completions",
@@ -778,6 +847,13 @@ fn showGeneralHelp(file: std.fs.File) !void {
         \\    history <id>      Show issue history
         \\    audit             Project-wide audit log
         \\    changelog         Generate changelog from closed issues
+        \\
+        \\  Backup:
+        \\    backup list       List available backups
+        \\    backup create     Create a new backup
+        \\    backup diff <f>   Compare backup with current
+        \\    backup restore <f> Restore from backup
+        \\    backup prune      Remove old backups
         \\
         \\  System:
         \\    help              Show this help

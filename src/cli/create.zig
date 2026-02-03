@@ -34,6 +34,18 @@ pub const CreateResult = struct {
     message: ?[]const u8 = null,
 };
 
+pub const DryRunResult = struct {
+    dry_run: bool = true,
+    would_create: struct {
+        id: []const u8,
+        title: []const u8,
+        issue_type: []const u8,
+        priority: []const u8,
+        assignee: ?[]const u8 = null,
+        labels: []const []const u8 = &[_][]const u8{},
+    },
+};
+
 /// Run the create command.
 pub fn run(
     create_args: args.CreateArgs,
@@ -100,16 +112,22 @@ pub fn run(
         null;
 
     // Get actor (from flag, env, or default)
-    const actor = global.actor orelse getDefaultActor();
+    const actor = global.actor orelse common.getDefaultActor();
 
     // Get config prefix (read from config.yaml or use default)
     const prefix = try getConfigPrefix(allocator, beads_dir);
     defer allocator.free(prefix);
 
-    // Generate ID
+    // Generate ID with collision checking
     var generator = IdGenerator.init(prefix);
     const issue_count = store.countTotal();
-    const issue_id = try generator.generate(allocator, issue_count);
+    const issue_id = generator.generateUnique(allocator, issue_count, store.getIdIndex()) catch |err| {
+        if (err == error.CollisionLimitExceeded) {
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
+            return CreateError.StorageError;
+        }
+        return err;
+    };
     defer allocator.free(issue_id);
 
     // Create issue
@@ -119,13 +137,42 @@ pub fn run(
     issue.priority = priority;
     issue.issue_type = issue_type;
     issue.assignee = create_args.assignee;
+    issue.owner = create_args.owner;
+    issue.design = create_args.design;
+    issue.acceptance_criteria = create_args.acceptance_criteria;
+    issue.external_ref = create_args.external_ref;
     issue.created_by = actor;
     issue.due_at = .{ .value = due_at };
     issue.estimated_minutes = create_args.estimate;
+    issue.ephemeral = create_args.ephemeral;
 
     // Set labels on issue (will be persisted via WAL)
     if (create_args.labels.len > 0) {
         issue.labels = create_args.labels;
+    }
+
+    // Dry-run mode: preview without persisting
+    if (create_args.dry_run) {
+        if (structured_output) {
+            try output.printJson(DryRunResult{
+                .would_create = .{
+                    .id = issue_id,
+                    .title = create_args.title,
+                    .issue_type = issue_type.toString(),
+                    .priority = priority.toString(),
+                    .assignee = create_args.assignee,
+                    .labels = create_args.labels,
+                },
+            });
+        } else {
+            try output.info("Would create: {s} \"{s}\" ({s}, {s})", .{
+                issue_id,
+                create_args.title,
+                issue_type.toString(),
+                priority.toString(),
+            });
+        }
+        return;
     }
 
     // Insert into store (for in-memory state and duplicate check)
@@ -221,15 +268,6 @@ fn epochDayFromYMD(year: i32, month: u4, day: u5) !i32 {
     const doy: u32 = (153 * (if (m > 2) m - 3 else m + 9) + 2) / 5 + day - 1;
     const doe: u32 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return era * 146097 + @as(i32, @intCast(doe)) - 719468;
-}
-
-/// Get the default actor name from environment.
-/// On Windows, returns null (env var access requires allocation).
-/// Use --actor flag to specify the actor on Windows.
-fn getDefaultActor() ?[]const u8 {
-    const builtin = @import("builtin");
-    if (builtin.os.tag == .windows) return null;
-    return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
 }
 
 /// Read the ID prefix from config.yaml, defaulting to "bd".

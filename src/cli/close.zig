@@ -62,6 +62,10 @@ pub fn run(
         updates.close_reason = r;
     }
 
+    if (close_args.session) |s| {
+        updates.closed_by_session = s;
+    }
+
     ctx.store.update(close_args.id, updates, now) catch {
         try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to close issue");
         return CloseError.StorageError;
@@ -138,6 +142,12 @@ fn outputSuccess(
             .id = id,
             .action = action,
         });
+    } else if (global.robot) {
+        // Robot format: ACTION<TAB>ID
+        try output.raw(action);
+        try output.raw("\t");
+        try output.raw(id);
+        try output.raw("\n");
     } else if (global.quiet) {
         try output.raw(id);
         try output.raw("\n");

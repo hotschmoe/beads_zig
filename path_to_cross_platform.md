@@ -64,12 +64,14 @@ No SQLite. No C FFI. No libc linking required.
 
 ---
 
-## Remaining Work
+## Status
 
-1. [ ] Test WASM target (wasm32-wasi) - may need filesystem shim
-2. [ ] Test actual execution on target platforms (not just cross-compilation)
-3. [ ] Consider CI/CD pipeline for multi-platform builds
-4. [ ] Code signing for macOS distribution (if distributing binaries)
+Cross-platform builds are working. The release workflow builds binaries for all major platforms.
+
+### Future Enhancements
+
+1. [ ] WASM target (wasm32-wasi) - may need filesystem shim
+2. [ ] Code signing for macOS distribution (if distributing binaries)
 
 ---
 

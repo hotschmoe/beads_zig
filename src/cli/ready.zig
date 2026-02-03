@@ -7,44 +7,52 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
+const store = @import("../storage/store.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
 
 const Issue = models.Issue;
+const Priority = models.Priority;
 const CommandContext = common.CommandContext;
 const DependencyGraph = common.DependencyGraph;
+const containsIgnoreCase = store.containsIgnoreCase;
 
 pub const ReadyError = error{
     WorkspaceNotInitialized,
     StorageError,
     OutOfMemory,
+    InvalidFilter,
 };
 
 pub const ReadyResult = struct {
     success: bool,
-    issues: ?[]const IssueCompact = null,
+    issues: ?[]const common.IssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
-
-    const IssueCompact = struct {
-        id: []const u8,
-        title: []const u8,
-        priority: u3,
-    };
 };
 
 pub const BlockedResult = struct {
     success: bool,
-    issues: ?[]const BlockedIssue = null,
+    issues: ?[]const BlockedIssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
 
-    const BlockedIssue = struct {
+    /// Full blocked issue representation for agent consumption.
+    /// Includes all fields commonly needed for workflow automation.
+    const BlockedIssueFull = struct {
         id: []const u8,
         title: []const u8,
+        description: ?[]const u8 = null,
+        status: []const u8,
         priority: u3,
-        blocked_by: []const []const u8,
+        issue_type: []const u8,
+        assignee: ?[]const u8 = null,
+        labels: []const []const u8,
+        created_at: i64,
+        updated_at: i64,
+        blocked_by: []const []const u8, // IDs of blocking issues
+        blocks: []const []const u8, // IDs of issues this blocks (dependents)
     };
 };
 
@@ -58,27 +66,86 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    // Parse priority filters
+    var priority_min: ?Priority = null;
+    var priority_max: ?Priority = null;
+    if (ready_args.priority_min) |p| {
+        priority_min = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-min value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+    if (ready_args.priority_max) |p| {
+        priority_max = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-max value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+
     var graph = ctx.createGraph();
-    const issues = try graph.getReadyIssues();
+    var issues = try graph.getReadyIssues(ready_args.include_deferred);
+
+    // Apply parent filter if specified (before other filters for efficiency)
+    if (ready_args.parent) |parent_id| {
+        var parent_filtered: std.ArrayListUnmanaged(Issue) = .{};
+        errdefer parent_filtered.deinit(allocator);
+
+        for (issues) |issue| {
+            if (graph.isChildOf(issue.id, parent_id, ready_args.recursive)) {
+                try parent_filtered.append(allocator, issue);
+            } else {
+                var i = issue;
+                i.deinit(allocator);
+            }
+        }
+        allocator.free(issues);
+        issues = try parent_filtered.toOwnedSlice(allocator);
+    }
     defer graph.freeIssues(issues);
 
-    const display_issues = applyLimit(issues, ready_args.limit);
+    // Apply filters
+    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, ready_args.title_contains, ready_args.desc_contains, ready_args.notes_contains, ready_args.overdue);
+    defer allocator.free(filtered);
+
+    const display_issues = applyLimit(filtered, ready_args.limit);
+
+    // Handle CSV output format
+    if (ready_args.format == .csv) {
+        const Output = common.Output;
+        const fields = try Output.parseCsvFields(allocator, ready_args.fields);
+        defer if (ready_args.fields != null) allocator.free(fields);
+        try ctx.output.printIssueListCsv(display_issues, fields);
+        return;
+    }
 
     if (global.isStructuredOutput()) {
-        var compact_issues = try allocator.alloc(ReadyResult.IssueCompact, display_issues.len);
-        defer allocator.free(compact_issues);
+        var full_issues = try allocator.alloc(common.IssueFull, display_issues.len);
+        defer {
+            for (full_issues) |fi| {
+                common.freeBlocksIds(allocator, fi.blocks);
+            }
+            allocator.free(full_issues);
+        }
 
         for (display_issues, 0..) |issue, i| {
-            compact_issues[i] = .{
+            full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
+                .description = issue.description,
+                .status = issue.status.toString(),
                 .priority = issue.priority.value,
+                .issue_type = issue.issue_type.toString(),
+                .assignee = issue.assignee,
+                .labels = issue.labels,
+                .created_at = issue.created_at.value,
+                .updated_at = issue.updated_at.value,
+                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
             };
         }
 
         try ctx.output.printJson(ReadyResult{
             .success = true,
-            .issues = compact_issues,
+            .issues = full_issues,
             .count = display_issues.len,
         });
     } else {
@@ -99,17 +166,38 @@ pub fn runBlocked(
     };
     defer ctx.deinit();
 
+    // Parse priority filters
+    var priority_min: ?Priority = null;
+    var priority_max: ?Priority = null;
+    if (blocked_args.priority_min) |p| {
+        priority_min = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-min value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+    if (blocked_args.priority_max) |p| {
+        priority_max = Priority.fromString(p) catch {
+            try ctx.output.err("invalid priority-max value", .{});
+            return ReadyError.InvalidFilter;
+        };
+    }
+
     var graph = ctx.createGraph();
     const issues = try graph.getBlockedIssues();
     defer graph.freeIssues(issues);
 
-    const display_issues = applyLimit(issues, blocked_args.limit);
+    // Apply filters (blocked command doesn't support overdue filter)
+    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains, false);
+    defer allocator.free(filtered);
+
+    const display_issues = applyLimit(filtered, blocked_args.limit);
 
     if (global.isStructuredOutput()) {
-        var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssue, display_issues.len);
+        var blocked_issues = try allocator.alloc(BlockedResult.BlockedIssueFull, display_issues.len);
         defer {
             for (blocked_issues) |bi| {
-                allocator.free(bi.blocked_by);
+                common.freeBlocksIds(allocator, bi.blocked_by);
+                common.freeBlocksIds(allocator, bi.blocks);
             }
             allocator.free(blocked_issues);
         }
@@ -120,14 +208,22 @@ pub fn runBlocked(
 
             var blocker_ids = try allocator.alloc([]const u8, blockers.len);
             for (blockers, 0..) |blocker, j| {
-                blocker_ids[j] = blocker.id;
+                blocker_ids[j] = try allocator.dupe(u8, blocker.id);
             }
 
             blocked_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
+                .description = issue.description,
+                .status = issue.status.toString(),
                 .priority = issue.priority.value,
+                .issue_type = issue.issue_type.toString(),
+                .assignee = issue.assignee,
+                .labels = issue.labels,
+                .created_at = issue.created_at.value,
+                .updated_at = issue.updated_at.value,
                 .blocked_by = blocker_ids,
+                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
             };
         }
 
@@ -166,6 +262,62 @@ fn applyLimit(issues: []Issue, limit: ?u32) []Issue {
         }
     }
     return issues;
+}
+
+fn applyFilters(
+    allocator: std.mem.Allocator,
+    issues: []Issue,
+    priority_min: ?Priority,
+    priority_max: ?Priority,
+    title_contains: ?[]const u8,
+    desc_contains: ?[]const u8,
+    notes_contains: ?[]const u8,
+    overdue_only: bool,
+) ![]Issue {
+    // No filters - return original slice
+    if (priority_min == null and priority_max == null and title_contains == null and desc_contains == null and notes_contains == null and !overdue_only) {
+        return try allocator.dupe(Issue, issues);
+    }
+
+    const now = std.time.timestamp();
+    var filtered: std.ArrayListUnmanaged(Issue) = .{};
+    errdefer filtered.deinit(allocator);
+
+    for (issues) |issue| {
+        // Priority range filters (lower value = higher priority)
+        if (priority_min) |min_p| {
+            if (issue.priority.value < min_p.value) continue;
+        }
+        if (priority_max) |max_p| {
+            if (issue.priority.value > max_p.value) continue;
+        }
+
+        // Substring filters (case-insensitive)
+        if (title_contains) |query| {
+            if (!containsIgnoreCase(issue.title, query)) continue;
+        }
+        if (desc_contains) |query| {
+            if (issue.description) |desc| {
+                if (!containsIgnoreCase(desc, query)) continue;
+            } else continue;
+        }
+        if (notes_contains) |query| {
+            if (issue.notes) |notes| {
+                if (!containsIgnoreCase(notes, query)) continue;
+            } else continue;
+        }
+
+        // Overdue filter: only include issues past their due date
+        if (overdue_only) {
+            if (issue.due_at.value) |due_time| {
+                if (due_time >= now) continue;
+            } else continue;
+        }
+
+        try filtered.append(allocator, issue);
+    }
+
+    return filtered.toOwnedSlice(allocator);
 }
 
 // --- Tests ---

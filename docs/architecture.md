@@ -46,9 +46,9 @@ beads_zig is a pure Zig implementation of a local-first issue tracker. It uses a
 │  └──────────────────────┬──────────────────────────────────┘   │
 └─────────────────────────│──────────────────────────────────────┘
                           ▼
-              .beads/beads.jsonl  (main)
-              .beads/beads.wal    (write-ahead log)
-              .beads/beads.lock   (flock target)
+              .beads/issues.jsonl  (main)
+              .beads/issues.wal    (write-ahead log)
+              .beads/.beads.lock   (flock target)
 ```
 
 ---
@@ -195,9 +195,9 @@ Compaction (periodic, ~10-50ms):
 
 ```
 .beads/
-  beads.jsonl       # Main file (compacted state)
-  beads.wal         # Write-ahead log (recent appends)
-  beads.lock        # Lock file (flock target)
+  issues.jsonl       # Main file (compacted state)
+  issues.wal         # Write-ahead log (recent appends)
+  .beads.lock        # Lock file (flock target)
 ```
 
 ### WAL Entry Format
@@ -318,7 +318,7 @@ For typical issue tracker workloads (< 10K issues), in-memory storage is fast en
 
 ## JSONL Format
 
-### Main File (`beads.jsonl`)
+### Main File (`issues.jsonl`)
 
 One JSON object per line, import-compatible with beads_rust:
 
@@ -327,7 +327,7 @@ One JSON object per line, import-compatible with beads_rust:
 {"id":"bd-def456","title":"Add feature","status":"closed","priority":1,"created_at":"2026-01-29T09:00:00Z",...}
 ```
 
-### WAL File (`beads.wal`)
+### WAL File (`issues.wal`)
 
 Operation log entries, one per line:
 

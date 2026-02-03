@@ -42,6 +42,9 @@ pub const schema = @import("schema.zig");
 pub const completions = @import("completions.zig");
 pub const metrics_cmd = @import("metrics.zig");
 pub const help = @import("help.zig");
+pub const query = @import("query.zig");
+pub const upgrade = @import("upgrade.zig");
+pub const where = @import("where.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -103,6 +106,12 @@ pub const SyncError = sync.SyncError;
 pub const SyncResult = sync.SyncResult;
 pub const runSync = sync.run;
 
+pub const backup = @import("backup.zig");
+pub const BackupError = backup.BackupError;
+pub const BackupResult = backup.BackupResult;
+pub const runBackup = backup.run;
+pub const BackupArgs = args.BackupArgs;
+
 pub const BatchError = batch.BatchError;
 pub const BatchResult = batch.BatchResult;
 pub const ImportResult = batch.ImportResult;
@@ -141,6 +150,8 @@ pub const runHistory = history.run;
 pub const AuditError = audit.AuditError;
 pub const AuditResult = audit.AuditResult;
 pub const runAudit = audit.run;
+pub const AuditArgs = args.AuditArgs;
+pub const AuditSubcommand = args.AuditSubcommand;
 
 pub const ChangelogError = changelog.ChangelogError;
 pub const ChangelogResult = changelog.ChangelogResult;
@@ -154,6 +165,7 @@ pub const runInfo = info.run;
 pub const StatsError = stats.StatsError;
 pub const StatsResult = stats.StatsResult;
 pub const runStats = stats.run;
+pub const StatsArgs = args.StatsArgs;
 
 pub const DoctorError = doctor.DoctorError;
 pub const DoctorResult = doctor.DoctorResult;
@@ -196,6 +208,20 @@ pub const MetricsArgs = args.MetricsArgs;
 pub const HelpError = help.HelpError;
 pub const HelpResult = help.HelpResult;
 pub const runHelp = help.run;
+
+pub const QueryError = query.QueryError;
+pub const QueryResult = query.QueryResult;
+pub const runQuery = query.run;
+pub const QueryArgs = args.QueryArgs;
+
+pub const UpgradeError = upgrade.UpgradeError;
+pub const UpgradeResult = upgrade.UpgradeResult;
+pub const runUpgrade = upgrade.run;
+pub const UpgradeArgs = args.UpgradeArgs;
+
+pub const WhereError = where.WhereError;
+pub const WhereResult = where.WhereResult;
+pub const runWhere = where.run;
 
 test {
     std.testing.refAllDecls(@This());

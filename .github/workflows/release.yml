@@ -1,0 +1,119 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: "0.15.2"
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      created: ${{ steps.check_tag.outputs.created }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Version from build.zig.zon
+        id: get_version
+        run: |
+          VERSION=$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon)
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if Tag Exists
+        id: check_tag
+        run: |
+          TAG_NAME="v${{ steps.get_version.outputs.version }}"
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG_NAME already exists! Version was not bumped in build.zig.zon."
+            echo "created=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "Tag $TAG_NAME does not exist. Creating release."
+            echo "created=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        if: steps.check_tag.outputs.created == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-assets:
+    name: Build ${{ matrix.name }}
+    needs: create-release
+    if: needs.create-release.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            name: bz-linux-x86_64
+            archive: tar.gz
+          - target: aarch64-linux-gnu
+            name: bz-linux-aarch64
+            archive: tar.gz
+          - target: x86_64-macos
+            name: bz-macos-x86_64
+            archive: tar.gz
+          - target: aarch64-macos
+            name: bz-macos-aarch64
+            archive: tar.gz
+          - target: x86_64-windows-gnu
+            name: bz-windows-x86_64
+            archive: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build for ${{ matrix.target }}
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+      - name: Package (Unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          mkdir -p dist/${{ matrix.name }}
+          cp zig-out/bin/bz dist/${{ matrix.name }}/
+          cp README.md LICENSE* dist/${{ matrix.name }}/ 2>/dev/null || true
+          cd dist
+          tar -czvf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+          sha256sum ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+
+      - name: Package (Windows)
+        if: matrix.archive == 'zip'
+        run: |
+          mkdir -p dist/${{ matrix.name }}
+          cp zig-out/bin/bz.exe dist/${{ matrix.name }}/
+          cp README.md LICENSE* dist/${{ matrix.name }}/ 2>/dev/null || true
+          cd dist
+          zip -r ${{ matrix.name }}.zip ${{ matrix.name }}
+          sha256sum ${{ matrix.name }}.zip > ${{ matrix.name }}.zip.sha256
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: |
+            dist/*.${{ matrix.archive }}
+            dist/*.${{ matrix.archive }}.sha256

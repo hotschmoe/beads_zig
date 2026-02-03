@@ -241,23 +241,40 @@ Simulate process crashes mid-write and verify data integrity:
 
 ---
 
-## Performance Targets
+## Performance Benchmarks
 
-**Decision**: Correctness first, optimize later.
+Run benchmarks with `zig build bench` (bz only) or `zig build bench-compare` (bz vs br).
 
-No specific performance targets at this time. Once core functionality is complete and stable, benchmarks will be established based on actual usage patterns.
+### bz vs br (Rust/SQLite) Comparison
 
-Reference targets from beads_rust (for future comparison):
+Benchmark on Linux x86_64 with 100 issues:
 
-| Operation | beads_rust Target |
-|-----------|-------------------|
-| Create issue | < 1ms |
-| List 1k issues | < 10ms |
-| List 10k issues | < 100ms |
-| Ready query (1k issues, 2k deps) | < 5ms |
-| Ready query (10k issues, 20k deps) | < 50ms |
-| Export 10k issues | < 500ms |
-| Import 10k issues | < 1s |
+| Operation | bz (Zig) | br (Rust) | Winner |
+|-----------|----------|-----------|--------|
+| init | 1ms | 444ms | bz (444x) |
+| create x10 | 100ms | 593ms | bz (6x) |
+| bulk x90 | 812ms | 5135ms | bz (6x) |
+| show | 52ms | 34ms | br (1.5x) |
+| update | 70ms | 34ms | br (2x) |
+| search | 74ms | 46ms | br (1.6x) |
+| list | 94ms | 36ms | br (2.6x) |
+| parallel read x5 | 118ms | 165ms | bz (1.4x) |
+| parallel write x5 | 83ms | 269ms | bz (3x) |
+| mixed r/w x5 | 102ms | 203ms | bz (2x) |
+
+**Analysis:**
+- bz dominates all write operations due to flock + WAL architecture
+- bz wins concurrent operations (flock serializes cleanly, SQLite has BUSY retries)
+- br wins single reads (SQLite connection stays warm, bz reloads JSONL + WAL each time)
+
+### Performance Targets
+
+| Operation | Target |
+|-----------|--------|
+| Create issue | < 15ms |
+| List 100 issues | < 100ms |
+| Ready query (100 issues) | < 100ms |
+| Concurrent writes (5 parallel) | < 100ms total |
 
 ---
 

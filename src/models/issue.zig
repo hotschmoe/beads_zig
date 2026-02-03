@@ -130,6 +130,7 @@ pub const Issue = struct {
     updated_at: Rfc3339Timestamp,
     closed_at: OptionalRfc3339Timestamp,
     close_reason: ?[]const u8,
+    closed_by_session: ?[]const u8 = null,
 
     // Scheduling
     due_at: OptionalRfc3339Timestamp,
@@ -143,6 +144,7 @@ pub const Issue = struct {
     // Flags
     pinned: bool,
     is_template: bool,
+    ephemeral: bool = false, // Local-only, not written to JSONL
 
     // Version for optimistic locking (incremented on every update)
     version: u64 = 1,
@@ -180,6 +182,7 @@ pub const Issue = struct {
         if (a.updated_at.value != b.updated_at.value) return false;
         if (a.closed_at.value != b.closed_at.value) return false;
         if (!optionalStrEql(a.close_reason, b.close_reason)) return false;
+        if (!optionalStrEql(a.closed_by_session, b.closed_by_session)) return false;
         if (a.due_at.value != b.due_at.value) return false;
         if (a.defer_until.value != b.defer_until.value) return false;
         if (a.estimated_minutes != b.estimated_minutes) return false;
@@ -187,6 +190,7 @@ pub const Issue = struct {
         if (!optionalStrEql(a.source_system, b.source_system)) return false;
         if (a.pinned != b.pinned) return false;
         if (a.is_template != b.is_template) return false;
+        if (a.ephemeral != b.ephemeral) return false;
         if (a.version != b.version) return false;
         return true;
     }
@@ -239,6 +243,9 @@ pub const Issue = struct {
         result.close_reason = if (self.close_reason) |r| try allocator.dupe(u8, r) else null;
         errdefer if (result.close_reason) |r| allocator.free(r);
 
+        result.closed_by_session = if (self.closed_by_session) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.closed_by_session) |s| allocator.free(s);
+
         result.due_at = self.due_at;
         result.defer_until = self.defer_until;
         result.estimated_minutes = self.estimated_minutes;
@@ -251,6 +258,7 @@ pub const Issue = struct {
 
         result.pinned = self.pinned;
         result.is_template = self.is_template;
+        result.ephemeral = self.ephemeral;
         result.version = self.version;
 
         // Clone labels
@@ -334,6 +342,7 @@ pub const Issue = struct {
         if (self.owner) |o| allocator.free(o);
         if (self.created_by) |c| allocator.free(c);
         if (self.close_reason) |r| allocator.free(r);
+        if (self.closed_by_session) |s| allocator.free(s);
         if (self.external_ref) |e| allocator.free(e);
         if (self.source_system) |s| allocator.free(s);
 
@@ -386,6 +395,7 @@ pub const Issue = struct {
             .updated_at = .{ .value = now },
             .closed_at = .{ .value = null },
             .close_reason = null,
+            .closed_by_session = null,
             .due_at = .{ .value = null },
             .defer_until = .{ .value = null },
             .estimated_minutes = null,
@@ -393,6 +403,7 @@ pub const Issue = struct {
             .source_system = null,
             .pinned = false,
             .is_template = false,
+            .ephemeral = false,
             .version = 1,
             .labels = &[_][]const u8{},
             .dependencies = &[_]Dependency{},
@@ -663,6 +674,7 @@ test "Issue.deinit frees all memory" {
         .updated_at = .{ .value = 1706540000 },
         .closed_at = .{ .value = null },
         .close_reason = null,
+        .closed_by_session = null,
         .due_at = .{ .value = null },
         .defer_until = .{ .value = null },
         .estimated_minutes = 60,
@@ -670,6 +682,7 @@ test "Issue.deinit frees all memory" {
         .source_system = try allocator.dupe(u8, "jira"),
         .pinned = false,
         .is_template = false,
+        .ephemeral = false,
         .labels = &[_][]const u8{},
         .dependencies = &[_]Dependency{},
         .comments = &[_]Comment{},

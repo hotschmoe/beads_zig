@@ -24,6 +24,9 @@ pub const EventType = enum {
     compacted,
     deleted,
     restored,
+    // LLM/tool interaction tracking
+    llm_call,
+    tool_call,
 
     const Self = @This();
 

@@ -52,6 +52,9 @@ pub fn run(
             return GraphError.IssueNotFound;
         }
         try renderIssueGraph(&dep_graph, &ctx.output, id, graph_args, global, allocator);
+    } else if (graph_args.all) {
+        // Show dependency graph for all open issues
+        try renderAllOpenGraph(&ctx.store, &ctx.output, graph_args, global, allocator);
     } else {
         try renderFullGraph(&ctx.store, &ctx.output, graph_args, global, allocator);
     }
@@ -65,6 +68,10 @@ fn renderIssueGraph(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
+    if (graph_args.compact) {
+        try renderCompactIssueGraph(graph, output, issue_id, graph_args.depth, global, allocator);
+        return;
+    }
     switch (graph_args.format) {
         .ascii => try renderAsciiTree(graph, output, issue_id, graph_args.depth, global, allocator),
         .dot => try renderDotGraph(graph, output, issue_id, graph_args.depth, global, allocator),
@@ -426,6 +433,169 @@ fn statusEql(a: Status, b: Status) bool {
     return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
 }
 
+fn renderCompactIssueGraph(
+    graph: *DependencyGraph,
+    output: *Output,
+    issue_id: []const u8,
+    max_depth: ?u32,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(allocator);
+    const writer = buf.writer(allocator);
+
+    var visited: std.StringHashMapUnmanaged(void) = .{};
+    defer {
+        var it = visited.keyIterator();
+        while (it.next()) |key| {
+            allocator.free(key.*);
+        }
+        visited.deinit(allocator);
+    }
+
+    // Print root issue
+    if (graph.store.getRef(issue_id)) |issue| {
+        const status_indicator = if (statusEql(issue.status, .closed)) "[x]" else "[ ]";
+        try writer.print("{s} {s} {s}\n", .{ issue.id, status_indicator, truncateTitle(issue.title, 60) });
+    }
+
+    // Collect and print dependencies in compact format
+    try renderCompactDeps(graph, writer, issue_id, 1, max_depth orelse 10, &visited, allocator);
+
+    if (global.isStructuredOutput()) {
+        try output.printJson(GraphResult{
+            .success = true,
+            .format = "compact",
+            .output = buf.items,
+        });
+    } else {
+        try output.raw(buf.items);
+    }
+}
+
+fn renderCompactDeps(
+    graph: *DependencyGraph,
+    writer: anytype,
+    issue_id: []const u8,
+    depth: u32,
+    max_depth: u32,
+    visited: *std.StringHashMapUnmanaged(void),
+    allocator: std.mem.Allocator,
+) !void {
+    if (depth > max_depth) return;
+
+    const id_key = try allocator.dupe(u8, issue_id);
+    if (visited.contains(id_key)) {
+        allocator.free(id_key);
+        return;
+    }
+    try visited.put(allocator, id_key, {});
+
+    const deps = try graph.getDependencies(issue_id);
+    defer graph.freeDependencies(deps);
+
+    for (deps) |dep| {
+        if (graph.store.getRef(dep.depends_on_id)) |blocker| {
+            const status_indicator = if (statusEql(blocker.status, .closed)) "[x]" else "[ ]";
+            // Indent based on depth for hierarchy visibility
+            var i: u32 = 0;
+            while (i < depth) : (i += 1) {
+                try writer.writeAll("  ");
+            }
+            try writer.print("-> {s} {s} {s}\n", .{ blocker.id, status_indicator, truncateTitle(blocker.title, 50) });
+            try renderCompactDeps(graph, writer, dep.depends_on_id, depth + 1, max_depth, visited, allocator);
+        }
+    }
+}
+
+fn renderAllOpenGraph(
+    store: *storage.IssueStore,
+    output: *Output,
+    graph_args: args.GraphArgs,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var buf: std.ArrayListUnmanaged(u8) = .{};
+    defer buf.deinit(allocator);
+    const writer = buf.writer(allocator);
+
+    const issues = store.getAllRef();
+    var open_with_deps: usize = 0;
+
+    if (!graph_args.compact) {
+        try writer.writeAll("Open Issues Dependency Graph\n");
+        try writer.writeAll("=============================\n\n");
+    }
+
+    for (issues) |issue| {
+        // Only show open issues (not closed/tombstone)
+        if (statusEql(issue.status, .closed) or statusEql(issue.status, .tombstone)) {
+            continue;
+        }
+
+        const has_deps = issue.dependencies.len > 0;
+        const has_dependents = hasAnyDependents(store, issue.id);
+
+        if (has_deps or has_dependents) {
+            open_with_deps += 1;
+
+            if (graph_args.compact) {
+                // Compact: one line per issue showing status and dep count
+                const status_indicator = if (statusEql(issue.status, .blocked)) "[B]" else "[ ]";
+                const dep_count = issue.dependencies.len;
+                if (dep_count > 0) {
+                    try writer.print("{s} {s} {s} (deps: {d})\n", .{
+                        issue.id,
+                        status_indicator,
+                        truncateTitle(issue.title, 50),
+                        dep_count,
+                    });
+                } else {
+                    try writer.print("{s} {s} {s}\n", .{
+                        issue.id,
+                        status_indicator,
+                        truncateTitle(issue.title, 50),
+                    });
+                }
+            } else {
+                // Full ASCII format for each open issue with dependencies
+                const status_str = issue.status.toString();
+                try writer.print("{s} [{s}] - {s}\n", .{ issue.id, status_str, truncateTitle(issue.title, 50) });
+
+                for (issue.dependencies, 0..) |dep, i| {
+                    const is_last = (i == issue.dependencies.len - 1);
+                    const connector = if (is_last) "`-- " else "|-- ";
+
+                    if (store.getRef(dep.depends_on_id)) |blocker| {
+                        const blocker_status = if (statusEql(blocker.status, .closed)) "[x]" else "[ ]";
+                        try writer.print("  {s}{s} {s} - {s}\n", .{ connector, blocker.id, blocker_status, truncateTitle(blocker.title, 40) });
+                    } else {
+                        try writer.print("  {s}{s} [?] - (not found)\n", .{ connector, dep.depends_on_id });
+                    }
+                }
+                try writer.writeAll("\n");
+            }
+        }
+    }
+
+    if (open_with_deps == 0) {
+        try writer.writeAll("No open issues with dependencies found.\n");
+    }
+
+    if (global.isStructuredOutput()) {
+        const format_str = if (graph_args.compact) "compact" else "ascii";
+        try output.printJson(GraphResult{
+            .success = true,
+            .format = format_str,
+            .node_count = open_with_deps,
+            .output = buf.items,
+        });
+    } else {
+        try output.raw(buf.items);
+    }
+}
+
 // --- Tests ---
 
 test "GraphError enum exists" {
@@ -470,4 +640,84 @@ test "GraphFormat.fromString parses correctly" {
     try std.testing.expectEqual(args.GraphFormat.dot, args.GraphFormat.fromString("graphviz").?);
     try std.testing.expectEqual(args.GraphFormat.ascii, args.GraphFormat.fromString("ASCII").?);
     try std.testing.expect(args.GraphFormat.fromString("invalid") == null);
+}
+
+test "GraphArgs supports all flag" {
+    const graph_args = args.GraphArgs{
+        .all = true,
+    };
+    try std.testing.expect(graph_args.all);
+    try std.testing.expect(!graph_args.compact);
+}
+
+test "GraphArgs supports compact flag" {
+    const graph_args = args.GraphArgs{
+        .compact = true,
+    };
+    try std.testing.expect(graph_args.compact);
+    try std.testing.expect(!graph_args.all);
+}
+
+test "parse graph with all flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "graph", "--all" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .graph => |g| {
+            try std.testing.expect(g.all);
+            try std.testing.expect(!g.compact);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse graph with compact flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "graph", "--compact" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .graph => |g| {
+            try std.testing.expect(g.compact);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse graph with id and compact flag" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "graph", "bd-123", "--compact" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .graph => |g| {
+            try std.testing.expect(g.id != null);
+            try std.testing.expectEqualStrings("bd-123", g.id.?);
+            try std.testing.expect(g.compact);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "parse graph with short flags" {
+    const allocator = std.testing.allocator;
+    const cmd_args = [_][]const u8{ "graph", "-a", "-c" };
+    var parser = args.ArgParser.init(allocator, &cmd_args);
+    var result = parser.parse() catch unreachable;
+    defer result.deinit(allocator);
+
+    switch (result.command) {
+        .graph => |g| {
+            try std.testing.expect(g.all);
+            try std.testing.expect(g.compact);
+        },
+        else => try std.testing.expect(false),
+    }
 }

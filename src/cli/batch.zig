@@ -111,7 +111,17 @@ pub fn runAddBatch(
 
     const now = std.time.timestamp();
     var generator = IdGenerator.init(prefix);
-    var issue_count = store.countTotal();
+    const issue_count = store.countTotal();
+
+    // Track IDs generated in this batch to avoid intra-batch collisions
+    var batch_ids = std.StringHashMap(void).init(allocator);
+    defer batch_ids.deinit();
+
+    // Copy existing IDs to check against
+    var id_it = store.getIdIndex().keyIterator();
+    while (id_it.next()) |key| {
+        try batch_ids.put(key.*, {});
+    }
 
     // Parse input and create issues
     switch (batch_args.format) {
@@ -122,9 +132,15 @@ pub fn runAddBatch(
                 if (trimmed.len == 0) continue;
                 if (trimmed.len > 500) continue; // Skip titles that are too long
 
-                const issue_id = try generator.generate(allocator, issue_count);
+                const issue_id = generator.generateUnique(allocator, issue_count + batch_ids.count(), batch_ids) catch |err| {
+                    if (err == error.CollisionLimitExceeded) {
+                        try common.outputErrorTyped(BatchResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
+                        return BatchError.StorageError;
+                    }
+                    return err;
+                };
                 errdefer allocator.free(issue_id);
-                issue_count += 1;
+                try batch_ids.put(issue_id, {});
 
                 var issue = Issue.init(issue_id, trimmed, now);
                 issue.created_by = actor;
@@ -152,10 +168,17 @@ pub fn runAddBatch(
                 // If no ID, generate one
                 var issue = parsed.value;
                 if (issue.id.len == 0) {
-                    const new_id = try generator.generate(allocator, issue_count);
+                    const new_id = generator.generateUnique(allocator, issue_count + batch_ids.count(), batch_ids) catch |err| {
+                        if (err == error.CollisionLimitExceeded) {
+                            parsed.deinit();
+                            try common.outputErrorTyped(BatchResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
+                            return BatchError.StorageError;
+                        }
+                        return err;
+                    };
                     allocator.free(issue.id);
                     issue.id = new_id;
-                    issue_count += 1;
+                    try batch_ids.put(new_id, {});
                 }
 
                 try issues_to_add.append(allocator, issue);

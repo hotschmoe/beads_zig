@@ -43,6 +43,17 @@ pub const EpicResult = struct {
     action: ?[]const u8 = null,
     issues: ?[]const IssueInfo = null,
     message: ?[]const u8 = null,
+    epics: ?[]const EpicStatusInfo = null,
+    closed_count: ?usize = null,
+};
+
+const EpicStatusInfo = struct {
+    id: []const u8,
+    title: []const u8,
+    total: usize,
+    closed: usize,
+    percent_complete: u8,
+    eligible_for_close: bool,
 };
 
 const IssueInfo = struct {
@@ -51,6 +62,40 @@ const IssueInfo = struct {
     status: []const u8,
     priority: u8,
 };
+
+const ChildCounts = struct {
+    total: usize,
+    closed: usize,
+};
+
+fn countEpicChildren(
+    graph: *DependencyGraph,
+    store: *common.IssueStore,
+    epic_id: []const u8,
+    allocator: std.mem.Allocator,
+) !ChildCounts {
+    const children = try graph.getDependents(epic_id);
+    defer graph.freeDependencies(children);
+
+    var total: usize = 0;
+    var closed: usize = 0;
+
+    for (children) |dep| {
+        if (dep.dep_type == .parent_child) {
+            total += 1;
+            const child = try store.get(dep.issue_id);
+            if (child) |c| {
+                var child_issue = c;
+                defer child_issue.deinit(allocator);
+                if (child_issue.status == .closed or child_issue.status == .tombstone) {
+                    closed += 1;
+                }
+            }
+        }
+    }
+
+    return .{ .total = total, .closed = closed };
+}
 
 pub fn run(
     epic_args: args.EpicArgs,
@@ -62,6 +107,8 @@ pub fn run(
         .add => |add| try runAdd(add, global, allocator),
         .remove => |remove| try runRemove(remove, global, allocator),
         .list => |list| try runList(list, global, allocator),
+        .status => try runStatus(global, allocator),
+        .close_eligible => |ce| try runCloseEligible(ce, global, allocator),
     }
 }
 
@@ -119,7 +166,13 @@ fn runCreate(
 
     var generator = id_gen.IdGenerator.init(prefix);
     const issue_count = store.countTotal();
-    const issue_id = try generator.generate(allocator, issue_count);
+    const issue_id = generator.generateUnique(allocator, issue_count, store.getIdIndex()) catch |err| {
+        if (err == error.CollisionLimitExceeded) {
+            try common.outputErrorTyped(EpicResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
+            return EpicError.StorageError;
+        }
+        return err;
+    };
     defer allocator.free(issue_id);
 
     const now = std.time.timestamp();
@@ -359,6 +412,151 @@ fn runList(
             }
             try ctx.output.println("", .{});
             try ctx.output.println("Total: {d} issue(s)", .{issue_infos.items.len});
+        }
+    }
+}
+
+fn runStatus(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return EpicError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const structured_output = global.isStructuredOutput();
+    var graph = ctx.createGraph();
+
+    // Find all epics
+    var epic_statuses: std.ArrayListUnmanaged(EpicStatusInfo) = .{};
+    defer {
+        for (epic_statuses.items) |info| {
+            allocator.free(info.id);
+            allocator.free(info.title);
+        }
+        epic_statuses.deinit(allocator);
+    }
+
+    for (ctx.store.issues.items) |issue| {
+        if (issue.issue_type == .epic and issue.status != .tombstone) {
+            const counts = try countEpicChildren(&graph, &ctx.store, issue.id, allocator);
+            const percent: u8 = if (counts.total > 0) @intCast((counts.closed * 100) / counts.total) else 0;
+            const eligible = counts.total > 0 and counts.closed == counts.total;
+
+            try epic_statuses.append(allocator, .{
+                .id = try allocator.dupe(u8, issue.id),
+                .title = try allocator.dupe(u8, issue.title),
+                .total = counts.total,
+                .closed = counts.closed,
+                .percent_complete = percent,
+                .eligible_for_close = eligible,
+            });
+        }
+    }
+
+    if (structured_output) {
+        try ctx.output.printJson(EpicResult{
+            .success = true,
+            .epics = epic_statuses.items,
+        });
+    } else {
+        if (epic_statuses.items.len == 0) {
+            try ctx.output.println("No epics found", .{});
+        } else {
+            for (epic_statuses.items) |info| {
+                const suffix: []const u8 = if (info.eligible_for_close) " [eligible for close]" else "";
+                try ctx.output.print("{s}: {d}/{d} complete ({d}%){s}\n", .{
+                    info.id,
+                    info.closed,
+                    info.total,
+                    info.percent_complete,
+                    suffix,
+                });
+            }
+        }
+    }
+}
+
+fn runCloseEligible(
+    ce_args: anytype,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return EpicError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const structured_output = global.isStructuredOutput();
+    var graph = ctx.createGraph();
+    const dry_run = ce_args.dry_run;
+
+    // Find all epics eligible for closing
+    var eligible_epics: std.ArrayListUnmanaged([]const u8) = .{};
+    defer {
+        for (eligible_epics.items) |id| {
+            allocator.free(id);
+        }
+        eligible_epics.deinit(allocator);
+    }
+
+    for (ctx.store.issues.items) |issue| {
+        if (issue.issue_type == .epic and issue.status != .tombstone and issue.status != .closed) {
+            const counts = try countEpicChildren(&graph, &ctx.store, issue.id, allocator);
+            if (counts.total > 0 and counts.closed == counts.total) {
+                try eligible_epics.append(allocator, try allocator.dupe(u8, issue.id));
+            }
+        }
+    }
+
+    if (dry_run) {
+        if (structured_output) {
+            try ctx.output.printJson(EpicResult{
+                .success = true,
+                .action = "dry-run",
+                .closed_count = eligible_epics.items.len,
+                .message = "epics eligible for close (dry-run)",
+            });
+        } else {
+            if (eligible_epics.items.len == 0) {
+                try ctx.output.println("No epics eligible for auto-close", .{});
+            } else {
+                try ctx.output.println("Would close {d} epic(s):", .{eligible_epics.items.len});
+                for (eligible_epics.items) |id| {
+                    try ctx.output.print("  {s}\n", .{id});
+                }
+            }
+        }
+    } else {
+        // Actually close the epics
+        var closed_count: usize = 0;
+        const now = std.time.timestamp();
+
+        for (eligible_epics.items) |id| {
+            const updates = storage.IssueStore.IssueUpdate{
+                .status = .closed,
+                .closed_at = now,
+                .close_reason = "all children closed",
+            };
+            ctx.store.update(id, updates, now) catch continue;
+            closed_count += 1;
+        }
+
+        try ctx.saveIfAutoFlush();
+
+        if (structured_output) {
+            try ctx.output.printJson(EpicResult{
+                .success = true,
+                .action = "close-eligible",
+                .closed_count = closed_count,
+            });
+        } else if (!global.quiet) {
+            if (closed_count == 0) {
+                try ctx.output.println("No epics eligible for auto-close", .{});
+            } else {
+                try ctx.output.success("Closed {d} epic(s)", .{closed_count});
+            }
         }
     }
 }

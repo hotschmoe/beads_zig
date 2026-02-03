@@ -141,6 +141,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
+        .backup => |backup_args| {
+            cli.runBackup(backup_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.BackupNotFound, error.RestoreFailed, error.CreateFailed => std.process.exit(1),
+                else => return err,
+            };
+        },
         .search => |search_args| {
             cli.runSearch(search_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -202,9 +208,9 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .stats => {
-            cli.runStats(result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+        .stats => |stats_args| {
+            cli.runStats(stats_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError, error.GitError => std.process.exit(1),
                 else => return err,
             };
         },
@@ -252,7 +258,7 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         },
         .audit => |audit_args| {
             cli.runAudit(audit_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
+                error.WorkspaceNotInitialized, error.StorageError, error.InvalidKind, error.EntryNotFound => std.process.exit(1),
                 else => return err,
             };
         },
@@ -260,6 +266,23 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
             cli.runChangelog(changelog_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized, error.InvalidDateFormat, error.StorageError => std.process.exit(1),
                 else => return err,
+            };
+        },
+        .query => |query_args| {
+            cli.runQuery(query_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.QueryNotFound, error.QueryAlreadyExists, error.InvalidQueryName, error.StorageError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .upgrade => |upgrade_args| {
+            cli.runUpgrade(upgrade_args, result.global, allocator) catch |err| switch (err) {
+                error.NetworkError, error.UnsupportedPlatform, error.WriteError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .where => {
+            _ = cli.runWhere(result.global, allocator) catch |err| switch (err) {
+                error.WriteError, error.WorkspaceNotFound => std.process.exit(1),
             };
         },
     }

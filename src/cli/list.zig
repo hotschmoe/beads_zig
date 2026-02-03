@@ -26,18 +26,9 @@ pub const ListError = error{
 
 pub const ListResult = struct {
     success: bool,
-    issues: ?[]const IssueCompact = null,
+    issues: ?[]const common.IssueFull = null,
     count: ?usize = null,
     message: ?[]const u8 = null,
-
-    const IssueCompact = struct {
-        id: []const u8,
-        title: []const u8,
-        status: []const u8,
-        priority: u3,
-        issue_type: []const u8,
-        assignee: ?[]const u8 = null,
-    };
 };
 
 pub fn run(
@@ -65,6 +56,20 @@ pub fn run(
         };
     }
 
+    if (list_args.priority_min) |p| {
+        filters.priority_min = Priority.fromString(p) catch {
+            try outputError(&ctx.output, global.isStructuredOutput(), "invalid priority-min value");
+            return ListError.InvalidFilter;
+        };
+    }
+
+    if (list_args.priority_max) |p| {
+        filters.priority_max = Priority.fromString(p) catch {
+            try outputError(&ctx.output, global.isStructuredOutput(), "invalid priority-max value");
+            return ListError.InvalidFilter;
+        };
+    }
+
     if (list_args.issue_type) |t| {
         filters.issue_type = IssueType.fromString(t);
     }
@@ -77,9 +82,31 @@ pub fn run(
         filters.label = l;
     }
 
+    if (list_args.label_any.len > 0) {
+        filters.label_any = list_args.label_any;
+    }
+
+    if (list_args.title_contains) |t| {
+        filters.title_contains = t;
+    }
+
+    if (list_args.desc_contains) |d| {
+        filters.desc_contains = d;
+    }
+
+    if (list_args.notes_contains) |n| {
+        filters.notes_contains = n;
+    }
+
     if (list_args.limit) |n| {
         filters.limit = n;
     }
+
+    // Apply overdue filter
+    filters.overdue = list_args.overdue;
+
+    // Apply include_deferred filter
+    filters.include_deferred = list_args.include_deferred;
 
     // Apply sort options
     filters.order_by = switch (list_args.sort) {
@@ -89,7 +116,7 @@ pub fn run(
     };
     filters.order_desc = list_args.sort_desc;
 
-    const issues = try ctx.store.list(filters);
+    var issues = try ctx.store.list(filters);
     defer {
         for (issues) |*issue| {
             var i = issue.*;
@@ -98,24 +125,63 @@ pub fn run(
         allocator.free(issues);
     }
 
+    // Apply parent filter if specified
+    if (list_args.parent) |parent_id| {
+        var graph = ctx.createGraph();
+        var filtered: std.ArrayListUnmanaged(Issue) = .{};
+        errdefer filtered.deinit(allocator);
+
+        for (issues) |issue| {
+            if (graph.isChildOf(issue.id, parent_id, list_args.recursive)) {
+                try filtered.append(allocator, issue);
+            } else {
+                var i = issue;
+                i.deinit(allocator);
+            }
+        }
+        allocator.free(issues);
+        issues = try filtered.toOwnedSlice(allocator);
+    }
+
+    // Handle CSV output format
+    if (list_args.format == .csv) {
+        const Output = common.Output;
+        const fields = try Output.parseCsvFields(allocator, list_args.fields);
+        defer if (list_args.fields != null) allocator.free(fields);
+        try ctx.output.printIssueListCsv(issues, fields);
+        return;
+    }
+
     if (global.isStructuredOutput()) {
-        var compact_issues = try allocator.alloc(ListResult.IssueCompact, issues.len);
-        defer allocator.free(compact_issues);
+        var graph = ctx.createGraph();
+
+        var full_issues = try allocator.alloc(common.IssueFull, issues.len);
+        defer {
+            for (full_issues) |fi| {
+                common.freeBlocksIds(allocator, fi.blocks);
+            }
+            allocator.free(full_issues);
+        }
 
         for (issues, 0..) |issue, i| {
-            compact_issues[i] = .{
+            full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
+                .description = issue.description,
                 .status = issue.status.toString(),
                 .priority = issue.priority.value,
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
+                .labels = issue.labels,
+                .created_at = issue.created_at.value,
+                .updated_at = issue.updated_at.value,
+                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
             };
         }
 
         try ctx.output.printJson(ListResult{
             .success = true,
-            .issues = compact_issues,
+            .issues = full_issues,
             .count = issues.len,
         });
     } else {

@@ -58,6 +58,16 @@ pub fn run(
         updates.description = d;
     }
 
+    // Handle --claim flag: set assignee to actor AND status to in_progress
+    if (update_args.claim) {
+        const actor = global.actor orelse common.getDefaultActor() orelse {
+            try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "--claim requires an actor (use --actor or set $USER)");
+            return UpdateError.InvalidArgument;
+        };
+        updates.assignee = actor;
+        updates.status = .in_progress;
+    }
+
     if (update_args.status) |s| {
         updates.status = Status.fromString(s);
     }
@@ -75,6 +85,22 @@ pub fn run(
 
     if (update_args.assignee) |a| {
         updates.assignee = a;
+    }
+
+    if (update_args.owner) |o| {
+        updates.owner = o;
+    }
+
+    if (update_args.design) |d| {
+        updates.design = d;
+    }
+
+    if (update_args.acceptance_criteria) |ac| {
+        updates.acceptance_criteria = ac;
+    }
+
+    if (update_args.external_ref) |er| {
+        updates.external_ref = er;
     }
 
     // Optimistic locking: pass expected version for compare-and-swap

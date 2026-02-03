@@ -190,6 +190,11 @@ pub const IssueStore = struct {
         return &self.issues.items[idx];
     }
 
+    /// Get read-only access to the ID index for collision checking.
+    pub fn getIdIndex(self: *const Self) std.StringHashMapUnmanaged(usize) {
+        return self.id_index;
+    }
+
     /// Fields that can be updated on an issue.
     pub const IssueUpdate = struct {
         title: ?[]const u8 = null,
@@ -205,6 +210,7 @@ pub const IssueStore = struct {
         estimated_minutes: ?i32 = null,
         closed_at: ?i64 = null,
         close_reason: ?[]const u8 = null,
+        closed_by_session: ?[]const u8 = null,
         due_at: ?i64 = null,
         defer_until: ?i64 = null,
         external_ref: ?[]const u8 = null,
@@ -289,6 +295,10 @@ pub const IssueStore = struct {
             if (issue.close_reason) |r| self.allocator.free(r);
             issue.close_reason = try self.allocator.dupe(u8, v);
         }
+        if (updates.closed_by_session) |v| {
+            if (issue.closed_by_session) |s| self.allocator.free(s);
+            issue.closed_by_session = try self.allocator.dupe(u8, v);
+        }
         if (updates.due_at) |v| {
             issue.due_at = OptionalRfc3339Timestamp{ .value = v };
         }
@@ -322,14 +332,55 @@ pub const IssueStore = struct {
         try self.update(id, .{ .status = .tombstone }, now);
     }
 
+    /// Hard delete an issue by removing it from the store entirely.
+    /// Unlike soft delete (tombstone), this permanently removes the issue.
+    pub fn remove(self: *Self, id: []const u8) !void {
+        const idx = self.id_index.get(id) orelse return IssueStoreError.IssueNotFound;
+        if (idx >= self.issues.items.len) return IssueStoreError.IssueNotFound;
+
+        // Free the issue data
+        self.issues.items[idx].deinit(self.allocator);
+
+        // Remove from index (free the key)
+        if (self.id_index.fetchRemove(id)) |kv| {
+            self.allocator.free(kv.key);
+        }
+
+        // Remove from issues array using swap-remove for O(1)
+        _ = self.issues.swapRemove(idx);
+
+        // Update the index for the swapped element (if any)
+        if (idx < self.issues.items.len) {
+            const swapped_id = self.issues.items[idx].id;
+            if (self.id_index.getPtr(swapped_id)) |idx_ptr| {
+                idx_ptr.* = idx;
+            }
+        }
+
+        // Also remove from dirty_ids if present
+        if (self.dirty_ids.fetchRemove(id)) |kv| {
+            self.allocator.free(kv.key);
+        }
+
+        self.dirty = true;
+    }
+
     /// Filters for listing issues.
     pub const ListFilters = struct {
         status: ?Status = null,
         priority: ?Priority = null,
+        priority_min: ?Priority = null,
+        priority_max: ?Priority = null,
         issue_type: ?IssueType = null,
         assignee: ?[]const u8 = null,
         label: ?[]const u8 = null,
+        label_any: []const []const u8 = &[_][]const u8{},
+        title_contains: ?[]const u8 = null,
+        desc_contains: ?[]const u8 = null,
+        notes_contains: ?[]const u8 = null,
         include_tombstones: bool = false,
+        overdue: bool = false,
+        include_deferred: bool = false,
         limit: ?u32 = null,
         offset: ?u32 = null,
         order_by: OrderBy = .created_at,
@@ -352,6 +403,8 @@ pub const IssueStore = struct {
             results.deinit(self.allocator);
         }
 
+        const now = if (filters.overdue) std.time.timestamp() else 0;
+
         for (self.issues.items) |issue| {
             // Filter tombstones
             if (!filters.include_tombstones and statusEql(issue.status, .tombstone)) {
@@ -360,7 +413,10 @@ pub const IssueStore = struct {
 
             // Apply filters
             if (filters.status) |s| {
-                if (!statusEql(issue.status, s)) continue;
+                // When include_deferred is set, allow deferred issues through even when filtering for open
+                const status_matches = statusEql(issue.status, s);
+                const deferred_allowed = filters.include_deferred and statusEql(issue.status, .deferred);
+                if (!status_matches and !deferred_allowed) continue;
             }
             if (filters.priority) |p| {
                 if (issue.priority.value != p.value) continue;
@@ -381,6 +437,51 @@ pub const IssueStore = struct {
                     }
                 }
                 if (!found) continue;
+            }
+
+            // label_any: OR logic - issue must have at least ONE of the specified labels
+            if (filters.label_any.len > 0) {
+                var found_any = false;
+                for (filters.label_any) |any_label| {
+                    for (issue.labels) |issue_label| {
+                        if (std.mem.eql(u8, issue_label, any_label)) {
+                            found_any = true;
+                            break;
+                        }
+                    }
+                    if (found_any) break;
+                }
+                if (!found_any) continue;
+            }
+
+            // Priority range filters (lower value = higher priority)
+            if (filters.priority_min) |min_p| {
+                if (issue.priority.value < min_p.value) continue;
+            }
+            if (filters.priority_max) |max_p| {
+                if (issue.priority.value > max_p.value) continue;
+            }
+
+            // Substring filters (case-insensitive)
+            if (filters.title_contains) |query| {
+                if (!containsIgnoreCase(issue.title, query)) continue;
+            }
+            if (filters.desc_contains) |query| {
+                if (issue.description) |desc| {
+                    if (!containsIgnoreCase(desc, query)) continue;
+                } else continue;
+            }
+            if (filters.notes_contains) |query| {
+                if (issue.notes) |notes| {
+                    if (!containsIgnoreCase(notes, query)) continue;
+                } else continue;
+            }
+
+            // Overdue filter: only include issues past their due date
+            if (filters.overdue) {
+                if (issue.due_at.value) |due_time| {
+                    if (due_time >= now) continue;
+                } else continue;
             }
 
             try results.append(self.allocator, try issue.clone(self.allocator));
@@ -754,6 +855,35 @@ pub const IssueStore = struct {
         }
         self.allocator.free(suggestions);
     }
+
+    /// Get the ID prefix from existing issues, or return default "bd".
+    /// Infers the prefix from the first issue's ID format.
+    pub fn getPrefix(self: *Self) []const u8 {
+        for (self.issues.items) |issue| {
+            if (std.mem.indexOf(u8, issue.id, "-")) |dash_pos| {
+                return issue.id[0..dash_pos];
+            }
+        }
+        return "bd"; // Default prefix
+    }
+
+    /// Rebuild the ID index from current issues.
+    /// Used after modifying issue IDs or removing issues.
+    pub fn rebuildIndex(self: *Self) !void {
+        // Clear existing index
+        var id_it = self.id_index.keyIterator();
+        while (id_it.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.id_index.clearRetainingCapacity();
+
+        // Rebuild from issues array
+        for (self.issues.items, 0..) |issue, idx| {
+            const id_copy = try self.allocator.dupe(u8, issue.id);
+            errdefer self.allocator.free(id_copy);
+            try self.id_index.put(self.allocator, id_copy, idx);
+        }
+    }
 };
 
 /// Compute similarity score between target and candidate ID.
@@ -811,6 +941,26 @@ fn issueTypeEql(a: IssueType, b: IssueType) bool {
     const tag_b: Tag = b;
     if (tag_a != tag_b) return false;
     return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
+}
+
+pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+
+    const end = haystack.len - needle.len + 1;
+    var i: usize = 0;
+    while (i < end) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |nc, j| {
+            const hc = haystack[i + j];
+            if (std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
 }
 
 fn cloneStatus(status: Status, allocator: std.mem.Allocator) !Status {

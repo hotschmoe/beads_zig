@@ -67,6 +67,8 @@ pub fn build(b: *std.Build) void {
     run_mod_tests.stdio = .inherit;
 
     const test_step = b.step("test", "Run tests");
+    // CLI tests require the binary to be built first
+    test_step.dependOn(b.getInstallStep());
     test_step.dependOn(&run_mod_tests.step);
 
     // Format step
@@ -75,6 +77,19 @@ pub fn build(b: *std.Build) void {
         .paths = &.{"src"},
     });
     fmt_step.dependOn(&fmt.step);
+
+    // Fuzz step
+    const fuzz_step = b.step("fuzz", "Run fuzz tests");
+    const fuzz_exe = b.addExecutable(.{
+        .name = "fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const fuzz_run = b.addRunArtifact(fuzz_exe);
+    fuzz_step.dependOn(&fuzz_run.step);
 
     // Benchmark: bz-only workflow
     const bench_bz = b.addExecutable(.{

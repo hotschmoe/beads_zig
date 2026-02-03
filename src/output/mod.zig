@@ -21,6 +21,7 @@ pub const OutputMode = enum {
     rich, // Colors and formatting (TTY)
     json, // Structured JSON output
     quiet, // Minimal output (IDs only)
+    robot, // Line-oriented machine-readable output for scripting
 };
 
 /// ANSI color escape codes.
@@ -58,9 +59,12 @@ pub const Color = struct {
 pub const OutputOptions = struct {
     json: bool = false,
     toon: bool = false,
+    robot: bool = false, // Line-oriented machine-readable output for scripting
     quiet: bool = false,
     silent: bool = false, // Suppress ALL output including errors (for tests)
     no_color: bool = false,
+    wrap: bool = false, // Wrap long lines in plain text output
+    stats: bool = false, // Show token savings stats for TOON output
 };
 
 /// Output formatter for consistent CLI output across all modes.
@@ -68,9 +72,13 @@ pub const Output = struct {
     mode: OutputMode,
     toon: bool,
     silent: bool, // Suppress ALL output including errors (for tests)
+    wrap: bool, // Wrap long lines in plain text output
+    stats: bool, // Show token savings stats for TOON output
     stdout: std.fs.File,
     stderr: std.fs.File,
     allocator: std.mem.Allocator,
+    /// Terminal width for line wrapping (default: 80)
+    terminal_width: usize = 80,
 
     const Self = @This();
 
@@ -82,19 +90,27 @@ pub const Output = struct {
         var mode: OutputMode = .plain;
         if (opts.json or opts.toon) {
             mode = .json;
+        } else if (opts.robot) {
+            mode = .robot;
         } else if (opts.quiet or opts.silent) {
             mode = .quiet;
         } else if (!opts.no_color and !checkNoColorEnv() and stdout.isTty()) {
             mode = .rich;
         }
 
+        // Try to get terminal width, default to 80
+        const terminal_width: usize = getTerminalWidth() orelse 80;
+
         return .{
             .mode = mode,
             .toon = opts.toon,
             .silent = opts.silent,
+            .wrap = opts.wrap,
+            .stats = opts.stats,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
+            .terminal_width = terminal_width,
         };
     }
 
@@ -104,9 +120,12 @@ pub const Output = struct {
             .mode = mode,
             .toon = false,
             .silent = false,
+            .wrap = false,
+            .stats = false,
             .stdout = std.fs.File.stdout(),
             .stderr = std.fs.File.stderr(),
             .allocator = allocator,
+            .terminal_width = 80,
         };
     }
 
@@ -116,9 +135,12 @@ pub const Output = struct {
             .mode = mode,
             .toon = false,
             .silent = false,
+            .wrap = false,
+            .stats = false,
             .stdout = stdout,
             .stderr = stderr,
             .allocator = allocator,
+            .terminal_width = 80,
         };
     }
 
@@ -128,9 +150,12 @@ pub const Output = struct {
             .mode = .quiet,
             .toon = false,
             .silent = true,
+            .wrap = false,
+            .stats = false,
             .stdout = std.fs.File.stdout(),
             .stderr = std.fs.File.stderr(),
             .allocator = allocator,
+            .terminal_width = 80,
         };
     }
 
@@ -145,6 +170,7 @@ pub const Output = struct {
             .quiet => try self.printIssueQuiet(issue),
             .rich => try self.printIssueRich(issue),
             .plain => try self.printIssuePlain(issue),
+            .robot => try self.printIssueRobot(issue),
         }
     }
 
@@ -155,6 +181,7 @@ pub const Output = struct {
             .quiet => try self.printIssueListQuiet(issues),
             .rich => try self.printIssueListRich(issues),
             .plain => try self.printIssueListPlain(issues),
+            .robot => try self.printIssueListRobot(issues),
         }
     }
 
@@ -229,6 +256,7 @@ pub const Output = struct {
 
     /// Print raw JSON value to stdout (for JSON mode).
     /// If toon mode is enabled, converts JSON to TOON format for reduced token usage.
+    /// If stats mode is also enabled, displays token savings information.
     pub fn printJson(self: *Self, value: anytype) !void {
         const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, value, .{});
         defer self.allocator.free(json_bytes);
@@ -241,10 +269,38 @@ pub const Output = struct {
             };
             defer self.allocator.free(toon_bytes);
             try self.stdout.writeAll(toon_bytes);
+            try self.stdout.writeAll("\n");
+
+            // Show token savings stats if enabled
+            if (self.stats) {
+                try self.printToonStats(json_bytes.len, toon_bytes.len);
+            }
         } else {
             try self.stdout.writeAll(json_bytes);
+            try self.stdout.writeAll("\n");
         }
-        try self.stdout.writeAll("\n");
+    }
+
+    /// Print TOON format token savings statistics.
+    fn printToonStats(self: *Self, json_len: usize, toon_len: usize) !void {
+        // Estimate tokens using common approximation: ~4 chars per token
+        const json_tokens = (json_len + 3) / 4;
+        const toon_tokens = (toon_len + 3) / 4;
+
+        if (json_tokens == 0) return;
+
+        const savings_pct: usize = if (json_tokens > toon_tokens)
+            ((json_tokens - toon_tokens) * 100) / json_tokens
+        else
+            0;
+
+        const msg = try std.fmt.allocPrint(
+            self.allocator,
+            "# Token savings: {d}% ({d} -> {d} tokens)\n",
+            .{ savings_pct, json_tokens, toon_tokens },
+        );
+        defer self.allocator.free(msg);
+        try self.stderr.writeAll(msg);
     }
 
     // ========================================================================
@@ -265,13 +321,13 @@ pub const Output = struct {
 
     fn printIssuePlain(self: *Self, issue: Issue) !void {
         try self.writeFormatted("ID: {s}\n", .{issue.id});
-        try self.writeFormatted("Title: {s}\n", .{issue.title});
+        try self.writeWrapped("Title: ", issue.title, 7);
         try self.writeFormatted("Status: {s}\n", .{issue.status.toString()});
         try self.writeFormatted("Priority: {s}\n", .{issue.priority.toString()});
         try self.writeFormatted("Type: {s}\n", .{issue.issue_type.toString()});
 
         if (issue.description) |desc| {
-            try self.writeFormatted("Description: {s}\n", .{desc});
+            try self.writeWrapped("Description: ", desc, 13);
         }
         if (issue.assignee) |assignee| {
             try self.writeFormatted("Assignee: {s}\n", .{assignee});
@@ -295,11 +351,25 @@ pub const Output = struct {
     fn printIssueListPlain(self: *Self, issues: []const Issue) !void {
         for (issues) |issue| {
             const status_abbrev = abbreviateStatus(issue.status);
-            try self.writeFormatted("{s}  [{s}] {s}\n", .{
+            // Format: "bd-xxx  [STAT] "  = ID(variable) + 2 spaces + [ + 4 + ] + 1 space
+            const prefix_len = issue.id.len + 2 + 1 + 4 + 1 + 1;
+            const prefix = try std.fmt.allocPrint(self.allocator, "{s}  [{s}] ", .{
                 issue.id,
                 status_abbrev,
-                issue.title,
             });
+            defer self.allocator.free(prefix);
+            try self.stdout.writeAll(prefix);
+
+            if (self.wrap and issue.title.len + prefix_len > self.terminal_width) {
+                const wrapped = wrapText(self.allocator, issue.title, self.terminal_width, prefix_len) catch issue.title;
+                const should_free = wrapped.ptr != issue.title.ptr;
+                defer if (should_free) self.allocator.free(wrapped);
+                try self.stdout.writeAll(wrapped);
+                try self.stdout.writeAll("\n");
+            } else {
+                try self.stdout.writeAll(issue.title);
+                try self.stdout.writeAll("\n");
+            }
         }
     }
 
@@ -378,6 +448,29 @@ pub const Output = struct {
     }
 
     // ========================================================================
+    // Robot Mode Helpers (tab-separated, line-oriented for scripting)
+    // ========================================================================
+
+    /// Print single issue in robot format: tab-separated key fields on one line.
+    /// Format: ID<TAB>STATUS<TAB>PRIORITY<TAB>TYPE<TAB>TITLE
+    fn printIssueRobot(self: *Self, issue: Issue) !void {
+        try self.writeFormatted("{s}\t{s}\t{s}\t{s}\t{s}\n", .{
+            issue.id,
+            issue.status.toString(),
+            issue.priority.toString(),
+            issue.issue_type.toString(),
+            issue.title,
+        });
+    }
+
+    /// Print issue list in robot format: one issue per line, tab-separated fields.
+    fn printIssueListRobot(self: *Self, issues: []const Issue) !void {
+        for (issues) |issue| {
+            try self.printIssueRobot(issue);
+        }
+    }
+
+    // ========================================================================
     // Internal Helpers
     // ========================================================================
 
@@ -386,11 +479,263 @@ pub const Output = struct {
         defer self.allocator.free(msg);
         try self.stdout.writeAll(msg);
     }
+
+    /// Write a labeled field with optional text wrapping.
+    /// label: The field label (e.g., "Title: ")
+    /// text: The text content to write
+    /// indent: Number of spaces to indent continuation lines
+    fn writeWrapped(self: *Self, label: []const u8, text: []const u8, indent: usize) !void {
+        try self.stdout.writeAll(label);
+        if (self.wrap and text.len + label.len > self.terminal_width) {
+            const wrapped = wrapText(self.allocator, text, self.terminal_width, indent) catch text;
+            const should_free = wrapped.ptr != text.ptr;
+            defer if (should_free) self.allocator.free(wrapped);
+            try self.stdout.writeAll(wrapped);
+        } else {
+            try self.stdout.writeAll(text);
+        }
+        try self.stdout.writeAll("\n");
+    }
+
+    // ========================================================================
+    // CSV Mode Helpers
+    // ========================================================================
+
+    /// Available fields for CSV output.
+    pub const CsvField = enum {
+        id,
+        title,
+        status,
+        priority,
+        issue_type,
+        assignee,
+        owner,
+        description,
+        created_at,
+        updated_at,
+        due_at,
+        labels,
+
+        pub fn fromString(s: []const u8) ?CsvField {
+            if (std.mem.eql(u8, s, "id")) return .id;
+            if (std.mem.eql(u8, s, "title")) return .title;
+            if (std.mem.eql(u8, s, "status")) return .status;
+            if (std.mem.eql(u8, s, "priority")) return .priority;
+            if (std.mem.eql(u8, s, "type") or std.mem.eql(u8, s, "issue_type")) return .issue_type;
+            if (std.mem.eql(u8, s, "assignee")) return .assignee;
+            if (std.mem.eql(u8, s, "owner")) return .owner;
+            if (std.mem.eql(u8, s, "description") or std.mem.eql(u8, s, "desc")) return .description;
+            if (std.mem.eql(u8, s, "created_at") or std.mem.eql(u8, s, "created")) return .created_at;
+            if (std.mem.eql(u8, s, "updated_at") or std.mem.eql(u8, s, "updated")) return .updated_at;
+            if (std.mem.eql(u8, s, "due_at") or std.mem.eql(u8, s, "due")) return .due_at;
+            if (std.mem.eql(u8, s, "labels")) return .labels;
+            return null;
+        }
+
+        pub fn toString(self: CsvField) []const u8 {
+            return switch (self) {
+                .id => "id",
+                .title => "title",
+                .status => "status",
+                .priority => "priority",
+                .issue_type => "type",
+                .assignee => "assignee",
+                .owner => "owner",
+                .description => "description",
+                .created_at => "created_at",
+                .updated_at => "updated_at",
+                .due_at => "due_at",
+                .labels => "labels",
+            };
+        }
+    };
+
+    /// Default fields for CSV output.
+    pub const default_csv_fields = [_]CsvField{ .id, .title, .status, .priority };
+
+    /// Parse a comma-separated field list into CsvField array.
+    pub fn parseCsvFields(allocator: std.mem.Allocator, fields_str: ?[]const u8) ![]const CsvField {
+        if (fields_str) |str| {
+            var fields: std.ArrayListUnmanaged(CsvField) = .{};
+            errdefer fields.deinit(allocator);
+
+            var it = std.mem.splitSequence(u8, str, ",");
+            while (it.next()) |field_name| {
+                const trimmed = std.mem.trim(u8, field_name, " ");
+                if (CsvField.fromString(trimmed)) |field| {
+                    try fields.append(allocator, field);
+                }
+            }
+
+            if (fields.items.len == 0) {
+                fields.deinit(allocator);
+                return &default_csv_fields;
+            }
+            return fields.toOwnedSlice(allocator);
+        }
+        return &default_csv_fields;
+    }
+
+    /// Print a list of issues in CSV format.
+    pub fn printIssueListCsv(self: *Self, issues: []const Issue, fields: []const CsvField) !void {
+        // Write header
+        for (fields, 0..) |field, i| {
+            if (i > 0) try self.stdout.writeAll(",");
+            try self.stdout.writeAll(field.toString());
+        }
+        try self.stdout.writeAll("\n");
+
+        // Write data rows
+        for (issues) |issue| {
+            for (fields, 0..) |field, i| {
+                if (i > 0) try self.stdout.writeAll(",");
+                try self.writeCsvField(issue, field);
+            }
+            try self.stdout.writeAll("\n");
+        }
+    }
+
+    fn writeCsvField(self: *Self, issue: Issue, field: CsvField) !void {
+        switch (field) {
+            .id => try self.writeCsvValue(issue.id),
+            .title => try self.writeCsvValue(issue.title),
+            .status => try self.writeCsvValue(issue.status.toString()),
+            .priority => try self.writeCsvValue(issue.priority.toString()),
+            .issue_type => try self.writeCsvValue(issue.issue_type.toString()),
+            .assignee => try self.writeCsvValue(issue.assignee orelse ""),
+            .owner => try self.writeCsvValue(issue.owner orelse ""),
+            .description => try self.writeCsvValue(issue.description orelse ""),
+            .created_at => {
+                const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{issue.created_at.value});
+                defer self.allocator.free(ts);
+                try self.writeCsvValue(ts);
+            },
+            .updated_at => {
+                const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{issue.updated_at.value});
+                defer self.allocator.free(ts);
+                try self.writeCsvValue(ts);
+            },
+            .due_at => {
+                if (issue.due_at.value) |due| {
+                    const ts = try std.fmt.allocPrint(self.allocator, "{d}", .{due});
+                    defer self.allocator.free(ts);
+                    try self.writeCsvValue(ts);
+                }
+            },
+            .labels => {
+                if (issue.labels.len > 0) {
+                    const joined = try std.mem.join(self.allocator, ";", issue.labels);
+                    defer self.allocator.free(joined);
+                    try self.writeCsvValue(joined);
+                }
+            },
+        }
+    }
+
+    /// Write a CSV value with proper escaping.
+    fn writeCsvValue(self: *Self, value: []const u8) !void {
+        // Check if escaping is needed (contains comma, quote, or newline)
+        const needs_quoting = std.mem.indexOfAny(u8, value, ",\"\n\r") != null;
+
+        if (needs_quoting) {
+            try self.stdout.writeAll("\"");
+            for (value) |c| {
+                if (c == '"') {
+                    try self.stdout.writeAll("\"\"");
+                } else {
+                    try self.stdout.writeAll(&[_]u8{c});
+                }
+            }
+            try self.stdout.writeAll("\"");
+        } else {
+            try self.stdout.writeAll(value);
+        }
+    }
 };
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Get terminal width from ioctl or COLUMNS env var.
+fn getTerminalWidth() ?usize {
+    // Try ioctl first (POSIX)
+    if (@import("builtin").os.tag != .windows) {
+        const stdout_fd = std.posix.STDOUT_FILENO;
+        var winsize: std.posix.winsize = undefined;
+        const result = std.posix.system.ioctl(stdout_fd, std.posix.T.IOCGWINSZ, @intFromPtr(&winsize));
+        if (result == 0 and winsize.col > 0) {
+            return @intCast(winsize.col);
+        }
+    }
+    // Fallback to COLUMNS environment variable
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "COLUMNS")) |cols| {
+        defer std.heap.page_allocator.free(cols);
+        return std.fmt.parseInt(usize, cols, 10) catch null;
+    } else |_| {}
+    return null;
+}
+
+/// Wrap text to fit within a given width, preserving word boundaries.
+/// Returns allocated memory that must be freed by the caller.
+fn wrapText(allocator: std.mem.Allocator, text: []const u8, width: usize, indent: usize) ![]const u8 {
+    if (width <= indent) return allocator.dupe(u8, text);
+
+    var result: std.ArrayListUnmanaged(u8) = .{};
+    errdefer result.deinit(allocator);
+
+    var line_start: usize = 0;
+    var last_space: ?usize = null;
+    var current_width: usize = 0;
+    const effective_width = width - indent;
+
+    for (text, 0..) |c, i| {
+        if (c == '\n') {
+            // Preserve existing newlines
+            try result.appendSlice(allocator, text[line_start .. i + 1]);
+            if (i + 1 < text.len) {
+                try result.appendNTimes(allocator, ' ', indent);
+            }
+            line_start = i + 1;
+            last_space = null;
+            current_width = 0;
+            continue;
+        }
+
+        if (c == ' ') {
+            last_space = i;
+        }
+
+        current_width += 1;
+
+        if (current_width > effective_width) {
+            // Need to wrap
+            if (last_space) |space_pos| {
+                // Wrap at last space
+                try result.appendSlice(allocator, text[line_start..space_pos]);
+                try result.append(allocator, '\n');
+                try result.appendNTimes(allocator, ' ', indent);
+                line_start = space_pos + 1;
+                current_width = i - space_pos;
+                last_space = null;
+            } else {
+                // No space to wrap at, force break
+                try result.appendSlice(allocator, text[line_start..i]);
+                try result.append(allocator, '\n');
+                try result.appendNTimes(allocator, ' ', indent);
+                line_start = i;
+                current_width = 1;
+            }
+        }
+    }
+
+    // Append remaining text
+    if (line_start < text.len) {
+        try result.appendSlice(allocator, text[line_start..]);
+    }
+
+    return result.toOwnedSlice(allocator);
+}
 
 /// Check if NO_COLOR environment variable is set (cross-platform).
 fn checkNoColorEnv() bool {
