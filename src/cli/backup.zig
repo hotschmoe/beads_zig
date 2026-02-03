@@ -48,8 +48,8 @@ fn collectBackups(beads_dir: []const u8, allocator: std.mem.Allocator) !?std.Arr
         // Match backup files: issues.jsonl.bak.* or issues.*.jsonl (but not issues.jsonl)
         if (std.mem.startsWith(u8, entry.name, "issues.jsonl.bak") or
             (std.mem.startsWith(u8, entry.name, "issues.") and
-            std.mem.endsWith(u8, entry.name, ".jsonl") and
-            !std.mem.eql(u8, entry.name, "issues.jsonl")))
+                std.mem.endsWith(u8, entry.name, ".jsonl") and
+                !std.mem.eql(u8, entry.name, "issues.jsonl")))
         {
             const stat = dir.statFile(entry.name) catch continue;
             try backups.append(allocator, .{

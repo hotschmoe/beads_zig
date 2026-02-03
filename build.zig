@@ -78,6 +78,19 @@ pub fn build(b: *std.Build) void {
     });
     fmt_step.dependOn(&fmt.step);
 
+    // Fuzz step
+    const fuzz_step = b.step("fuzz", "Run fuzz tests");
+    const fuzz_exe = b.addExecutable(.{
+        .name = "fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const fuzz_run = b.addRunArtifact(fuzz_exe);
+    fuzz_step.dependOn(&fuzz_run.step);
+
     // Benchmark: bz-only workflow
     const bench_bz = b.addExecutable(.{
         .name = "bz-bench",
