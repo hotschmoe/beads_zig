@@ -1,22 +1,62 @@
-name: Release
+name: Auto Release
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to build (e.g., v0.3.0)'
-        required: true
-        type: string
+    branches: [master]
+
+permissions:
+  contents: write
 
 env:
   ZIG_VERSION: "0.15.2"
 
 jobs:
-  build:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      created: ${{ steps.check_tag.outputs.created }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Version from build.zig.zon
+        id: get_version
+        run: |
+          VERSION=$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon)
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if Tag Exists
+        id: check_tag
+        run: |
+          TAG_NAME="v${{ steps.get_version.outputs.version }}"
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG_NAME already exists! Version was not bumped in build.zig.zon."
+            echo "created=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "Tag $TAG_NAME does not exist. Creating release."
+            echo "created=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        if: steps.check_tag.outputs.created == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-assets:
     name: Build ${{ matrix.name }}
+    needs: create-release
+    if: needs.create-release.outputs.created == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -41,8 +81,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
@@ -72,66 +110,10 @@ jobs:
           zip -r ${{ matrix.name }}.zip ${{ matrix.name }}
           sha256sum ${{ matrix.name }}.zip > ${{ matrix.name }}.zip.sha256
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}
-          path: |
-            dist/${{ matrix.name }}.${{ matrix.archive }}
-            dist/${{ matrix.name }}.${{ matrix.archive }}.sha256
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Get version
-        id: version
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Prepare release files
-        run: |
-          mkdir -p release
-          # Flatten artifact directories
-          for dir in artifacts/*/; do
-            cp "$dir"* release/ 2>/dev/null || true
-          done
-          ls -la release/
-          # Create combined checksums file
-          cd release
-          cat *.sha256 > checksums.txt
-          echo "=== Release files ==="
-          ls -la
-
-      - name: Create GitHub Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          tag_name: v${{ needs.create-release.outputs.version }}
           files: |
-            release/*.tar.gz
-            release/*.zip
-            release/*.sha256
-            release/checksums.txt
+            dist/*.${{ matrix.archive }}
+            dist/*.${{ matrix.archive }}.sha256
