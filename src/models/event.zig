@@ -81,6 +81,7 @@ pub const Event = struct {
     actor: []const u8, // Who performed the action
     old_value: ?[]const u8, // JSON of previous state (null for creation)
     new_value: ?[]const u8, // JSON of new state (null for deletion)
+    comment: ?[]const u8 = null, // Optional comment on the event
     created_at: i64, // Unix timestamp
 
     const Self = @This();
@@ -99,7 +100,8 @@ pub const Event = struct {
             std.mem.eql(u8, a.issue_id, b.issue_id) and
             std.mem.eql(u8, a.actor, b.actor) and
             optionalStrEql(a.old_value, b.old_value) and
-            optionalStrEql(a.new_value, b.new_value);
+            optionalStrEql(a.new_value, b.new_value) and
+            optionalStrEql(a.comment, b.comment);
     }
 
     fn optionalStrEql(a: ?[]const u8, b: ?[]const u8) bool {

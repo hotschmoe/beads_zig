@@ -1,31 +1,33 @@
 # beads_zig
 
-A local-first issue tracker for git repositories, written in pure Zig.
+A local-first issue tracker for git repositories -- an aligned Zig port of [beads_rust](https://github.com/Dicklesworthstone/beads_rust).
 
-> **Status**: Feature-complete CLI with 34 commands. Production-ready.
+> **Status**: Drop-in replacement for `br`. Same commands, same arguments, same outputs. SQLite storage with bundled amalgamation.
 
 ## Overview
 
-beads_zig (`bz`) is a command-line issue tracker that lives in your git repository. No accounts, no internet required, no external dependencies. Your issues stay with your code.
+beads_zig (`bz`) is a command-line issue tracker that lives in your git repository. No accounts, no internet required. Your issues stay with your code.
+
+`bz` is designed to be fully command-compatible with `br` (beads_rust) -- same CLI interface, same SQLite schema, same JSONL sync format. You can switch between them seamlessly.
 
 ```
 .beads/
-  issues.jsonl    # Main storage - git-friendly, human-readable
-  issues.wal      # Write-ahead log for concurrent writes
-  .beads.lock     # Lock file for process coordination
+  beads.db        # SQLite database (primary storage, gitignored)
+  issues.jsonl    # Git-tracked JSONL export (for sync/collaboration)
   config.yaml     # Project configuration
 ```
 
 ## Features
 
-- **Pure Zig**: No C dependencies, single static binary
+- **br-compatible**: Drop-in replacement for beads_rust -- identical CLI and schema
+- **SQLite storage**: Bundled SQLite 3.49.1 amalgamation, WAL mode, FTS5 full-text search
 - **Local-first**: All data lives in `.beads/` within your repo
 - **Offline**: Works without internet connectivity
-- **Git-friendly**: JSONL format for clean version control diffs
+- **Git-friendly**: JSONL sync export for clean version control diffs
 - **Cross-platform**: Compiles to Linux, macOS, Windows, ARM64
 - **Non-invasive**: Never modifies source code or runs git commands automatically
 - **Agent-first**: Machine-readable JSON/TOON output for AI tooling integration
-- **Concurrent-safe**: Lock + WAL architecture handles parallel agent writes without contention
+- **Concurrent-safe**: SQLite WAL mode handles parallel reads and writes
 
 ### Issue Management
 
@@ -39,10 +41,9 @@ beads_zig (`bz`) is a command-line issue tracker that lives in your git reposito
 
 ## Dependencies
 
-- **[rich_zig](https://github.com/hotschmoe-zig/rich_zig)** v1.1.1 - Terminal formatting (colors, TTY detection)
-- **[toon_zig](https://github.com/hotschmoe-zig/toon_zig)** v0.1.5 - LLM-optimized output format
-
-No C dependencies. No SQLite. Pure Zig.
+- **[rich_zig](https://github.com/hotschmoe-zig/rich_zig)** - Terminal formatting (colors, TTY detection)
+- **[toon_zig](https://github.com/hotschmoe-zig/toon_zig)** - LLM-optimized output format
+- **SQLite** 3.49.1 - Bundled amalgamation (vendor/sqlite3.c), no system install needed
 
 ## Installation
 
@@ -96,7 +97,10 @@ Requires Zig 0.15.2 or later. See [Building](#building) below.
 Requires Zig 0.15.2 or later.
 
 ```bash
-# Build
+# Setup vendor (downloads SQLite amalgamation, first time only)
+./scripts/setup-vendor.sh
+
+# Build (bundles SQLite by default)
 zig build
 
 # Run
@@ -106,12 +110,12 @@ zig build run
 zig build run -- <args>
 
 # Run tests
-zig test src/root.zig
+zig build test
 
-# Format source
-zig build fmt
+# Use system SQLite instead of bundled
+zig build -Dsystem-sqlite=true
 
-# Cross-compile
+# Cross-compile (SQLite bundled via Zig's C cross-compiler)
 zig build -Dtarget=aarch64-linux-gnu      # Linux ARM64
 zig build -Dtarget=x86_64-windows-gnu     # Windows
 zig build -Dtarget=aarch64-macos          # macOS Apple Silicon
@@ -199,17 +203,19 @@ bz show <id> --toon    # LLM-optimized format
 ```
 src/
   main.zig           # CLI entry point
-  root.zig           # Library exports
-  cli/               # 26 command implementations
+  root.zig           # Library exports + test runner
+  cli/               # Command implementation files
     args.zig         # Argument parsing (34 commands + subcommands)
-    common.zig       # Shared context and output helpers
+    common.zig       # CommandContext (SQLite DB + stores)
   storage/
-    jsonl.zig        # JSONL file I/O (atomic writes)
-    store.zig        # In-memory IssueStore with indexing
-    graph.zig        # Dependency graph with cycle detection
-    lock.zig         # flock-based concurrent write locking
-    wal.zig          # Write-ahead log operations
-    compact.zig      # WAL compaction into main file
+    sqlite.zig      # SQLite C bindings wrapper
+    schema.zig      # Database schema (11 tables, 29+ indexes, FTS5)
+    issues.zig      # Issue CRUD via SQLite
+    dependencies.zig # Dependency management via SQLite
+    events.zig      # Event/audit trail via SQLite
+    labels.zig      # Label management via SQLite
+    comments.zig    # Comment management via SQLite
+    jsonl.zig       # JSONL file I/O (for sync export/import)
   models/            # Data structures (Issue, Status, Priority, etc.)
   id/                # Hash-based ID generation (base36)
   config/            # YAML configuration
@@ -217,48 +223,30 @@ src/
   errors.zig         # Structured error handling
 ```
 
-**Storage** (Lock + WAL + Compact):
+**Storage** (SQLite with WAL mode):
 ```
 .beads/
-  issues.jsonl      # Main file (compacted state, git-tracked)
-  issues.wal        # Write-ahead log (gitignored)
-  .beads.lock       # Lock file for flock (gitignored)
+  beads.db          # SQLite database (primary storage, gitignored)
+  beads.db-wal      # SQLite WAL (auto-managed, gitignored)
+  issues.jsonl      # Git-tracked JSONL export (for sync/collaboration)
+  config.yaml       # Project configuration
 ```
 
-- **Writes**: Acquire flock -> append to WAL -> fsync -> release (~1ms)
-- **Reads**: Load main + replay WAL in memory (lock-free)
-- **Compaction**: Merge WAL into main when threshold exceeded (100 entries or 100KB)
-- Crash-safe: flock auto-releases on process termination, atomic file operations
+- **Writes**: SQLite INSERT/UPDATE with WAL mode (~1ms, auto-persisted)
+- **Reads**: SQLite SELECT (no replay needed, WAL mode handles concurrency)
+- **Sync**: `bz sync --flush` exports DB -> JSONL; `bz sync --import` imports JSONL -> DB
+- **Schema**: 11 tables matching br exactly, 29+ indexes, FTS5 full-text search
 
 **Design principles**:
 - Explicit over implicit (no background daemons)
 - User-triggered operations only
 - Rich terminal output with TTY detection
 - Hash-based IDs prevent merge conflicts
+- SQLite schema identical to br for cross-compatibility
 
-## Performance: bz vs br (Rust/SQLite)
+## Performance
 
-Benchmark comparing beads_zig (`bz`) against beads_rust (`br`) with SQLite:
-
-| Operation | bz (Zig) | br (Rust) | Notes |
-|-----------|----------|-----------|-------|
-| init | 1ms | 444ms | bz ~444x faster |
-| create x10 | 100ms | 593ms | bz ~6x faster |
-| bulk x90 | 812ms | 5135ms | bz ~6x faster |
-| show | 52ms | 34ms | br faster (warm connection) |
-| update | 70ms | 34ms | br faster (warm connection) |
-| search | 74ms | 46ms | br faster (warm connection) |
-| list | 94ms | 36ms | br faster (warm connection) |
-| parallel read x5 | 118ms | 165ms | bz ~1.4x faster |
-| parallel write x5 | 83ms | 269ms | bz ~3x faster |
-| mixed r/w x5 | 102ms | 203ms | bz ~2x faster |
-
-**Key findings:**
-- **bz dominates writes**: flock + WAL architecture avoids SQLite's BUSY retry storms
-- **bz wins all concurrent operations**: flock serialization beats SQLite contention
-- **br wins single reads**: SQLite connection pooling benefits repeated queries
-
-Run benchmarks: `zig build bench-compare` (requires `br` in PATH)
+Both `bz` and `br` now use SQLite with WAL mode, so performance characteristics are comparable. Zig's advantage is in startup time (no runtime, static binary) and cross-compilation.
 
 ## Global Options
 
@@ -270,18 +258,18 @@ Run benchmarks: `zig build bench-compare` (requires `br` in PATH)
 --no-color          Disable ANSI colors (respects NO_COLOR env)
 --data <path>       Override .beads/ directory
 --actor <name>      Set actor for audit trail
---lock-timeout <ms> Lock timeout (default 5000)
---no-auto-flush     Skip automatic WAL flush
---no-auto-import    Skip automatic import on read
+--lock-timeout <ms> SQLite busy timeout (default 5000)
+--no-auto-flush     Skip automatic JSONL export after writes
+--no-auto-import    Skip automatic JSONL import on reads
 ```
 
 ## Why Zig?
 
-- Single static binary with no runtime dependencies
+- Single static binary (SQLite bundled as C amalgamation)
 - Compiles to native code for all major platforms
-- No C dependencies - pure Zig implementation
+- Cross-compilation works out of the box (Zig bundles a C cross-compiler)
 - Memory safety without garbage collection
-- Fast compilation (~2-5s debug builds)
+- Fast compilation
 
 ## Inspiration
 

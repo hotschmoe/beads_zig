@@ -60,7 +60,7 @@ pub fn run(
         filters.limit = n;
     }
 
-    const issues = try ctx.store.list(filters);
+    const issues = try ctx.issue_store.list(filters);
     defer {
         for (issues) |*issue| {
             var i = issue.*;

@@ -141,10 +141,28 @@ pub const Issue = struct {
     external_ref: ?[]const u8,
     source_system: ?[]const u8,
 
+    // External origin
+    source_repo: ?[]const u8 = null,
+
+    // Soft delete
+    deleted_at: ?[]const u8 = null,
+    deleted_by: ?[]const u8 = null,
+    delete_reason: ?[]const u8 = null,
+
+    // Compaction
+    original_type: ?[]const u8 = null,
+    compaction_level: u32 = 0,
+    compacted_at: ?[]const u8 = null,
+    compacted_at_commit: ?[]const u8 = null,
+    original_size: ?i64 = null,
+
+    // Messaging
+    sender: ?[]const u8 = null,
+
     // Flags
     pinned: bool,
     is_template: bool,
-    ephemeral: bool = false, // Local-only, not written to JSONL
+    ephemeral: bool = false,
 
     // Version for optimistic locking (incremented on every update)
     version: u64 = 1,
@@ -188,6 +206,16 @@ pub const Issue = struct {
         if (a.estimated_minutes != b.estimated_minutes) return false;
         if (!optionalStrEql(a.external_ref, b.external_ref)) return false;
         if (!optionalStrEql(a.source_system, b.source_system)) return false;
+        if (!optionalStrEql(a.source_repo, b.source_repo)) return false;
+        if (!optionalStrEql(a.deleted_at, b.deleted_at)) return false;
+        if (!optionalStrEql(a.deleted_by, b.deleted_by)) return false;
+        if (!optionalStrEql(a.delete_reason, b.delete_reason)) return false;
+        if (!optionalStrEql(a.original_type, b.original_type)) return false;
+        if (a.compaction_level != b.compaction_level) return false;
+        if (!optionalStrEql(a.compacted_at, b.compacted_at)) return false;
+        if (!optionalStrEql(a.compacted_at_commit, b.compacted_at_commit)) return false;
+        if (a.original_size != b.original_size) return false;
+        if (!optionalStrEql(a.sender, b.sender)) return false;
         if (a.pinned != b.pinned) return false;
         if (a.is_template != b.is_template) return false;
         if (a.ephemeral != b.ephemeral) return false;
@@ -255,6 +283,34 @@ pub const Issue = struct {
 
         result.source_system = if (self.source_system) |s| try allocator.dupe(u8, s) else null;
         errdefer if (result.source_system) |s| allocator.free(s);
+
+        result.source_repo = if (self.source_repo) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.source_repo) |s| allocator.free(s);
+
+        result.deleted_at = if (self.deleted_at) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.deleted_at) |s| allocator.free(s);
+
+        result.deleted_by = if (self.deleted_by) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.deleted_by) |s| allocator.free(s);
+
+        result.delete_reason = if (self.delete_reason) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.delete_reason) |s| allocator.free(s);
+
+        result.original_type = if (self.original_type) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.original_type) |s| allocator.free(s);
+
+        result.compaction_level = self.compaction_level;
+
+        result.compacted_at = if (self.compacted_at) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.compacted_at) |s| allocator.free(s);
+
+        result.compacted_at_commit = if (self.compacted_at_commit) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.compacted_at_commit) |s| allocator.free(s);
+
+        result.original_size = self.original_size;
+
+        result.sender = if (self.sender) |s| try allocator.dupe(u8, s) else null;
+        errdefer if (result.sender) |s| allocator.free(s);
 
         result.pinned = self.pinned;
         result.is_template = self.is_template;
@@ -345,6 +401,14 @@ pub const Issue = struct {
         if (self.closed_by_session) |s| allocator.free(s);
         if (self.external_ref) |e| allocator.free(e);
         if (self.source_system) |s| allocator.free(s);
+        if (self.source_repo) |s| allocator.free(s);
+        if (self.deleted_at) |s| allocator.free(s);
+        if (self.deleted_by) |s| allocator.free(s);
+        if (self.delete_reason) |s| allocator.free(s);
+        if (self.original_type) |s| allocator.free(s);
+        if (self.compacted_at) |s| allocator.free(s);
+        if (self.compacted_at_commit) |s| allocator.free(s);
+        if (self.sender) |s| allocator.free(s);
 
         // Free labels
         if (self.labels.len > 0) {
@@ -515,7 +579,7 @@ fn cloneComment(comment: Comment, allocator: std.mem.Allocator) !Comment {
     result.author = try allocator.dupe(u8, comment.author);
     errdefer allocator.free(result.author);
 
-    result.body = try allocator.dupe(u8, comment.body);
+    result.text = try allocator.dupe(u8, comment.text);
     result.created_at = comment.created_at;
 
     return result;
@@ -524,7 +588,7 @@ fn cloneComment(comment: Comment, allocator: std.mem.Allocator) !Comment {
 fn freeComment(comment: *Comment, allocator: std.mem.Allocator) void {
     allocator.free(comment.issue_id);
     allocator.free(comment.author);
-    allocator.free(comment.body);
+    allocator.free(comment.text);
 }
 
 // --- Tests ---

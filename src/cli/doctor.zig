@@ -6,12 +6,10 @@ const std = @import("std");
 const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const test_util = @import("../test_util.zig");
 
 const IssueStore = common.IssueStore;
-const DependencyGraph = storage.DependencyGraph;
+const DependencyStore = common.DependencyStore;
 const CommandContext = common.CommandContext;
-const Wal = storage.Wal;
 
 pub const DoctorError = error{
     WorkspaceNotInitialized,
@@ -46,36 +44,23 @@ pub fn run(
     var checks: std.ArrayListUnmanaged(DoctorResult.Check) = .{};
     defer checks.deinit(allocator);
 
-    // Check 1: JSONL file exists and is readable
-    try checks.append(allocator, checkJsonlFile(ctx.issues_path));
+    // Check 1: Database file exists and is readable
+    try checks.append(allocator, checkDatabaseFile(ctx.db_path));
 
     // Check 2: No duplicate IDs
-    try checks.append(allocator, checkDuplicateIds(&ctx.store));
+    try checks.append(allocator, try checkDuplicateIds(&ctx.issue_store, allocator));
 
     // Check 3: No orphan dependencies (dependencies referencing non-existent issues)
-    try checks.append(allocator, try checkOrphanDependencies(&ctx.store, allocator));
+    try checks.append(allocator, try checkOrphanDependencies(&ctx, allocator));
 
     // Check 4: No dependency cycles
-    var graph = ctx.createGraph();
-    try checks.append(allocator, try checkNoCycles(&graph));
+    try checks.append(allocator, try checkNoCycles(&ctx.dep_store, allocator));
 
     // Check 5: All issues have valid titles
-    try checks.append(allocator, checkValidTitles(&ctx.store));
+    try checks.append(allocator, try checkValidTitles(&ctx.issue_store, allocator));
 
-    // Check 6: WAL file status
-    const beads_dir = global.data_path orelse ".beads";
-    const wal_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.wal" });
-    defer allocator.free(wal_path);
-    try checks.append(allocator, checkWalFile(wal_path));
-
-    // Check 7: JSONL data integrity (use corruption data from context load)
-    try checks.append(allocator, checkJsonlIntegrityFromContext(&ctx));
-
-    // Check 8: WAL data integrity (CRC validation)
-    try checks.append(allocator, try checkWalIntegrity(beads_dir, allocator));
-
-    // Check 9: Schema version compatibility
-    try checks.append(allocator, checkSchemaVersion(beads_dir, allocator));
+    // Check 6: Database schema version
+    try checks.append(allocator, try checkSchemaVersion(&ctx.db, allocator));
 
     // Count results
     var passed: usize = 0;
@@ -122,25 +107,43 @@ pub fn run(
     }
 }
 
-fn checkJsonlFile(path: []const u8) DoctorResult.Check {
+fn checkDatabaseFile(path: []const u8) DoctorResult.Check {
     std.fs.cwd().access(path, .{}) catch {
         return .{
-            .name = "JSONL file exists",
+            .name = "Database file exists",
             .status = "fail",
-            .message = "issues.jsonl not found",
+            .message = "beads.db not found",
         };
     };
     return .{
-        .name = "JSONL file exists",
+        .name = "Database file exists",
         .status = "pass",
         .message = null,
     };
 }
 
-fn checkDuplicateIds(store: *IssueStore) DoctorResult.Check {
-    // IssueStore already enforces unique IDs via hash map
-    // Check if count matches list length
-    if (store.id_index.count() == store.issues.items.len) {
+fn checkDuplicateIds(issue_store: *IssueStore, allocator: std.mem.Allocator) !DoctorResult.Check {
+    const issues = try issue_store.list(.{});
+    defer {
+        for (issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(issues);
+    }
+
+    var seen = std.StringHashMap(void).init(allocator);
+    defer seen.deinit();
+
+    var has_duplicates = false;
+    for (issues) |*issue| {
+        if (seen.contains(issue.id)) {
+            has_duplicates = true;
+            break;
+        }
+        try seen.put(issue.id, {});
+    }
+
+    if (!has_duplicates) {
         return .{
             .name = "No duplicate IDs",
             .status = "pass",
@@ -154,20 +157,27 @@ fn checkDuplicateIds(store: *IssueStore) DoctorResult.Check {
     };
 }
 
-fn checkOrphanDependencies(store: *IssueStore, allocator: std.mem.Allocator) !DoctorResult.Check {
+fn checkOrphanDependencies(ctx: *CommandContext, allocator: std.mem.Allocator) !DoctorResult.Check {
+    const issues = try ctx.issue_store.list(.{});
+    defer {
+        for (issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(issues);
+    }
+
     var orphan_count: usize = 0;
 
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    for (issues) |*issue| {
+        const deps = try ctx.dep_store.getDependencies(issue.id);
+        defer ctx.dep_store.freeDependencies(deps);
 
-        for (issue.dependencies) |dep| {
-            if (!store.id_index.contains(dep.depends_on_id)) {
+        for (deps) |dep| {
+            if (!try ctx.issue_store.exists(dep.depends_on_id)) {
                 orphan_count += 1;
             }
         }
     }
-
-    _ = allocator;
 
     if (orphan_count == 0) {
         return .{
@@ -183,11 +193,11 @@ fn checkOrphanDependencies(store: *IssueStore, allocator: std.mem.Allocator) !Do
     };
 }
 
-fn checkNoCycles(graph: *DependencyGraph) !DoctorResult.Check {
-    const cycles = try graph.detectCycles();
-    defer if (cycles) |c| graph.allocator.free(c);
+fn checkNoCycles(dep_store: *DependencyStore, _: std.mem.Allocator) !DoctorResult.Check {
+    const cycles = try dep_store.detectAllCycles();
+    defer dep_store.freeCycles(cycles);
 
-    if (cycles == null or cycles.?.len == 0) {
+    if (cycles.len == 0) {
         return .{
             .name = "No dependency cycles",
             .status = "pass",
@@ -201,10 +211,16 @@ fn checkNoCycles(graph: *DependencyGraph) !DoctorResult.Check {
     };
 }
 
-fn checkValidTitles(store: *IssueStore) DoctorResult.Check {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+fn checkValidTitles(issue_store: *IssueStore, allocator: std.mem.Allocator) !DoctorResult.Check {
+    const issues = try issue_store.list(.{});
+    defer {
+        for (issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(issues);
+    }
 
+    for (issues) |*issue| {
         if (issue.title.len == 0) {
             return .{
                 .name = "All issues have valid titles",
@@ -227,143 +243,40 @@ fn checkValidTitles(store: *IssueStore) DoctorResult.Check {
     };
 }
 
-fn checkWalFile(path: []const u8) DoctorResult.Check {
-    const file = std.fs.cwd().openFile(path, .{}) catch {
-        return .{
-            .name = "WAL file status",
-            .status = "pass",
-            .message = "No pending WAL entries",
-        };
-    };
-    defer file.close();
+fn checkSchemaVersion(db: *storage.SqlDatabase, allocator: std.mem.Allocator) !DoctorResult.Check {
+    _ = allocator;
 
-    const stat = file.stat() catch {
-        return .{
-            .name = "WAL file status",
-            .status = "warn",
-            .message = "Could not read WAL file",
-        };
-    };
+    const current_version = try storage.getSchemaVersion(db);
 
-    if (stat.size == 0) {
-        return .{
-            .name = "WAL file status",
-            .status = "pass",
-            .message = "WAL is empty",
-        };
-    }
+    if (current_version) |version| {
+        if (version > storage.SQL_SCHEMA_VERSION) {
+            return .{
+                .name = "Schema version",
+                .status = "fail",
+                .message = "Database schema is newer than this bz version. Please upgrade bz.",
+            };
+        }
 
-    if (stat.size > 100 * 1024) {
-        return .{
-            .name = "WAL file status",
-            .status = "warn",
-            .message = "WAL file is large, consider compacting",
-        };
-    }
+        if (version < storage.SQL_SCHEMA_VERSION) {
+            return .{
+                .name = "Schema version",
+                .status = "warn",
+                .message = "Database schema is older. Migrations available.",
+            };
+        }
 
-    return .{
-        .name = "WAL file status",
-        .status = "pass",
-        .message = "WAL has pending entries",
-    };
-}
-
-fn checkJsonlIntegrityFromContext(ctx: *const CommandContext) DoctorResult.Check {
-    if (ctx.corruption_count == 0) {
         return .{
-            .name = "JSONL data integrity",
+            .name = "Schema version",
             .status = "pass",
             .message = null,
         };
-    }
-
-    return .{
-        .name = "JSONL data integrity",
-        .status = "warn",
-        .message = "Corrupt entries detected. Run 'bz compact' to rebuild.",
-    };
-}
-
-fn checkSchemaVersion(beads_dir: []const u8, allocator: std.mem.Allocator) DoctorResult.Check {
-    const version = storage.checkSchemaVersion(allocator, beads_dir) catch |err| {
-        return switch (err) {
-            error.MetadataNotFound => .{
-                .name = "Schema version",
-                .status = "warn",
-                .message = "metadata.json not found, assuming version 1",
-            },
-            error.MetadataParseError => .{
-                .name = "Schema version",
-                .status = "fail",
-                .message = "metadata.json is corrupted",
-            },
-            else => .{
-                .name = "Schema version",
-                .status = "fail",
-                .message = "Failed to read metadata.json",
-            },
-        };
-    };
-
-    if (version > storage.CURRENT_SCHEMA_VERSION) {
-        return .{
-            .name = "Schema version",
-            .status = "fail",
-            .message = "Database schema is newer than this bz version. Please upgrade bz.",
-        };
-    }
-
-    if (version < storage.CURRENT_SCHEMA_VERSION) {
+    } else {
         return .{
             .name = "Schema version",
             .status = "warn",
-            .message = "Database schema is older. Migrations available.",
+            .message = "No schema version found in database.",
         };
     }
-
-    return .{
-        .name = "Schema version",
-        .status = "pass",
-        .message = null,
-    };
-}
-
-fn checkWalIntegrity(beads_dir: []const u8, allocator: std.mem.Allocator) !DoctorResult.Check {
-    var wal = Wal.init(beads_dir, allocator) catch {
-        return .{
-            .name = "WAL data integrity",
-            .status = "pass",
-            .message = "No WAL file found",
-        };
-    };
-    defer wal.deinit();
-
-    // Try to read and parse all WAL entries
-    const entries = wal.readEntries() catch |err| {
-        return .{
-            .name = "WAL data integrity",
-            .status = "warn",
-            .message = switch (err) {
-                error.WalCorrupted => "WAL file is corrupted. Run 'bz compact' to rebuild.",
-                error.ParseError => "WAL contains unparseable entries. Run 'bz compact' to rebuild.",
-                error.ChecksumMismatch => "WAL has CRC mismatches. Run 'bz compact' to rebuild.",
-                else => "Failed to read WAL file",
-            },
-        };
-    };
-    defer {
-        for (entries) |*e| {
-            var entry = e.*;
-            entry.deinit(allocator);
-        }
-        allocator.free(entries);
-    }
-
-    return .{
-        .name = "WAL data integrity",
-        .status = "pass",
-        .message = null,
-    };
 }
 
 // --- Tests ---
@@ -392,23 +305,26 @@ test "run detects uninitialized workspace" {
     try std.testing.expectError(DoctorError.WorkspaceNotInitialized, result);
 }
 
-test "checkJsonlFile returns pass for existing file" {
+test "checkDatabaseFile returns pass for existing file" {
     const allocator = std.testing.allocator;
-    const test_dir = try test_util.createTestDir(allocator, "doctor_jsonl");
-    defer allocator.free(test_dir);
-    defer test_util.cleanupTestDir(test_dir);
 
-    const path = try std.fs.path.join(allocator, &.{ test_dir, "test.jsonl" });
-    defer allocator.free(path);
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
 
-    const file = try std.fs.cwd().createFile(path, .{});
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const db_path = try std.fs.path.join(allocator, &.{ temp_path, "test.db" });
+    defer allocator.free(db_path);
+
+    const file = try std.fs.cwd().createFile(db_path, .{});
     file.close();
 
-    const check = checkJsonlFile(path);
+    const check = checkDatabaseFile(db_path);
     try std.testing.expectEqualStrings("pass", check.status);
 }
 
-test "checkJsonlFile returns fail for missing file" {
-    const check = checkJsonlFile("/nonexistent/path/issues.jsonl");
+test "checkDatabaseFile returns fail for missing file" {
+    const check = checkDatabaseFile("/nonexistent/path/beads.db");
     try std.testing.expectEqualStrings("fail", check.status);
 }

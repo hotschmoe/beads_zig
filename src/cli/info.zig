@@ -17,10 +17,9 @@ pub const InfoError = error{
 pub const InfoResult = struct {
     success: bool,
     beads_dir: ?[]const u8 = null,
-    jsonl_path: ?[]const u8 = null,
+    db_path: ?[]const u8 = null,
     issue_count: ?usize = null,
-    jsonl_size: ?u64 = null,
-    wal_size: ?u64 = null,
+    db_size: ?u64 = null,
     message: ?[]const u8 = null,
 };
 
@@ -34,29 +33,23 @@ pub fn run(
     defer ctx.deinit();
 
     const beads_dir = global.data_path orelse ".beads";
-    const jsonl_size = getFileSize(ctx.issues_path);
+    const db_size = getFileSize(ctx.db_path);
 
-    const wal_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.wal" });
-    defer allocator.free(wal_path);
-    const wal_size = getFileSize(wal_path);
-
-    const issue_count = ctx.store.countTotal();
+    const issue_count = try ctx.issue_store.countTotal();
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(InfoResult{
             .success = true,
             .beads_dir = beads_dir,
-            .jsonl_path = ctx.issues_path,
+            .db_path = ctx.db_path,
             .issue_count = issue_count,
-            .jsonl_size = jsonl_size,
-            .wal_size = wal_size,
+            .db_size = db_size,
         });
     } else if (!global.quiet) {
         try ctx.output.println("beads_zig workspace", .{});
         try ctx.output.print("\n", .{});
         try ctx.output.print("Directory:     {s}\n", .{beads_dir});
-        try ctx.output.print("JSONL:         {s} ({s})\n", .{ ctx.issues_path, formatBytes(jsonl_size) });
-        try ctx.output.print("WAL:           {s} ({s})\n", .{ wal_path, formatBytes(wal_size) });
+        try ctx.output.print("Database:      {s} ({s})\n", .{ ctx.db_path, formatBytes(db_size) });
         try ctx.output.print("Total issues:  {d}\n", .{issue_count});
     }
 }

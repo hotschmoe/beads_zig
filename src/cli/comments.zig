@@ -30,7 +30,7 @@ pub const CommentsResult = struct {
     pub const CommentInfo = struct {
         id: i64,
         author: []const u8,
-        body: []const u8,
+        text: []const u8,
         created_at: i64,
     };
 };
@@ -70,7 +70,7 @@ fn runAdd(
     }
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(CommentsResult{
                 .success = false,
@@ -94,12 +94,11 @@ fn runAdd(
         .id = comment_id,
         .issue_id = id,
         .author = actor,
-        .body = text,
+        .text = text,
         .created_at = now,
     };
 
-    try ctx.store.addComment(id, comment);
-    try ctx.saveIfAutoFlush();
+    try ctx.issue_store.addComment(id, comment);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(CommentsResult{
@@ -126,7 +125,7 @@ fn runList(
     defer ctx.deinit();
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(CommentsResult{
                 .success = false,
@@ -139,12 +138,12 @@ fn runList(
         return CommentsError.IssueNotFound;
     }
 
-    const comments = try ctx.store.getComments(id);
+    const comments = try ctx.issue_store.getComments(id);
     defer {
         for (comments) |c| {
             allocator.free(c.issue_id);
             allocator.free(c.author);
-            allocator.free(c.body);
+            allocator.free(c.text);
         }
         allocator.free(comments);
     }
@@ -157,7 +156,7 @@ fn runList(
             comment_infos[i] = .{
                 .id = c.id,
                 .author = c.author,
-                .body = c.body,
+                .text = c.text,
                 .created_at = c.created_at,
             };
         }
@@ -179,7 +178,7 @@ fn runList(
             for (comments) |c| {
                 try ctx.output.print("\n", .{});
                 try ctx.output.print("[ts:{d}] {s}:\n", .{ c.created_at, c.author });
-                try ctx.output.print("  {s}\n", .{c.body});
+                try ctx.output.print("  {s}\n", .{c.text});
             }
         }
     }

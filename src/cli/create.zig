@@ -10,12 +10,13 @@ const id_gen = @import("../id/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const Event = @import("../models/event.zig").Event;
 
 const Issue = models.Issue;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
-const IssueStore = storage.IssueStore;
 const IdGenerator = id_gen.IdGenerator;
+const CommandContext = common.CommandContext;
 
 pub const CreateError = error{
     EmptyTitle,
@@ -65,33 +66,7 @@ pub fn run(
         return CreateError.TitleTooLong;
     }
 
-    // Determine workspace path
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    // Check if workspace is initialized
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "workspace not initialized. Run 'bz init' first.");
-            return CreateError.WorkspaceNotInitialized;
-        }
-        try common.outputErrorTyped(CreateResult, &output, structured_output, "cannot access workspace");
-        return CreateError.StorageError;
-    };
-
-    // Load existing issues
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to load issues");
-            return CreateError.StorageError;
-        }
-    };
-
-    // Parse optional fields
+    // Parse optional fields early (before opening DB)
     const priority = if (create_args.priority) |p|
         Priority.fromString(p) catch {
             try common.outputErrorTyped(CreateResult, &output, structured_output, "invalid priority value");
@@ -111,23 +86,22 @@ pub fn run(
     else
         null;
 
+    // Open workspace
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return CreateError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
     // Get actor (from flag, env, or default)
     const actor = global.actor orelse common.getDefaultActor();
 
     // Get config prefix (read from config.yaml or use default)
-    const prefix = try getConfigPrefix(allocator, beads_dir);
+    const prefix = try common.getConfigPrefix(allocator, ctx.beads_dir);
     defer allocator.free(prefix);
 
-    // Generate ID with collision checking
+    // Generate ID with collision checking via SQLite exists()
     var generator = IdGenerator.init(prefix);
-    const issue_count = store.countTotal();
-    const issue_id = generator.generateUnique(allocator, issue_count, store.getIdIndex()) catch |err| {
-        if (err == error.CollisionLimitExceeded) {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
-            return CreateError.StorageError;
-        }
-        return err;
-    };
+    const issue_id = try generateUniqueId(allocator, &generator, &ctx.issue_store);
     defer allocator.free(issue_id);
 
     // Create issue
@@ -146,15 +120,10 @@ pub fn run(
     issue.estimated_minutes = create_args.estimate;
     issue.ephemeral = create_args.ephemeral;
 
-    // Set labels on issue (will be persisted via WAL)
-    if (create_args.labels.len > 0) {
-        issue.labels = create_args.labels;
-    }
-
     // Dry-run mode: preview without persisting
     if (create_args.dry_run) {
         if (structured_output) {
-            try output.printJson(DryRunResult{
+            try ctx.output.printJson(DryRunResult{
                 .would_create = .{
                     .id = issue_id,
                     .title = create_args.title,
@@ -165,7 +134,7 @@ pub fn run(
                 },
             });
         } else {
-            try output.info("Would create: {s} \"{s}\" ({s}, {s})", .{
+            try ctx.output.info("Would create: {s} \"{s}\" ({s}, {s})", .{
                 issue_id,
                 create_args.title,
                 issue_type.toString(),
@@ -175,38 +144,35 @@ pub fn run(
         return;
     }
 
-    // Insert into store (for in-memory state and duplicate check)
-    store.insert(issue) catch {
-        try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to create issue");
+    // Insert into SQLite
+    ctx.issue_store.insert(issue) catch {
+        try common.outputErrorTyped(CreateResult, &ctx.output, structured_output, "failed to create issue");
         return CreateError.StorageError;
     };
 
-    // Append to WAL for fast persistence (instead of full file rewrite)
-    if (!global.no_auto_flush) {
-        var wal = storage.Wal.init(beads_dir, allocator) catch {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to initialize WAL");
-            return CreateError.StorageError;
-        };
-        defer wal.deinit();
-
-        wal.addIssue(issue) catch {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "failed to write to WAL");
-            return CreateError.StorageError;
-        };
+    // Add labels if provided
+    if (create_args.labels.len > 0) {
+        for (create_args.labels) |label| {
+            ctx.issue_store.addLabel(issue_id, label) catch {};
+        }
     }
+
+    // Record audit event
+    const event_actor = actor orelse "unknown";
+    ctx.recordEvent(Event.issueCreated(issue_id, event_actor, now));
 
     // Output result
     if (structured_output) {
-        try output.printJson(CreateResult{
+        try ctx.output.printJson(CreateResult{
             .success = true,
             .id = issue_id,
             .title = create_args.title,
         });
     } else if (global.quiet) {
-        try output.raw(issue_id);
-        try output.raw("\n");
+        try ctx.output.raw(issue_id);
+        try ctx.output.raw("\n");
     } else {
-        try output.success("Created issue {s}", .{issue_id});
+        try ctx.output.success("Created issue {s}", .{issue_id});
     }
 }
 
@@ -229,6 +195,25 @@ pub fn runQuick(
     }
 
     try run(create_args, modified_global, allocator);
+}
+
+/// Generate a unique ID by checking SQLite for collisions.
+fn generateUniqueId(
+    allocator: std.mem.Allocator,
+    generator: *IdGenerator,
+    issue_store: *common.IssueStore,
+) ![]u8 {
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        const candidate = try generator.generate(allocator, attempts);
+        const exists = issue_store.exists(candidate) catch {
+            allocator.free(candidate);
+            continue;
+        };
+        if (!exists) return candidate;
+        allocator.free(candidate);
+    }
+    return error.CollisionLimitExceeded;
 }
 
 /// Parse a date string in various formats to Unix timestamp.
@@ -270,57 +255,6 @@ fn epochDayFromYMD(year: i32, month: u4, day: u5) !i32 {
     return era * 146097 + @as(i32, @intCast(doe)) - 719468;
 }
 
-/// Read the ID prefix from config.yaml, defaulting to "bd".
-fn getConfigPrefix(allocator: std.mem.Allocator, beads_dir: []const u8) ![]u8 {
-    const config_path = try std.fs.path.join(allocator, &.{ beads_dir, "config.yaml" });
-    defer allocator.free(config_path);
-
-    const file = std.fs.cwd().openFile(config_path, .{}) catch {
-        return try allocator.dupe(u8, "bd");
-    };
-    defer file.close();
-
-    const content = file.readToEndAlloc(allocator, 4096) catch {
-        return try allocator.dupe(u8, "bd");
-    };
-    defer allocator.free(content);
-
-    // Simple YAML parsing for prefix: "value"
-    if (std.mem.indexOf(u8, content, "prefix:")) |prefix_pos| {
-        const after_prefix = content[prefix_pos + 7 ..];
-        // Find the value (skip whitespace, handle quotes)
-        var i: usize = 0;
-        while (i < after_prefix.len and (after_prefix[i] == ' ' or after_prefix[i] == '\t')) {
-            i += 1;
-        }
-
-        if (i < after_prefix.len) {
-            if (after_prefix[i] == '"') {
-                // Quoted value
-                i += 1;
-                const start = i;
-                while (i < after_prefix.len and after_prefix[i] != '"' and after_prefix[i] != '\n') {
-                    i += 1;
-                }
-                if (i > start) {
-                    return try allocator.dupe(u8, after_prefix[start..i]);
-                }
-            } else {
-                // Unquoted value
-                const start = i;
-                while (i < after_prefix.len and after_prefix[i] != '\n' and after_prefix[i] != ' ' and after_prefix[i] != '\t') {
-                    i += 1;
-                }
-                if (i > start) {
-                    return try allocator.dupe(u8, after_prefix[start..i]);
-                }
-            }
-        }
-    }
-
-    return try allocator.dupe(u8, "bd");
-}
-
 // --- Tests ---
 
 test "parseDateString parses YYYY-MM-DD" {
@@ -343,15 +277,7 @@ test "parseDateString returns null for invalid format" {
     try std.testing.expect(parseDateString("2024/01/29") == null);
 }
 
-test "getConfigPrefix returns default when file missing" {
-    const allocator = std.testing.allocator;
-    const prefix = try getConfigPrefix(allocator, "/nonexistent/path");
-    defer allocator.free(prefix);
-    try std.testing.expectEqualStrings("bd", prefix);
-}
-
 test "CreateError enum exists" {
-    // Just verify the error set compiles
     const err: CreateError = CreateError.EmptyTitle;
     try std.testing.expect(err == CreateError.EmptyTitle);
 }
@@ -368,24 +294,8 @@ test "CreateResult struct works" {
 
 test "run validates empty title" {
     const allocator = std.testing.allocator;
-
-    const tmp_dir_path = try test_util.createTestDir(allocator, "create_empty");
-    defer allocator.free(tmp_dir_path);
-    defer test_util.cleanupTestDir(tmp_dir_path);
-
-    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
-    defer allocator.free(data_path);
-
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
-
     const create_args = args.CreateArgs{ .title = "" };
-    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const result = run(create_args, global, allocator);
     try std.testing.expectError(CreateError.EmptyTitle, result);
@@ -393,28 +303,22 @@ test "run validates empty title" {
 
 test "run validates title length" {
     const allocator = std.testing.allocator;
-
-    const tmp_dir_path = try test_util.createTestDir(allocator, "create_long");
-    defer allocator.free(tmp_dir_path);
-    defer test_util.cleanupTestDir(tmp_dir_path);
-
-    const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
-    defer allocator.free(data_path);
-
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
-
     const long_title = "x" ** 501;
     const create_args = args.CreateArgs{ .title = long_title };
-    const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
     const result = run(create_args, global, allocator);
     try std.testing.expectError(CreateError.TitleTooLong, result);
+}
+
+test "run detects uninitialized workspace" {
+    const allocator = std.testing.allocator;
+
+    const create_args = args.CreateArgs{ .title = "Test" };
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
+
+    const result = run(create_args, global, allocator);
+    try std.testing.expectError(CreateError.WorkspaceNotInitialized, result);
 }
 
 test "run creates issue successfully" {
@@ -427,13 +331,9 @@ test "run creates issue successfully" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    // Initialize workspace (creates dir, db, schema)
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const create_args = args.CreateArgs{
         .title = "Test issue",
@@ -445,37 +345,31 @@ test "run creates issue successfully" {
 
     try run(create_args, global, allocator);
 
-    // Verify issue was created by loading via IssueStore (which replays WAL)
-    var store = IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-    try store.loadFromFile();
+    // Verify issue was created by opening db and checking
+    const db_path = try std.fs.path.join(allocator, &.{ data_path, "beads.db" });
+    defer allocator.free(db_path);
 
-    // Replay WAL to get the created issue
-    var wal = try storage.Wal.init(data_path, allocator);
-    defer wal.deinit();
-    _ = try wal.replay(&store);
+    var db = try storage.SqlDatabase.open(allocator, db_path);
+    defer db.close();
 
-    // Find the created issue
-    const issues = store.getAllRef();
+    var issue_store = storage.IssueStore.init(&db, allocator);
+    const issues = try issue_store.list(.{});
+    defer {
+        for (issues) |*iss| {
+            var i = @constCast(iss);
+            i.deinit(allocator);
+        }
+        allocator.free(issues);
+    }
+
     try std.testing.expect(issues.len > 0);
-
     var found = false;
-    for (issues) |issue| {
-        if (std.mem.indexOf(u8, issue.title, "Test issue") != null) {
+    for (issues) |iss| {
+        if (std.mem.indexOf(u8, iss.title, "Test issue") != null) {
             found = true;
-            try std.testing.expectEqual(models.IssueType.bug, issue.issue_type);
+            try std.testing.expectEqual(models.IssueType.bug, iss.issue_type);
             break;
         }
     }
     try std.testing.expect(found);
-}
-
-test "run detects uninitialized workspace" {
-    const allocator = std.testing.allocator;
-
-    const create_args = args.CreateArgs{ .title = "Test" };
-    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
-
-    const result = run(create_args, global, allocator);
-    try std.testing.expectError(CreateError.WorkspaceNotInitialized, result);
 }

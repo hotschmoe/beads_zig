@@ -10,14 +10,13 @@ const args = @import("args.zig");
 
 pub const Output = output_mod.Output;
 pub const OutputOptions = output_mod.OutputOptions;
+pub const Database = storage.SqlDatabase;
 pub const IssueStore = storage.IssueStore;
 pub const IssueStoreError = storage.IssueStoreError;
-pub const DependencyGraph = storage.DependencyGraph;
+pub const DependencyStore = storage.DependencyStore;
 pub const EventStore = storage.EventStore;
-pub const StoreLoadResult = storage.StoreLoadResult;
 
 /// Full issue representation for agent consumption in JSON output.
-/// Used by list, ready, and blocked commands for consistent schema.
 pub const IssueFull = struct {
     id: []const u8,
     title: []const u8,
@@ -29,18 +28,31 @@ pub const IssueFull = struct {
     labels: []const []const u8,
     created_at: i64,
     updated_at: i64,
-    blocks: []const []const u8, // IDs of issues this blocks (dependents)
+    blocks: []const []const u8,
 };
 
 /// Collect IDs of issues that depend on the given issue (issues it blocks).
 /// Caller owns returned slice and must free each ID and the slice itself.
 pub fn collectBlocksIds(
     allocator: std.mem.Allocator,
-    graph: *DependencyGraph,
+    dep_store: *DependencyStore,
     issue_id: []const u8,
 ) ![][]const u8 {
-    const dependents = try graph.getDependents(issue_id);
-    defer graph.freeDependencies(dependents);
+    const dependents = try dep_store.getDependents(issue_id);
+    defer {
+        for (dependents) |dep| {
+            allocator.free(dep.issue_id);
+            allocator.free(dep.depends_on_id);
+            switch (dep.dep_type) {
+                .custom => |s| allocator.free(s),
+                else => {},
+            }
+            if (dep.created_by) |c| allocator.free(c);
+            if (dep.metadata) |m| allocator.free(m);
+            if (dep.thread_id) |t| allocator.free(t);
+        }
+        allocator.free(dependents);
+    }
 
     var blocks_ids = try allocator.alloc([]const u8, dependents.len);
     errdefer {
@@ -72,23 +84,16 @@ pub const CommandError = error{
 pub const CommandContext = struct {
     allocator: std.mem.Allocator,
     output: Output,
-    store: IssueStore,
+    db: Database,
+    issue_store: IssueStore,
+    dep_store: DependencyStore,
     event_store: EventStore,
     beads_dir: []const u8,
-    issues_path: []const u8,
-    events_path: []const u8,
+    db_path: []const u8,
     global: args.GlobalOptions,
-    /// Number of corrupt entries skipped during load.
-    corruption_count: usize = 0,
-    /// Line numbers of corrupt JSONL entries (owned memory).
-    corrupt_lines: []const usize = &.{},
-    /// Number of WAL entries replayed during load.
-    wal_entries_replayed: usize = 0,
 
-    /// Initialize a command context by loading the workspace.
+    /// Initialize a command context by opening the SQLite database.
     /// Returns null and outputs an error if workspace is not initialized.
-    /// Uses graceful corruption recovery: logs and skips corrupt entries.
-    /// Replays WAL entries after loading main file for consistency.
     pub fn init(
         allocator: std.mem.Allocator,
         global: args.GlobalOptions,
@@ -108,163 +113,70 @@ pub const CommandContext = struct {
         const beads_dir = allocator.dupe(u8, beads_dir_str) catch {
             return CommandError.OutOfMemory;
         };
-        const issues_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
-            allocator.free(beads_dir);
-            return CommandError.OutOfMemory;
-        };
-        const events_path = std.fs.path.join(allocator, &.{ beads_dir, "events.jsonl" }) catch {
-            allocator.free(issues_path);
+
+        const db_path = std.fs.path.join(allocator, &.{ beads_dir, "beads.db" }) catch {
             allocator.free(beads_dir);
             return CommandError.OutOfMemory;
         };
 
-        std.fs.cwd().access(issues_path, .{}) catch |err| {
+        // Check if workspace is initialized by looking for the database
+        std.fs.cwd().access(db_path, .{}) catch |err| {
             if (err == error.FileNotFound) {
+                // Also check for legacy issues.jsonl (user might need to run init)
                 outputErrorGeneric(&output, global.isStructuredOutput(), "workspace not initialized. Run 'bz init' first.") catch {};
-                allocator.free(issues_path);
-                allocator.free(events_path);
+                allocator.free(db_path);
                 allocator.free(beads_dir);
                 return null;
             }
-            outputErrorGeneric(&output, global.isStructuredOutput(), "cannot access workspace") catch {};
-            allocator.free(issues_path);
-            allocator.free(events_path);
+            outputErrorGeneric(&output, global.isStructuredOutput(), "cannot access workspace database") catch {};
+            allocator.free(db_path);
             allocator.free(beads_dir);
             return CommandError.StorageError;
         };
 
-        var store = IssueStore.init(allocator, issues_path);
-        var corruption_count: usize = 0;
-        var corrupt_lines: []const usize = &.{};
-
-        // Use recovery mode: log and skip corrupt entries instead of failing
-        const load_result = store.loadFromFileWithRecovery() catch |err| {
-            if (err != error.FileNotFound) {
-                outputErrorGeneric(&output, global.isStructuredOutput(), "failed to load issues") catch {};
-                store.deinit();
-                allocator.free(issues_path);
-                allocator.free(events_path);
-                allocator.free(beads_dir);
-                return CommandError.StorageError;
-            }
-            // File not found is OK - empty workspace
-            var event_store_empty = EventStore.init(allocator, events_path);
-            event_store_empty.loadNextId() catch {};
-            return CommandContext{
-                .allocator = allocator,
-                .output = output,
-                .store = store,
-                .event_store = event_store_empty,
-                .beads_dir = beads_dir,
-                .issues_path = issues_path,
-                .events_path = events_path,
-                .global = global,
-                .corruption_count = 0,
-                .corrupt_lines = &.{},
-                .wal_entries_replayed = 0,
-            };
+        var db = Database.open(allocator, db_path) catch {
+            outputErrorGeneric(&output, global.isStructuredOutput(), "failed to open database") catch {};
+            allocator.free(db_path);
+            allocator.free(beads_dir);
+            return CommandError.StorageError;
         };
 
-        corruption_count = load_result.jsonl_corruption_count;
-        corrupt_lines = load_result.jsonl_corrupt_lines;
+        // Ensure schema is up to date (idempotent)
+        storage.createSchema(&db) catch {
+            outputErrorGeneric(&output, global.isStructuredOutput(), "failed to initialize database schema") catch {};
+            db.close();
+            allocator.free(db_path);
+            allocator.free(beads_dir);
+            return CommandError.StorageError;
+        };
 
-        // Replay WAL entries onto the store for consistency
-        var wal_entries_replayed: usize = 0;
-        wal_replay: {
-            var wal_obj = storage.Wal.init(beads_dir, allocator) catch {
-                break :wal_replay;
-            };
-            defer wal_obj.deinit();
-
-            var replay_stats = wal_obj.replay(&store) catch {
-                break :wal_replay;
-            };
-            defer replay_stats.deinit(allocator);
-            wal_entries_replayed = replay_stats.applied;
-        }
-
-        // Warn user about corruption (unless quiet/silent mode)
-        if (corruption_count > 0 and !global.quiet and !global.silent and !global.isStructuredOutput()) {
-            output.print("warning: {d} corrupt entries skipped during load\n", .{corruption_count}) catch {};
-            output.print("         Run 'bz doctor' for details, 'bz compact' to rebuild.\n", .{}) catch {};
-        }
-
-        // Initialize event store and load next ID
-        var event_store = EventStore.init(allocator, events_path);
-        event_store.loadNextId() catch {}; // OK if events file doesn't exist
+        const issue_store = IssueStore.init(&db, allocator);
+        const dep_store = DependencyStore.init(&db, allocator);
+        const event_store = EventStore.init(&db, allocator);
 
         return CommandContext{
             .allocator = allocator,
             .output = output,
-            .store = store,
+            .db = db,
+            .issue_store = issue_store,
+            .dep_store = dep_store,
             .event_store = event_store,
             .beads_dir = beads_dir,
-            .issues_path = issues_path,
-            .events_path = events_path,
+            .db_path = db_path,
             .global = global,
-            .corruption_count = corruption_count,
-            .corrupt_lines = corrupt_lines,
-            .wal_entries_replayed = wal_entries_replayed,
         };
     }
 
     /// Clean up resources.
     pub fn deinit(self: *CommandContext) void {
-        self.store.deinit();
+        self.db.close();
+        self.allocator.free(self.db_path);
         self.allocator.free(self.beads_dir);
-        self.allocator.free(self.issues_path);
-        self.allocator.free(self.events_path);
-        if (self.corrupt_lines.len > 0) {
-            self.allocator.free(self.corrupt_lines);
-        }
-    }
-
-    /// Check if corruption was detected during load.
-    pub fn hasCorruption(self: *const CommandContext) bool {
-        return self.corruption_count > 0;
-    }
-
-    /// Save the store to file if auto-flush is enabled.
-    /// Note: For single-issue writes, prefer appendToWal() for better performance.
-    pub fn saveIfAutoFlush(self: *CommandContext) CommandError!void {
-        if (!self.global.no_auto_flush) {
-            self.store.saveToFile() catch {
-                outputErrorGeneric(&self.output, self.global.isStructuredOutput(), "failed to save issues") catch {};
-                return CommandError.StorageError;
-            };
-        }
-    }
-
-    /// Append an issue to the WAL for fast persistence.
-    /// Use this for single-issue creates/updates instead of saveToFile().
-    pub fn appendToWal(self: *CommandContext, issue: @import("../models/issue.zig").Issue, op: storage.WalOp) CommandError!void {
-        if (self.global.no_auto_flush) return;
-
-        var wal_obj = storage.Wal.init(self.beads_dir, self.allocator) catch {
-            outputErrorGeneric(&self.output, self.global.isStructuredOutput(), "failed to initialize WAL") catch {};
-            return CommandError.StorageError;
-        };
-        defer wal_obj.deinit();
-
-        wal_obj.appendEntry(.{
-            .op = op,
-            .ts = std.time.timestamp(),
-            .id = issue.id,
-            .data = issue,
-        }) catch {
-            outputErrorGeneric(&self.output, self.global.isStructuredOutput(), "failed to write to WAL") catch {};
-            return CommandError.StorageError;
-        };
-    }
-
-    /// Create a dependency graph from the store.
-    pub fn createGraph(self: *CommandContext) DependencyGraph {
-        return DependencyGraph.init(&self.store, self.allocator);
     }
 
     /// Record an audit event. Silently ignores errors (audit is best-effort).
     pub fn recordEvent(self: *CommandContext, event: @import("../models/event.zig").Event) void {
-        _ = self.event_store.append(event) catch {};
+        self.event_store.insert(event) catch {};
     }
 };
 

@@ -1,90 +1,60 @@
 //! Storage layer for beads_zig.
 //!
 //! Handles all persistence operations including:
-//! - JSONL file I/O (read/write issues)
-//! - In-memory issue storage with indexing
-//! - Dependency graph management
-//! - Dirty tracking for sync
-//! - Write-Ahead Log (WAL) for concurrent writes
-//! - WAL compaction for merging WAL into main file
-//! - Generation numbers for read/compact race safety
+//! - SQLite database (primary storage)
+//! - JSONL file I/O (sync export/import)
+//! - Event audit trail
+//! - Issue and dependency CRUD
+//! - Schema migrations
 
 const std = @import("std");
 
+// SQLite storage
+pub const sqlite = @import("sqlite.zig");
+pub const sql_schema = @import("schema.zig");
+
+// JSONL storage (kept for sync export/import)
 pub const jsonl = @import("jsonl.zig");
-pub const store = @import("store.zig");
-pub const graph = @import("graph.zig");
+
+// Domain stores (SQLite-backed)
 pub const issues = @import("issues.zig");
 pub const dependencies = @import("dependencies.zig");
-pub const lock = @import("lock.zig");
-pub const wal = @import("wal.zig");
-pub const compact = @import("compact.zig");
 pub const events = @import("events.zig");
-pub const generation = @import("generation.zig");
-pub const metrics = @import("metrics.zig");
-pub const txlog = @import("txlog.zig");
-pub const fscheck = @import("fscheck.zig");
-pub const mmap = @import("mmap.zig");
-pub const simd = @import("simd.zig");
 
+// Migrations
+pub const migrations = @import("migrations.zig");
+
+// SQLite types
+pub const SqlDatabase = sqlite.Database;
+pub const SqlStatement = sqlite.Statement;
+pub const SqliteError = sqlite.SqliteError;
+pub const createSchema = sql_schema.createSchema;
+pub const getSchemaVersion = sql_schema.getSchemaVersion;
+pub const SQL_SCHEMA_VERSION = sql_schema.SCHEMA_VERSION;
+
+// JSONL types
 pub const JsonlFile = jsonl.JsonlFile;
 pub const JsonlError = jsonl.JsonlError;
 pub const LoadResult = jsonl.LoadResult;
 
-pub const IssueStore = store.IssueStore;
-pub const IssueStoreError = store.IssueStoreError;
-pub const StoreLoadResult = store.StoreLoadResult;
+// Issue types
+pub const IssueStore = issues.IssueStore;
+pub const IssueStoreError = issues.IssueStoreError;
+pub const IssueUpdate = IssueStore.IssueUpdate;
+pub const ListFilters = IssueStore.ListFilters;
+pub const GroupBy = IssueStore.GroupBy;
+pub const CountResult = IssueStore.CountResult;
 
-pub const DependencyGraph = graph.DependencyGraph;
-pub const DependencyGraphError = graph.DependencyGraphError;
-
+// Dependency types
 pub const DependencyStore = dependencies.DependencyStore;
 pub const DependencyStoreError = dependencies.DependencyStoreError;
+pub const BlockedInfo = dependencies.BlockedInfo;
 
-pub const BeadsLock = lock.BeadsLock;
-pub const LockError = lock.LockError;
-pub const withLock = lock.withLock;
-pub const withLockContext = lock.withLockContext;
-
-pub const Wal = wal.Wal;
-pub const WalEntry = wal.WalEntry;
-pub const WalOp = wal.WalOp;
-pub const WalError = wal.WalError;
-pub const ReplayStats = wal.ReplayStats;
-
-pub const Compactor = compact.Compactor;
-pub const CompactError = compact.CompactError;
-pub const WalStats = compact.WalStats;
-pub const CompactionThresholds = compact.CompactionThresholds;
-
+// Event types
 pub const EventStore = events.EventStore;
 pub const EventStoreError = events.EventStoreError;
 
-pub const Generation = generation.Generation;
-pub const GenerationError = generation.GenerationError;
-
-pub const LockMetrics = metrics.LockMetrics;
-pub const getMetrics = metrics.getMetrics;
-pub const resetMetrics = metrics.resetMetrics;
-
-pub const TxLog = txlog.TxLog;
-pub const LogEntry = txlog.LogEntry;
-pub const LogLevel = txlog.LogLevel;
-pub const initTxLog = txlog.init;
-pub const deinitTxLog = txlog.deinit;
-pub const beginTx = txlog.begin;
-
-pub const FilesystemCheck = fscheck.FilesystemCheck;
-pub const FsType = fscheck.FsType;
-pub const checkFilesystemSafety = fscheck.checkFilesystemSafety;
-
-pub const MappedFile = mmap.MappedFile;
-pub const MmapError = mmap.MmapError;
-
-pub const NewlineScanner = simd.NewlineScanner;
-pub const LineIterator = simd.LineIterator;
-
-pub const migrations = @import("migrations.zig");
+// Migration types
 pub const MigrationError = migrations.MigrationError;
 pub const MigrationResult = migrations.MigrationResult;
 pub const Metadata = migrations.Metadata;

@@ -45,7 +45,7 @@ pub fn run(
     const id = history_args.id;
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(HistoryResult{
                 .success = false,
@@ -59,7 +59,7 @@ pub fn run(
     }
 
     // Get real events from the event store
-    const stored_events = ctx.event_store.getEventsForIssue(id) catch &[_]Event{};
+    const stored_events = ctx.event_store.getForIssue(id) catch &[_]Event{};
     defer if (stored_events.len > 0) ctx.event_store.freeEvents(@constCast(stored_events));
 
     // Convert to output format
@@ -79,7 +79,7 @@ pub fn run(
 
     // If no stored events, generate synthetic events from issue data for backwards compatibility
     if (events.items.len == 0) {
-        const issue_opt = try ctx.store.get(id);
+        const issue_opt = try ctx.issue_store.get(id);
         if (issue_opt) |issue_val| {
             var issue = issue_val;
             defer issue.deinit(allocator);

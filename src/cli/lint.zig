@@ -57,14 +57,14 @@ pub fn run(
     defer issues.deinit(allocator);
 
     // Run all lint checks
-    try lintIdFormats(&ctx.store, allocator, &issues);
-    try lintOrphanedHierarchy(&ctx.store, allocator, &issues);
-    try lintOrphanedDependencies(&ctx.store, allocator, &issues);
+    try lintIdFormats(&ctx, allocator, &issues);
+    try lintOrphanedHierarchy(&ctx, allocator, &issues);
+    try lintOrphanedDependencies(&ctx, allocator, &issues);
     try lintCircularDependencies(&ctx, allocator, &issues);
-    try lintTitles(&ctx.store, allocator, &issues);
-    try lintDuplicateHashes(&ctx.store, allocator, &issues);
-    try lintStatusConsistency(&ctx.store, allocator, &issues);
-    try lintTimestamps(&ctx.store, allocator, &issues);
+    try lintTitles(&ctx, allocator, &issues);
+    try lintDuplicateHashes(&ctx, allocator, &issues);
+    try lintStatusConsistency(&ctx, allocator, &issues);
+    try lintTimestamps(&ctx, allocator, &issues);
 
     // Count by severity
     var errors: usize = 0;
@@ -129,13 +129,19 @@ pub fn run(
 }
 
 fn lintIdFormats(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
+    for (all_issues) |*issue| {
         if (!id_mod.validateId(issue.id)) {
             try issues.append(allocator, .{
                 .id = issue.id,
@@ -148,15 +154,21 @@ fn lintIdFormats(
 }
 
 fn lintOrphanedHierarchy(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
+    for (all_issues) |*issue| {
         if (orphans.getParentId(issue.id)) |parent_id| {
-            if (!store.id_index.contains(parent_id)) {
+            if (!try ctx.issue_store.exists(parent_id)) {
                 try issues.append(allocator, .{
                     .id = issue.id,
                     .severity = "warning",
@@ -169,15 +181,24 @@ fn lintOrphanedHierarchy(
 }
 
 fn lintOrphanedDependencies(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
-        for (issue.dependencies) |dep| {
-            if (!store.id_index.contains(dep.depends_on_id)) {
+    for (all_issues) |*issue| {
+        const deps = try ctx.dep_store.getDependencies(issue.id);
+        defer ctx.dep_store.freeDependencies(deps);
+
+        for (deps) |dep| {
+            if (!try ctx.issue_store.exists(dep.depends_on_id)) {
                 try issues.append(allocator, .{
                     .id = issue.id,
                     .severity = "warning",
@@ -194,30 +215,33 @@ fn lintCircularDependencies(
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
-    var graph = ctx.createGraph();
-    const cycles = try graph.detectCycles();
-    defer if (cycles) |c| allocator.free(c);
+    const cycles = try ctx.dep_store.detectAllCycles();
+    defer ctx.dep_store.freeCycles(cycles);
 
-    if (cycles) |cycle_list| {
-        if (cycle_list.len > 0) {
-            try issues.append(allocator, .{
-                .id = null,
-                .severity = "error",
-                .category = "circular_dependency",
-                .message = "Circular dependencies detected in dependency graph",
-            });
-        }
+    if (cycles.len > 0) {
+        try issues.append(allocator, .{
+            .id = null,
+            .severity = "error",
+            .category = "circular_dependency",
+            .message = "Circular dependencies detected in dependency graph",
+        });
     }
 }
 
 fn lintTitles(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
+    for (all_issues) |*issue| {
         if (issue.title.len == 0) {
             try issues.append(allocator, .{
                 .id = issue.id,
@@ -237,16 +261,22 @@ fn lintTitles(
 }
 
 fn lintDuplicateHashes(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
+
     var hash_map = std.StringHashMap([]const u8).init(allocator);
     defer hash_map.deinit();
 
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
+    for (all_issues) |*issue| {
         if (issue.content_hash) |hash| {
             if (hash_map.get(hash)) |existing_id| {
                 try issues.append(allocator, .{
@@ -263,13 +293,19 @@ fn lintDuplicateHashes(
 }
 
 fn lintStatusConsistency(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
+    for (all_issues) |*issue| {
         // Closed issues should have closed_at timestamp
         if (issue.status.eql(.closed) and issue.closed_at.value == null) {
             try issues.append(allocator, .{
@@ -293,16 +329,22 @@ fn lintStatusConsistency(
 }
 
 fn lintTimestamps(
-    store: *IssueStore,
+    ctx: *CommandContext,
     allocator: std.mem.Allocator,
     issues: *std.ArrayListUnmanaged(LintIssue),
 ) !void {
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
+
     const now = std.time.timestamp();
     const one_day_future = now + (24 * 60 * 60);
 
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
+    for (all_issues) |*issue| {
         // Check for timestamps too far in the future (more than 1 day)
         if (issue.created_at.value > one_day_future) {
             try issues.append(allocator, .{

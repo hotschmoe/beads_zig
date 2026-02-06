@@ -3,7 +3,6 @@
 //! `bz delete <id>` - Soft delete an issue (set status to tombstone)
 //! `bz delete --from-file <path>` - Delete multiple issues from a file
 //! `bz delete <id> --cascade` - Delete issue and all its dependents
-//! `bz delete <id> --hard` - Permanently remove from database
 //! `bz delete <id> --dry-run` - Preview what would be deleted
 //!
 //! By default, this is a soft delete - the issue is marked as tombstone but remains
@@ -15,13 +14,10 @@ const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const Event = @import("../models/event.zig").Event;
 
 const Status = models.Status;
-const Issue = models.Issue;
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
-const DependencyGraph = common.DependencyGraph;
-const Wal = storage.Wal;
 const Output = @import("../output/mod.zig").Output;
 
 /// Output a list of IDs, one per line (used for quiet/robot output).
@@ -39,15 +35,6 @@ fn createIdSlice(allocator: std.mem.Allocator, ids: std.ArrayListUnmanaged([]con
         id_slice[i] = id;
     }
     return id_slice;
-}
-
-/// Truncate the WAL after hard delete to prevent deleted issues from reappearing.
-fn truncateWalIfNeeded(hard: bool, deleted_count: usize, beads_dir: []const u8, allocator: std.mem.Allocator) void {
-    if (!hard or deleted_count == 0) return;
-
-    var wal_obj = Wal.init(beads_dir, allocator) catch return;
-    defer wal_obj.deinit();
-    wal_obj.truncate() catch {};
 }
 
 pub const DeleteError = error{
@@ -126,7 +113,6 @@ pub fn run(
 
     // If cascade mode, expand to include all dependents
     if (delete_args.cascade) {
-        var graph = ctx.createGraph();
         var expanded_ids: std.StringHashMapUnmanaged(void) = .{};
         defer {
             var key_it = expanded_ids.keyIterator();
@@ -154,8 +140,21 @@ pub fn run(
 
         while (work_queue.items.len > 0) {
             const current_id = work_queue.orderedRemove(0);
-            const dependents = graph.getDependents(current_id) catch continue;
-            defer graph.freeDependencies(dependents);
+            const dependents = ctx.dep_store.getDependents(current_id) catch continue;
+            defer {
+                for (dependents) |dep| {
+                    allocator.free(dep.issue_id);
+                    allocator.free(dep.depends_on_id);
+                    switch (dep.dep_type) {
+                        .custom => |s| allocator.free(s),
+                        else => {},
+                    }
+                    if (dep.created_by) |c| allocator.free(c);
+                    if (dep.metadata) |m| allocator.free(m);
+                    if (dep.thread_id) |t| allocator.free(t);
+                }
+                allocator.free(dependents);
+            }
 
             for (dependents) |dep| {
                 if (!expanded_ids.contains(dep.issue_id)) {
@@ -208,43 +207,40 @@ pub fn run(
 
     // Perform the actual deletion
     const now = std.time.timestamp();
+    const actor = common.getDefaultActor() orelse "system";
     var deleted_count: usize = 0;
     var not_found_count: usize = 0;
 
     for (ids_to_delete.items) |id| {
-        const issue_ref = ctx.store.getRef(id) orelse {
+        const issue = (try ctx.issue_store.get(id)) orelse {
             not_found_count += 1;
             continue;
         };
+        defer {
+            var i = issue;
+            i.deinit(allocator);
+        }
 
-        if (issue_ref.status.eql(.tombstone)) {
-            continue; // Already deleted
+        if (issue.status.eql(.tombstone) and !delete_args.hard) {
+            continue;
         }
 
         if (delete_args.hard) {
-            // Hard delete - remove from store entirely
-            ctx.store.remove(id) catch {
+            ctx.issue_store.hardDelete(id) catch {
                 continue;
             };
+            ctx.recordEvent(Event.issueDeleted(id, actor, now));
         } else {
-            // Soft delete - mark as tombstone
-            const updates = IssueStore.IssueUpdate{
-                .status = .tombstone,
-                .closed_at = now,
-                .close_reason = "deleted",
-            };
-            ctx.store.update(id, updates, now) catch {
+            ctx.issue_store.softDelete(id, actor, "deleted", now) catch |err| {
+                if (err == storage.IssueStoreError.IssueNotFound) {
+                    not_found_count += 1;
+                }
                 continue;
             };
+            ctx.recordEvent(Event.issueDeleted(id, actor, now));
         }
         deleted_count += 1;
     }
-
-    try ctx.saveIfAutoFlush();
-
-    // For hard delete, truncate the WAL to ensure deleted issues don't
-    // reappear when replaying WAL entries on next load.
-    truncateWalIfNeeded(delete_args.hard, deleted_count, ctx.beads_dir, allocator);
 
     // Output result
     if (structured_output) {
@@ -311,7 +307,7 @@ test "run detects uninitialized workspace" {
     try std.testing.expectError(DeleteError.WorkspaceNotInitialized, result);
 }
 
-test "run returns error for missing issue" {
+test "run handles missing issue gracefully" {
     const allocator = std.testing.allocator;
 
     const tmp_dir_path = try test_util.createTestDir(allocator, "delete_missing");
@@ -321,17 +317,13 @@ test "run returns error for missing issue" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    // Initialize workspace
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const delete_args = args.DeleteArgs{ .id = "bd-nonexistent" };
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
 
-    // This should complete but report 0 deletions (issue not found is handled gracefully)
+    // softDelete returns IssueNotFound which we catch and count, so run completes
     try run(delete_args, global, allocator);
 }

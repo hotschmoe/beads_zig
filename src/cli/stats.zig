@@ -75,7 +75,16 @@ pub fn run(
     var type_counts: std.StringHashMapUnmanaged(usize) = .{};
     defer type_counts.deinit(allocator);
 
-    for (ctx.store.issues.items) |issue| {
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
+
+    for (all_issues) |issue| {
         if (issue.status.eql(.tombstone)) continue;
 
         total += 1;
@@ -213,9 +222,16 @@ fn getActivityStats(
     var issues_closed: usize = 0;
     var issues_updated: usize = 0;
 
-    for (ctx.store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const activity_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (activity_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(activity_issues);
+    }
 
+    for (activity_issues) |issue| {
         if (issue.created_at.value >= since) {
             issues_created += 1;
         }
@@ -281,7 +297,7 @@ fn getActivityStats(
                     const key = normalized[0..len];
 
                     // Check if this issue exists in our store
-                    if (ctx.store.exists(key) catch false) {
+                    if (ctx.issue_store.exists(key) catch false) {
                         const entry = try issue_ref_counts.getOrPutValue(allocator, key, 0);
                         entry.value_ptr.* += 1;
                         found_ref = true;

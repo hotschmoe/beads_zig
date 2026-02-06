@@ -1,10 +1,11 @@
 //! Init command for beads_zig.
 //!
 //! Creates the .beads/ workspace directory with:
-//! - issues.jsonl (empty, git-tracked)
+//! - beads.db (SQLite database, gitignored)
+//! - issues.jsonl (empty, git-tracked for sync)
 //! - config.yaml (git-tracked)
 //! - metadata.json (gitignored)
-//! - .gitignore (to ignore WAL, lock, and metadata files)
+//! - .gitignore (to ignore database, WAL, lock, and metadata files)
 
 const std = @import("std");
 const Output = @import("../output/mod.zig").Output;
@@ -18,6 +19,7 @@ pub const InitError = error{
     AlreadyInitialized,
     CreateDirectoryFailed,
     WriteFileFailed,
+    DatabaseError,
     OutOfMemory,
 };
 
@@ -26,7 +28,6 @@ pub const InitResult = struct {
     path: []const u8,
     prefix: []const u8,
     message: ?[]const u8 = null,
-    fs_warning: ?[]const u8 = null,
 };
 
 /// Run the init command.
@@ -44,14 +45,13 @@ pub fn run(
 
     const structured_output = global.isStructuredOutput();
     const beads_dir = global.data_path orelse ".beads";
-    const issues_file = "issues.jsonl";
 
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, issues_file });
-    defer allocator.free(issues_path);
+    const db_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.db" });
+    defer allocator.free(db_path);
 
-    // Check if already initialized by looking for issues.jsonl
+    // Check if already initialized by looking for beads.db
     const already_exists = blk: {
-        std.fs.cwd().access(issues_path, .{}) catch |err| {
+        std.fs.cwd().access(db_path, .{}) catch |err| {
             break :blk err != error.FileNotFound;
         };
         break :blk true;
@@ -71,7 +71,22 @@ pub fn run(
         },
     };
 
-    // Create empty issues.jsonl (reuse the path we already constructed)
+    // Create SQLite database with schema
+    var db = storage.SqlDatabase.open(allocator, db_path) catch {
+        try outputError(&output, structured_output, beads_dir, init_args.prefix, "failed to create database");
+        return InitError.DatabaseError;
+    };
+    defer db.close();
+
+    storage.createSchema(&db) catch {
+        try outputError(&output, structured_output, beads_dir, init_args.prefix, "failed to initialize database schema");
+        return InitError.DatabaseError;
+    };
+
+    // Create empty issues.jsonl (git-tracked sync export)
+    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
+    defer allocator.free(issues_path);
+
     const jsonl_file = std.fs.cwd().createFile(issues_path, .{ .exclusive = true }) catch |err| switch (err) {
         error.PathAlreadyExists => null,
         else => {
@@ -99,28 +114,18 @@ pub fn run(
 
     try writeGitignore(gitignore_path);
 
-    // Check filesystem safety for concurrent access
-    const fs_check = storage.checkFilesystemSafety(beads_dir);
-    const fs_warning: ?[]const u8 = if (!fs_check.safe) fs_check.warning else null;
-
     // Success output
     if (structured_output) {
         try output.printJson(InitResult{
             .success = true,
             .path = beads_dir,
             .prefix = init_args.prefix,
-            .fs_warning = fs_warning,
         });
     } else {
         try output.success("Initialized beads workspace in {s}/", .{beads_dir});
         try output.print("  Issue prefix: {s}\n", .{init_args.prefix});
-        try output.print("  Issues file: {s}/issues.jsonl\n", .{beads_dir});
-
-        // Warn user about network filesystem if detected
-        if (fs_warning) |warning| {
-            try output.print("\n", .{});
-            try output.warn("Filesystem warning: {s}", .{warning});
-        }
+        try output.print("  Database: {s}/beads.db\n", .{beads_dir});
+        try output.print("  Sync export: {s}/issues.jsonl\n", .{beads_dir});
     }
 }
 
@@ -198,7 +203,9 @@ fn writeMetadataJson(path: []const u8, prefix: []const u8, allocator: std.mem.Al
         \\  "schema_version": 1,
         \\  "created_at": "{s}",
         \\  "bz_version": "{s}",
-        \\  "prefix": "{s}"
+        \\  "prefix": "{s}",
+        \\  "database": "beads.db",
+        \\  "jsonl_export": "issues.jsonl"
         \\}}
         \\
     ;
@@ -215,6 +222,9 @@ fn writeGitignore(path: []const u8) !void {
 
     const gitignore_content =
         \\# beads_zig generated files (not tracked in git)
+        \\*.db
+        \\*.db-wal
+        \\*.db-shm
         \\*.wal
         \\*.lock
         \\metadata.json
@@ -248,6 +258,7 @@ test "init creates workspace directory structure" {
     var tmp_dir = try std.fs.cwd().openDir(tmp_dir_path, .{});
     defer tmp_dir.close();
 
+    try tmp_dir.access(".beads/beads.db", .{});
     try tmp_dir.access(".beads/issues.jsonl", .{});
     try tmp_dir.access(".beads/config.yaml", .{});
     try tmp_dir.access(".beads/metadata.json", .{});
@@ -334,12 +345,16 @@ test "init creates valid metadata.json" {
         created_at: []const u8,
         bz_version: []const u8,
         prefix: []const u8,
+        database: []const u8,
+        jsonl_export: []const u8,
     }, allocator, content, .{});
     defer parsed.deinit();
 
     try std.testing.expectEqual(@as(i32, 1), parsed.value.schema_version);
     try std.testing.expectEqualStrings(version_cmd.VERSION, parsed.value.bz_version);
     try std.testing.expectEqualStrings("bd", parsed.value.prefix);
+    try std.testing.expectEqualStrings("beads.db", parsed.value.database);
+    try std.testing.expectEqualStrings("issues.jsonl", parsed.value.jsonl_export);
 }
 
 test "init creates .gitignore with correct entries" {
@@ -368,6 +383,9 @@ test "init creates .gitignore with correct entries" {
     defer allocator.free(content);
 
     // Verify expected patterns
+    try std.testing.expect(std.mem.indexOf(u8, content, "*.db") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "*.db-wal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "*.db-shm") != null);
     try std.testing.expect(std.mem.indexOf(u8, content, "*.wal") != null);
     try std.testing.expect(std.mem.indexOf(u8, content, "*.lock") != null);
     try std.testing.expect(std.mem.indexOf(u8, content, "metadata.json") != null);

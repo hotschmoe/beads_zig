@@ -16,8 +16,8 @@ const test_util = @import("../test_util.zig");
 const Dependency = models.Dependency;
 const DependencyType = models.DependencyType;
 const CommandContext = common.CommandContext;
-const DependencyGraph = common.DependencyGraph;
-const DependencyGraphError = storage.DependencyGraphError;
+const DependencyStore = common.DependencyStore;
+const DependencyStoreError = storage.DependencyStoreError;
 
 pub const DepError = error{
     WorkspaceNotInitialized,
@@ -48,64 +48,49 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    var graph = ctx.createGraph();
-
     switch (dep_args.subcommand) {
-        .add => |add| try runAdd(&graph, &ctx, add, global, allocator),
-        .remove => |remove| try runRemove(&graph, &ctx, remove, global),
-        .list => |list| try runList(&graph, &ctx.output, list, global, allocator),
-        .tree => |tree| try runTree(&graph, &ctx, tree, global, allocator),
-        .cycles => try runCycles(&graph, &ctx.output, global, allocator),
+        .add => |add| try runAdd(&ctx, add, global, allocator),
+        .remove => |remove| try runRemove(&ctx, remove, global),
+        .list => |list| try runList(&ctx, list, global, allocator),
+        .tree => |tree| try runTree(&ctx, tree, global, allocator),
+        .cycles => try runCycles(&ctx, global, allocator),
     }
 }
 
 fn runAdd(
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     add_args: anytype,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
     const structured_output = global.isStructuredOutput();
-    if (!try ctx.store.exists(add_args.child)) {
+    if (!try ctx.issue_store.exists(add_args.child)) {
         try common.outputNotFoundError(DepResult, &ctx.output, structured_output, add_args.child, allocator);
         return DepError.IssueNotFound;
     }
 
-    if (!try ctx.store.exists(add_args.parent)) {
+    if (!try ctx.issue_store.exists(add_args.parent)) {
         try common.outputNotFoundError(DepResult, &ctx.output, structured_output, add_args.parent, allocator);
         return DepError.IssueNotFound;
     }
 
     const now = std.time.timestamp();
-    const dep = Dependency{
-        .issue_id = add_args.child,
-        .depends_on_id = add_args.parent,
-        .dep_type = DependencyType.fromString(add_args.dep_type),
-        .created_at = now,
-        .created_by = global.actor,
-        .metadata = add_args.metadata,
-        .thread_id = null,
-    };
+    const dep_type = DependencyType.fromString(add_args.dep_type);
 
-    graph.addDependency(dep) catch |err| {
+    ctx.dep_store.add(add_args.child, add_args.parent, dep_type, global.actor, now) catch |err| {
         const msg = switch (err) {
-            DependencyGraphError.SelfDependency => "cannot depend on self",
-            DependencyGraphError.CycleDetected => "adding dependency would create a cycle",
-            DependencyGraphError.IssueNotFound => "issue not found",
+            DependencyStoreError.SelfDependency => "cannot depend on self",
+            DependencyStoreError.CycleDetected => "adding dependency would create a cycle",
             else => "failed to add dependency",
         };
         try outputError(&ctx.output, structured_output, msg);
 
         return switch (err) {
-            DependencyGraphError.SelfDependency => DepError.SelfDependency,
-            DependencyGraphError.CycleDetected => DepError.CycleDetected,
-            DependencyGraphError.IssueNotFound => DepError.IssueNotFound,
+            DependencyStoreError.SelfDependency => DepError.SelfDependency,
+            DependencyStoreError.CycleDetected => DepError.CycleDetected,
             else => DepError.StorageError,
         };
     };
-
-    try ctx.saveIfAutoFlush();
 
     if (structured_output) {
         try ctx.output.printJson(DepResult{
@@ -120,26 +105,16 @@ fn runAdd(
 }
 
 fn runRemove(
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     remove_args: anytype,
     global: args.GlobalOptions,
 ) !void {
     const structured_output = global.isStructuredOutput();
-    graph.removeDependency(remove_args.child, remove_args.parent) catch |err| {
-        const msg = if (err == DependencyGraphError.IssueNotFound)
-            "issue not found"
-        else
-            "failed to remove dependency";
+    ctx.dep_store.remove(remove_args.child, remove_args.parent) catch {
+        const msg = "failed to remove dependency";
         try outputError(&ctx.output, structured_output, msg);
-
-        return if (err == DependencyGraphError.IssueNotFound)
-            DepError.IssueNotFound
-        else
-            DepError.StorageError;
+        return DepError.StorageError;
     };
-
-    try ctx.saveIfAutoFlush();
 
     if (structured_output) {
         try ctx.output.printJson(DepResult{
@@ -154,8 +129,7 @@ fn runRemove(
 }
 
 fn runList(
-    graph: *DependencyGraph,
-    output: *common.Output,
+    ctx: *CommandContext,
     list_args: anytype,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
@@ -168,14 +142,14 @@ fn runList(
     var dependents: []Dependency = &.{};
 
     if (show_down) {
-        deps = try graph.getDependencies(list_args.id);
+        deps = try ctx.dep_store.getDependencies(list_args.id);
     }
-    defer if (show_down) graph.freeDependencies(deps);
+    defer if (show_down) ctx.dep_store.freeDependencies(deps);
 
     if (show_up) {
-        dependents = try graph.getDependents(list_args.id);
+        dependents = try ctx.dep_store.getDependents(list_args.id);
     }
-    defer if (show_up) graph.freeDependencies(dependents);
+    defer if (show_up) ctx.dep_store.freeDependencies(dependents);
 
     if (global.isStructuredOutput()) {
         var depends_on_ids: ?[][]const u8 = null;
@@ -200,7 +174,7 @@ fn runList(
             if (blocks_ids) |ids| allocator.free(ids);
         }
 
-        try output.printJson(DepResult{
+        try ctx.output.printJson(DepResult{
             .success = true,
             .depends_on = depends_on_ids,
             .blocks = blocks_ids,
@@ -208,27 +182,27 @@ fn runList(
     } else {
         if (show_down) {
             if (deps.len > 0) {
-                try output.println("Depends on:", .{});
+                try ctx.output.println("Depends on:", .{});
                 for (deps) |dep| {
                     if (dep.metadata) |meta| {
-                        try output.print("  - {s} ({s}) [{s}]\n", .{ dep.depends_on_id, dep.dep_type.toString(), meta });
+                        try ctx.output.print("  - {s} ({s}) [{s}]\n", .{ dep.depends_on_id, dep.dep_type.toString(), meta });
                     } else {
-                        try output.print("  - {s} ({s})\n", .{ dep.depends_on_id, dep.dep_type.toString() });
+                        try ctx.output.print("  - {s} ({s})\n", .{ dep.depends_on_id, dep.dep_type.toString() });
                     }
                 }
             } else {
-                try output.println("Depends on: (none)", .{});
+                try ctx.output.println("Depends on: (none)", .{});
             }
         }
 
         if (show_up) {
             if (dependents.len > 0) {
-                try output.println("Blocks:", .{});
+                try ctx.output.println("Blocks:", .{});
                 for (dependents) |dep| {
-                    try output.print("  - {s}\n", .{dep.issue_id});
+                    try ctx.output.print("  - {s}\n", .{dep.issue_id});
                 }
             } else {
-                try output.println("Blocks: (none)", .{});
+                try ctx.output.println("Blocks: (none)", .{});
             }
         }
     }
@@ -243,7 +217,6 @@ const TreeNode = struct {
 };
 
 fn runTree(
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     tree_args: anytype,
     global: args.GlobalOptions,
@@ -253,7 +226,7 @@ fn runTree(
     const format = tree_args.format;
 
     // Check if issue exists
-    const issue = try ctx.store.get(id);
+    const issue = try ctx.issue_store.get(id);
     if (issue == null) {
         try common.outputNotFoundError(DepResult, &ctx.output, global.isStructuredOutput(), id, allocator);
         return DepError.IssueNotFound;
@@ -263,7 +236,7 @@ fn runTree(
 
     if (global.isStructuredOutput()) {
         // Build tree structure for JSON output
-        const root = try buildTreeNode(graph, ctx, id, allocator, 0, 5);
+        const root = try buildTreeNode(ctx, id, allocator, 0, 5);
         defer freeTreeNode(root, allocator);
 
         try ctx.output.printJson(.{
@@ -272,14 +245,14 @@ fn runTree(
         });
     } else if (format == .mermaid) {
         // Mermaid flowchart output
-        try printMermaidTree(&ctx.output, graph, ctx, id, allocator);
+        try printMermaidTree(ctx, id, allocator);
     } else {
         // ASCII tree output
         try ctx.output.println("{s} - {s} [{s}]", .{ id, i.title, i.status.toString() });
 
         // Show what this issue depends on (upstream dependencies)
-        const deps = try graph.getDependencies(id);
-        defer graph.freeDependencies(deps);
+        const deps = try ctx.dep_store.getDependencies(id);
+        defer ctx.dep_store.freeDependencies(deps);
 
         if (deps.len > 0) {
             try ctx.output.println("Depends on:", .{});
@@ -292,13 +265,13 @@ fn runTree(
 
             for (deps, 0..) |dep, idx| {
                 const is_last = (idx == deps.len - 1);
-                try printTreeBranch(&ctx.output, graph, ctx, dep.depends_on_id, "", is_last, &visited, allocator, 0, 5);
+                try printTreeBranch(ctx, dep.depends_on_id, "", is_last, &visited, allocator, 0, 5);
             }
         }
 
         // Show what depends on this issue (downstream dependents)
-        const dependents = try graph.getDependents(id);
-        defer graph.freeDependencies(dependents);
+        const dependents = try ctx.dep_store.getDependents(id);
+        defer ctx.dep_store.freeDependencies(dependents);
 
         if (dependents.len > 0) {
             try ctx.output.print("\n", .{});
@@ -306,7 +279,7 @@ fn runTree(
             for (dependents, 0..) |dep, idx| {
                 const is_last = (idx == dependents.len - 1);
                 const prefix = if (is_last) "`-- " else "|-- ";
-                const dep_issue = try ctx.store.get(dep.issue_id);
+                const dep_issue = try ctx.issue_store.get(dep.issue_id);
                 if (dep_issue) |di| {
                     var d = di;
                     defer d.deinit(allocator);
@@ -320,8 +293,6 @@ fn runTree(
 }
 
 fn printTreeBranch(
-    output: *common.Output,
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     id: []const u8,
     prefix: []const u8,
@@ -334,14 +305,14 @@ fn printTreeBranch(
     // Check for cycles
     if (visited.contains(id)) {
         const branch = if (is_last) "`-- " else "|-- ";
-        try output.print("{s}{s}{s} (cycle)\n", .{ prefix, branch, id });
+        try ctx.output.print("{s}{s}{s} (cycle)\n", .{ prefix, branch, id });
         return;
     }
 
     // Depth limit
     if (depth >= max_depth) {
         const branch = if (is_last) "`-- " else "|-- ";
-        try output.print("{s}{s}{s} (...)\n", .{ prefix, branch, id });
+        try ctx.output.print("{s}{s}{s} (...)\n", .{ prefix, branch, id });
         return;
     }
 
@@ -351,21 +322,21 @@ fn printTreeBranch(
     try visited.put(allocator, id_copy, {});
 
     // Get issue details
-    const issue = try ctx.store.get(id);
+    const issue = try ctx.issue_store.get(id);
     const branch = if (is_last) "`-- " else "|-- ";
 
     if (issue) |i| {
         var iss = i;
         defer iss.deinit(allocator);
-        try output.print("{s}{s}{s} - {s} [{s}]\n", .{ prefix, branch, id, iss.title, iss.status.toString() });
+        try ctx.output.print("{s}{s}{s} - {s} [{s}]\n", .{ prefix, branch, id, iss.title, iss.status.toString() });
     } else {
-        try output.print("{s}{s}{s} (not found)\n", .{ prefix, branch, id });
+        try ctx.output.print("{s}{s}{s} (not found)\n", .{ prefix, branch, id });
         return;
     }
 
     // Get dependencies of this issue
-    const deps = try graph.getDependencies(id);
-    defer graph.freeDependencies(deps);
+    const deps = try ctx.dep_store.getDependencies(id);
+    defer ctx.dep_store.freeDependencies(deps);
 
     // Build new prefix for children
     var new_prefix_buf: [256]u8 = undefined;
@@ -374,20 +345,18 @@ fn printTreeBranch(
 
     for (deps, 0..) |dep, idx| {
         const child_is_last = (idx == deps.len - 1);
-        try printTreeBranch(output, graph, ctx, dep.depends_on_id, new_prefix, child_is_last, visited, allocator, depth + 1, max_depth);
+        try printTreeBranch(ctx, dep.depends_on_id, new_prefix, child_is_last, visited, allocator, depth + 1, max_depth);
     }
 }
 
 fn printMermaidTree(
-    output: *common.Output,
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     root_id: []const u8,
     allocator: std.mem.Allocator,
 ) !void {
     // Start Mermaid flowchart
-    try output.println("```mermaid", .{});
-    try output.println("flowchart TD", .{});
+    try ctx.output.println("```mermaid", .{});
+    try ctx.output.println("flowchart TD", .{});
 
     // Track visited nodes to avoid duplicates
     var visited: std.StringHashMapUnmanaged(void) = .{};
@@ -406,14 +375,12 @@ fn printMermaidTree(
     }
 
     // Collect all nodes and edges starting from root
-    try collectMermaidNodes(output, graph, ctx, root_id, &visited, &emitted_edges, allocator, 0, 5);
+    try collectMermaidNodes(ctx, root_id, &visited, &emitted_edges, allocator, 0, 5);
 
-    try output.println("```", .{});
+    try ctx.output.println("```", .{});
 }
 
 fn collectMermaidNodes(
-    output: *common.Output,
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     id: []const u8,
     visited: *std.StringHashMapUnmanaged(void),
@@ -431,7 +398,7 @@ fn collectMermaidNodes(
     try visited.put(allocator, id_copy, {});
 
     // Get issue details for node label
-    const issue = try ctx.store.get(id);
+    const issue = try ctx.issue_store.get(id);
     const safe_id = try sanitizeMermaidId(id, allocator);
     defer allocator.free(safe_id);
 
@@ -440,16 +407,16 @@ fn collectMermaidNodes(
         defer iss.deinit(allocator);
         const safe_title = try sanitizeMermaidLabel(iss.title, allocator);
         defer allocator.free(safe_title);
-        try output.print("    {s}[\"{s}: {s}\"]\n", .{ safe_id, id, safe_title });
+        try ctx.output.print("    {s}[\"{s}: {s}\"]\n", .{ safe_id, id, safe_title });
     } else {
-        try output.print("    {s}[\"{s}: (not found)\"]\n", .{ safe_id, id });
+        try ctx.output.print("    {s}[\"{s}: (not found)\"]\n", .{ safe_id, id });
     }
 
     if (depth >= max_depth) return;
 
     // Get dependencies (what this issue depends on)
-    const deps = try graph.getDependencies(id);
-    defer graph.freeDependencies(deps);
+    const deps = try ctx.dep_store.getDependencies(id);
+    defer ctx.dep_store.freeDependencies(deps);
 
     for (deps) |dep| {
         const target_id = try sanitizeMermaidId(dep.depends_on_id, allocator);
@@ -465,16 +432,16 @@ fn collectMermaidNodes(
 
             // Emit edge with dependency type as label
             const dep_type_str = dep.dep_type.toString();
-            try output.print("    {s} -->|{s}| {s}\n", .{ safe_id, dep_type_str, target_id });
+            try ctx.output.print("    {s} -->|{s}| {s}\n", .{ safe_id, dep_type_str, target_id });
         }
 
         // Recurse into dependency
-        try collectMermaidNodes(output, graph, ctx, dep.depends_on_id, visited, emitted_edges, allocator, depth + 1, max_depth);
+        try collectMermaidNodes(ctx, dep.depends_on_id, visited, emitted_edges, allocator, depth + 1, max_depth);
     }
 
     // Get dependents (what depends on this issue)
-    const dependents = try graph.getDependents(id);
-    defer graph.freeDependencies(dependents);
+    const dependents = try ctx.dep_store.getDependents(id);
+    defer ctx.dep_store.freeDependencies(dependents);
 
     for (dependents) |dep| {
         const source_id = try sanitizeMermaidId(dep.issue_id, allocator);
@@ -489,11 +456,11 @@ fn collectMermaidNodes(
             try emitted_edges.put(allocator, edge_copy, {});
 
             const dep_type_str = dep.dep_type.toString();
-            try output.print("    {s} -->|{s}| {s}\n", .{ source_id, dep_type_str, safe_id });
+            try ctx.output.print("    {s} -->|{s}| {s}\n", .{ source_id, dep_type_str, safe_id });
         }
 
         // Recurse into dependent
-        try collectMermaidNodes(output, graph, ctx, dep.issue_id, visited, emitted_edges, allocator, depth + 1, max_depth);
+        try collectMermaidNodes(ctx, dep.issue_id, visited, emitted_edges, allocator, depth + 1, max_depth);
     }
 }
 
@@ -533,14 +500,13 @@ fn sanitizeMermaidLabel(label: []const u8, allocator: std.mem.Allocator) ![]u8 {
 }
 
 fn buildTreeNode(
-    graph: *DependencyGraph,
     ctx: *CommandContext,
     id: []const u8,
     allocator: std.mem.Allocator,
     depth: usize,
     max_depth: usize,
 ) !TreeNode {
-    const issue = try ctx.store.get(id);
+    const issue = try ctx.issue_store.get(id);
     var title: []const u8 = "(not found)";
     var status: []const u8 = "unknown";
 
@@ -560,14 +526,14 @@ fn buildTreeNode(
         };
     }
 
-    const deps = try graph.getDependencies(id);
-    defer graph.freeDependencies(deps);
+    const deps = try ctx.dep_store.getDependencies(id);
+    defer ctx.dep_store.freeDependencies(deps);
 
     var children: ?[]TreeNode = null;
     if (deps.len > 0) {
         var child_nodes = try allocator.alloc(TreeNode, deps.len);
         for (deps, 0..) |dep, idx| {
-            child_nodes[idx] = try buildTreeNode(graph, ctx, dep.depends_on_id, allocator, depth + 1, max_depth);
+            child_nodes[idx] = try buildTreeNode(ctx, dep.depends_on_id, allocator, depth + 1, max_depth);
         }
         children = child_nodes;
     }
@@ -593,42 +559,41 @@ fn freeTreeNode(node: TreeNode, allocator: std.mem.Allocator) void {
 }
 
 fn runCycles(
-    graph: *DependencyGraph,
-    output: *common.Output,
+    ctx: *CommandContext,
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    const cycles = try graph.detectCycles();
+    const cycles = try ctx.dep_store.detectAllCycles();
+    defer ctx.dep_store.freeCycles(cycles);
+
     const structured_output = global.isStructuredOutput();
 
-    if (cycles) |c| {
-        defer graph.freeCycles(c);
-
+    if (cycles.len > 0) {
         if (structured_output) {
-            var cycle_strs = try allocator.alloc([]const u8, c.len);
+            var cycle_strs = try allocator.alloc([]const u8, cycles.len);
             defer allocator.free(cycle_strs);
-            for (c, 0..) |cycle, i| {
+            for (cycles, 0..) |cycle, i| {
                 cycle_strs[i] = cycle;
             }
-            try output.printJson(.{
+            try ctx.output.printJson(.{
                 .success = true,
                 .cycles_found = true,
                 .cycles = cycle_strs,
             });
         } else {
-            try output.warn("Cycles detected:", .{});
-            for (c) |cycle| {
-                try output.print("  {s}\n", .{cycle});
+            try ctx.output.warn("Cycles detected:", .{});
+            for (cycles) |cycle| {
+                try ctx.output.print("  {s}\n", .{cycle});
             }
         }
     } else {
         if (structured_output) {
-            try output.printJson(.{
+            try ctx.output.printJson(.{
                 .success = true,
                 .cycles_found = false,
             });
         } else {
-            try output.success("No cycles detected", .{});
+            try ctx.output.success("No cycles detected", .{});
         }
     }
 }
@@ -686,11 +651,12 @@ test "runList returns empty for empty workspace" {
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
+    const db_path = try std.fs.path.join(allocator, &.{ data_path, "beads.db" });
+    defer allocator.free(db_path);
 
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    var db = try storage.SqlDatabase.open(allocator, db_path);
+    defer db.close();
+    try storage.createSchema(&db);
 
     const dep_args = args.DepArgs{
         .subcommand = .{ .list = .{ .id = "bd-test" } },

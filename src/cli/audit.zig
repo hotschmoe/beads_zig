@@ -168,16 +168,15 @@ fn runRecord(
         .created_at = now,
     };
 
-    const event_id = try ctx.event_store.append(event);
+    try ctx.event_store.insert(event);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .event_id = event_id,
             .message = "Audit entry recorded",
         });
     } else if (!global.quiet) {
-        try ctx.output.println("Recorded audit entry {d}", .{event_id});
+        try ctx.output.println("Recorded audit entry", .{});
     }
 }
 
@@ -191,11 +190,9 @@ fn runLabel(
     };
     defer ctx.deinit();
 
-    // Record a label event referencing the original entry
     const actor = global.actor orelse "unknown";
     const now = std.time.timestamp();
 
-    // Build the label metadata
     var metadata_parts: std.ArrayListUnmanaged(u8) = .{};
     defer metadata_parts.deinit(allocator);
 
@@ -214,10 +211,9 @@ fn runLabel(
     const new_value = try allocator.dupe(u8, metadata_parts.items);
     defer allocator.free(new_value);
 
-    // Use 'updated' event type to represent a label action on an existing entry
     const event = Event{
         .id = 0,
-        .issue_id = "", // Labels are not issue-specific
+        .issue_id = "",
         .event_type = .updated,
         .actor = actor,
         .old_value = null,
@@ -225,12 +221,11 @@ fn runLabel(
         .created_at = now,
     };
 
-    const event_id = try ctx.event_store.append(event);
+    try ctx.event_store.insert(event);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .event_id = event_id,
             .message = "Label applied to audit entry",
         });
     } else if (!global.quiet) {
@@ -248,13 +243,10 @@ fn runLog(
     };
     defer ctx.deinit();
 
-    const limit = log_args.limit orelse 100;
+    // TODO: implement limit support
+    _ = log_args.limit;
 
-    // Query events for the specific issue from the event store
-    const events = try ctx.event_store.queryEvents(.{
-        .issue_id = log_args.issue_id,
-        .limit = limit,
-    });
+    const events = try ctx.event_store.getForIssue(log_args.issue_id);
     defer ctx.event_store.freeEvents(events);
 
     var audit_events: std.ArrayListUnmanaged(AuditResult.AuditEvent) = .{};
@@ -323,11 +315,10 @@ fn runSummary(
     };
     defer ctx.deinit();
 
-    const now = std.time.timestamp();
-    const since = now - @as(i64, @intCast(summary_args.days)) * 24 * 60 * 60;
+    // TODO: implement date filtering based on summary_args.days
+    _ = summary_args.days;
 
-    // Query all events in the time period
-    const events = try ctx.event_store.queryEvents(.{ .since = since });
+    const events = try ctx.event_store.getAll(null);
     defer ctx.event_store.freeEvents(events);
 
     // Count by type
@@ -420,41 +411,23 @@ fn runList(
 
     const limit = list_args.limit orelse 100;
 
-    // Build synthetic audit log from all issues
+    // Get real events from the event store
+    const stored_events = try ctx.event_store.getAll(@intCast(limit));
+    defer ctx.event_store.freeEvents(stored_events);
+
     var events: std.ArrayListUnmanaged(AuditResult.AuditEvent) = .{};
     defer events.deinit(allocator);
 
-    for (ctx.store.issues.items) |issue| {
-        // Created event
+    for (stored_events) |event| {
         try events.append(allocator, .{
-            .id = 0,
-            .issue_id = issue.id,
-            .event_type = "created",
-            .actor = issue.created_by orelse "unknown",
-            .created_at = issue.created_at.value,
+            .id = event.id,
+            .issue_id = event.issue_id,
+            .event_type = event.event_type.toString(),
+            .actor = event.actor,
+            .created_at = event.created_at,
+            .old_value = event.old_value,
+            .new_value = event.new_value,
         });
-
-        // Closed event
-        if (issue.closed_at.value) |closed_ts| {
-            try events.append(allocator, .{
-                .id = 0,
-                .issue_id = issue.id,
-                .event_type = "closed",
-                .actor = "unknown",
-                .created_at = closed_ts,
-            });
-        }
-
-        // If tombstoned
-        if (issue.status.eql(.tombstone)) {
-            try events.append(allocator, .{
-                .id = 0,
-                .issue_id = issue.id,
-                .event_type = "deleted",
-                .actor = "unknown",
-                .created_at = issue.updated_at.value,
-            });
-        }
     }
 
     // Sort by timestamp descending (most recent first)

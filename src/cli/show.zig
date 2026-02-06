@@ -13,7 +13,6 @@ const test_util = @import("../test_util.zig");
 const Issue = models.Issue;
 const Comment = models.Comment;
 const CommandContext = common.CommandContext;
-const DependencyGraph = common.DependencyGraph;
 
 pub const ShowError = error{
     WorkspaceNotInitialized,
@@ -41,19 +40,20 @@ pub fn run(
     defer ctx.deinit();
 
     const structured_output = global.isStructuredOutput();
-    var issue = (try ctx.store.getWithRelations(show_args.id)) orelse {
+
+    // Get issue with labels, dependencies, and comments embedded
+    var issue = (try ctx.issue_store.getWithRelations(show_args.id)) orelse {
         try common.outputNotFoundError(ShowResult, &ctx.output, structured_output, show_args.id, allocator);
         return ShowError.IssueNotFound;
     };
     defer issue.deinit(allocator);
 
-    var graph = ctx.createGraph();
+    // Get dependency info (issues this depends on, and issues that depend on this)
+    const deps = try ctx.dep_store.getDependencies(show_args.id);
+    defer ctx.dep_store.freeDependencies(deps);
 
-    const deps = try graph.getDependencies(show_args.id);
-    defer graph.freeDependencies(deps);
-
-    const dependents = try graph.getDependents(show_args.id);
-    defer graph.freeDependencies(dependents);
+    const dependents = try ctx.dep_store.getDependents(show_args.id);
+    defer ctx.dep_store.freeDependencies(dependents);
 
     if (structured_output) {
         var depends_on_ids: ?[][]const u8 = null;
@@ -109,10 +109,30 @@ pub fn run(
             }
         }
 
-        // History display placeholder (requires event storage implementation)
+        // Display history from event store
         if (show_args.with_history) {
-            try ctx.output.print("\n--- History ---\n", .{});
-            try ctx.output.print("  (history not yet implemented)\n", .{});
+            const events = try ctx.event_store.getForIssue(show_args.id);
+            defer {
+                for (events) |evt| {
+                    allocator.free(evt.issue_id);
+                    allocator.free(evt.actor);
+                    if (evt.old_value) |v| allocator.free(v);
+                    if (evt.new_value) |v| allocator.free(v);
+                    if (evt.comment) |v| allocator.free(v);
+                }
+                allocator.free(events);
+            }
+
+            try ctx.output.print("\n--- History ({d}) ---\n", .{events.len});
+            for (events) |evt| {
+                const ts_str: ?[]const u8 = formatTimestamp(evt.created_at, allocator) catch null;
+                defer if (ts_str) |ts| allocator.free(ts);
+                try ctx.output.print("  [{s}] {s} by {s}\n", .{
+                    ts_str orelse "unknown",
+                    evt.event_type.toString(),
+                    evt.actor,
+                });
+            }
         }
     }
 }
@@ -123,7 +143,7 @@ fn printComment(output: *common.Output, comment: Comment, allocator: std.mem.All
     defer if (timestamp_str) |ts| allocator.free(ts);
 
     try output.print("\n[{s}] {s}:\n", .{ timestamp_str orelse "unknown", comment.author });
-    try output.print("{s}\n", .{comment.body});
+    try output.print("{s}\n", .{comment.text});
 }
 
 /// Format a Unix timestamp as a human-readable string.
@@ -179,13 +199,9 @@ test "run returns error for missing issue" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    // Initialize workspace
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const show_args = args.ShowArgs{ .id = "bd-nonexistent" };
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };

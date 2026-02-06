@@ -20,8 +20,8 @@ const Issue = models.Issue;
 const Priority = models.Priority;
 const Dependency = models.Dependency;
 const CommandContext = common.CommandContext;
-const DependencyGraph = common.DependencyGraph;
-const DependencyGraphError = storage.DependencyGraphError;
+const DependencyStore = common.DependencyStore;
+const DependencyStoreError = storage.DependencyStoreError;
 
 pub const EpicError = error{
     WorkspaceNotInitialized,
@@ -69,13 +69,12 @@ const ChildCounts = struct {
 };
 
 fn countEpicChildren(
-    graph: *DependencyGraph,
-    store: *common.IssueStore,
+    ctx: *CommandContext,
     epic_id: []const u8,
     allocator: std.mem.Allocator,
 ) !ChildCounts {
-    const children = try graph.getDependents(epic_id);
-    defer graph.freeDependencies(children);
+    const children = try ctx.dep_store.getDependents(epic_id);
+    defer ctx.dep_store.freeDependencies(children);
 
     var total: usize = 0;
     var closed: usize = 0;
@@ -83,7 +82,7 @@ fn countEpicChildren(
     for (children) |dep| {
         if (dep.dep_type == .parent_child) {
             total += 1;
-            const child = try store.get(dep.issue_id);
+            const child = try ctx.issue_store.get(dep.issue_id);
             if (child) |c| {
                 var child_issue = c;
                 defer child_issue.deinit(allocator);
@@ -117,62 +116,37 @@ fn runCreate(
     global: args.GlobalOptions,
     allocator: std.mem.Allocator,
 ) !void {
-    var output = common.initOutput(allocator, global);
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return EpicError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
     const structured_output = global.isStructuredOutput();
 
     if (create_args.title.len == 0) {
-        try common.outputErrorTyped(EpicResult, &output, structured_output, "title cannot be empty");
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "title cannot be empty");
         return EpicError.EmptyTitle;
     }
     if (create_args.title.len > 500) {
-        try common.outputErrorTyped(EpicResult, &output, structured_output, "title exceeds 500 character limit");
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "title exceeds 500 character limit");
         return EpicError.TitleTooLong;
     }
 
-    const beads_dir = global.data_path orelse ".beads";
-    const issues_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    std.fs.cwd().access(issues_path, .{}) catch |err| {
-        if (err == error.FileNotFound) {
-            try common.outputErrorTyped(EpicResult, &output, structured_output, "workspace not initialized. Run 'bz init' first.");
-            return EpicError.WorkspaceNotInitialized;
-        }
-        try common.outputErrorTyped(EpicResult, &output, structured_output, "cannot access workspace");
-        return EpicError.StorageError;
-    };
-
-    var store = storage.IssueStore.init(allocator, issues_path);
-    defer store.deinit();
-
-    store.loadFromFile() catch |err| {
-        if (err != error.FileNotFound) {
-            try common.outputErrorTyped(EpicResult, &output, structured_output, "failed to load issues");
-            return EpicError.StorageError;
-        }
-    };
-
     const priority = if (create_args.priority) |p|
         Priority.fromString(p) catch {
-            try common.outputErrorTyped(EpicResult, &output, structured_output, "invalid priority value");
+            try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "invalid priority value");
             return EpicError.InvalidPriority;
         }
     else
         Priority.MEDIUM;
 
     const actor = global.actor orelse common.getDefaultActor();
+    const beads_dir = global.data_path orelse ".beads";
     const prefix = try common.getConfigPrefix(allocator, beads_dir);
     defer allocator.free(prefix);
 
     var generator = id_gen.IdGenerator.init(prefix);
-    const issue_count = store.countTotal();
-    const issue_id = generator.generateUnique(allocator, issue_count, store.getIdIndex()) catch |err| {
-        if (err == error.CollisionLimitExceeded) {
-            try common.outputErrorTyped(EpicResult, &output, structured_output, "failed to generate unique ID after multiple attempts");
-            return EpicError.StorageError;
-        }
-        return err;
-    };
+    const issue_id = try generateUniqueId(allocator, &generator, &ctx.issue_store);
     defer allocator.free(issue_id);
 
     const now = std.time.timestamp();
@@ -182,30 +156,41 @@ fn runCreate(
     issue.issue_type = .epic;
     issue.created_by = actor;
 
-    store.insert(issue) catch {
-        try common.outputErrorTyped(EpicResult, &output, structured_output, "failed to create epic");
+    ctx.issue_store.insert(issue) catch {
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "failed to create epic");
         return EpicError.StorageError;
     };
 
-    if (!global.no_auto_flush) {
-        store.saveToFile() catch {
-            try common.outputErrorTyped(EpicResult, &output, structured_output, "failed to save issues");
-            return EpicError.StorageError;
-        };
-    }
-
     if (structured_output) {
-        try output.printJson(EpicResult{
+        try ctx.output.printJson(EpicResult{
             .success = true,
             .id = issue_id,
             .action = "created",
         });
     } else if (global.quiet) {
-        try output.raw(issue_id);
-        try output.raw("\n");
+        try ctx.output.raw(issue_id);
+        try ctx.output.raw("\n");
     } else {
-        try output.success("Created epic {s}", .{issue_id});
+        try ctx.output.success("Created epic {s}", .{issue_id});
     }
+}
+
+fn generateUniqueId(
+    allocator: std.mem.Allocator,
+    generator: *id_gen.IdGenerator,
+    issue_store: *storage.IssueStore,
+) ![]u8 {
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        const candidate = try generator.generate(allocator, attempts);
+        const exists = issue_store.exists(candidate) catch {
+            allocator.free(candidate);
+            continue;
+        };
+        if (!exists) return candidate;
+        allocator.free(candidate);
+    }
+    return error.CollisionLimitExceeded;
 }
 
 fn runAdd(
@@ -220,7 +205,7 @@ fn runAdd(
 
     const structured_output = global.isStructuredOutput();
 
-    const epic = try ctx.store.get(add_args.epic_id);
+    const epic = try ctx.issue_store.get(add_args.epic_id);
     if (epic == null) {
         try common.outputNotFoundError(EpicResult, &ctx.output, structured_output, add_args.epic_id, allocator);
         return EpicError.EpicNotFound;
@@ -240,28 +225,17 @@ fn runAdd(
         return EpicError.NotAnEpic;
     }
 
-    if (!try ctx.store.exists(add_args.issue_id)) {
+    if (!try ctx.issue_store.exists(add_args.issue_id)) {
         try common.outputNotFoundError(EpicResult, &ctx.output, structured_output, add_args.issue_id, allocator);
         return EpicError.IssueNotFound;
     }
 
-    var graph = ctx.createGraph();
     const now = std.time.timestamp();
-    const dep = Dependency{
-        .issue_id = add_args.issue_id,
-        .depends_on_id = add_args.epic_id,
-        .dep_type = .parent_child,
-        .created_at = now,
-        .created_by = global.actor,
-        .metadata = null,
-        .thread_id = null,
-    };
 
-    graph.addDependency(dep) catch |err| {
+    ctx.dep_store.add(add_args.issue_id, add_args.epic_id, .parent_child, global.actor, now) catch |err| {
         const msg = switch (err) {
-            DependencyGraphError.SelfDependency => "cannot add epic to itself",
-            DependencyGraphError.CycleDetected => "adding to epic would create a cycle",
-            DependencyGraphError.IssueNotFound => "issue not found",
+            DependencyStoreError.SelfDependency => "cannot add epic to itself",
+            DependencyStoreError.CycleDetected => "adding to epic would create a cycle",
             else => "failed to add issue to epic",
         };
         if (structured_output) {
@@ -271,8 +245,6 @@ fn runAdd(
         }
         return EpicError.StorageError;
     };
-
-    try ctx.saveIfAutoFlush();
 
     if (structured_output) {
         try ctx.output.printJson(EpicResult{
@@ -298,13 +270,8 @@ fn runRemove(
 
     const structured_output = global.isStructuredOutput();
 
-    var graph = ctx.createGraph();
-
-    graph.removeDependency(remove_args.issue_id, remove_args.epic_id) catch |err| {
-        const msg = if (err == DependencyGraphError.IssueNotFound)
-            "issue or epic not found"
-        else
-            "failed to remove issue from epic";
+    ctx.dep_store.remove(remove_args.issue_id, remove_args.epic_id) catch {
+        const msg = "failed to remove issue from epic";
         if (structured_output) {
             try ctx.output.printJson(EpicResult{ .success = false, .message = msg });
         } else {
@@ -312,8 +279,6 @@ fn runRemove(
         }
         return EpicError.StorageError;
     };
-
-    try ctx.saveIfAutoFlush();
 
     if (structured_output) {
         try ctx.output.printJson(EpicResult{
@@ -339,7 +304,7 @@ fn runList(
 
     const structured_output = global.isStructuredOutput();
 
-    const epic = try ctx.store.get(list_args.epic_id);
+    const epic = try ctx.issue_store.get(list_args.epic_id);
     if (epic == null) {
         try common.outputNotFoundError(EpicResult, &ctx.output, structured_output, list_args.epic_id, allocator);
         return EpicError.EpicNotFound;
@@ -359,10 +324,8 @@ fn runList(
         return EpicError.NotAnEpic;
     }
 
-    var graph = ctx.createGraph();
-
-    const dependents = try graph.getDependents(list_args.epic_id);
-    defer graph.freeDependencies(dependents);
+    const dependents = try ctx.dep_store.getDependents(list_args.epic_id);
+    defer ctx.dep_store.freeDependencies(dependents);
 
     var issue_infos: std.ArrayListUnmanaged(IssueInfo) = .{};
     defer {
@@ -376,7 +339,7 @@ fn runList(
 
     for (dependents) |dep| {
         if (dep.dep_type == .parent_child) {
-            const child = try ctx.store.get(dep.issue_id);
+            const child = try ctx.issue_store.get(dep.issue_id);
             if (child) |c| {
                 var issue = c;
                 defer issue.deinit(allocator);
@@ -426,7 +389,6 @@ fn runStatus(
     defer ctx.deinit();
 
     const structured_output = global.isStructuredOutput();
-    var graph = ctx.createGraph();
 
     // Find all epics
     var epic_statuses: std.ArrayListUnmanaged(EpicStatusInfo) = .{};
@@ -438,9 +400,18 @@ fn runStatus(
         epic_statuses.deinit(allocator);
     }
 
-    for (ctx.store.issues.items) |issue| {
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
+
+    for (all_issues) |issue| {
         if (issue.issue_type == .epic and issue.status != .tombstone) {
-            const counts = try countEpicChildren(&graph, &ctx.store, issue.id, allocator);
+            const counts = try countEpicChildren(&ctx, issue.id, allocator);
             const percent: u8 = if (counts.total > 0) @intCast((counts.closed * 100) / counts.total) else 0;
             const eligible = counts.total > 0 and counts.closed == counts.total;
 
@@ -489,7 +460,6 @@ fn runCloseEligible(
     defer ctx.deinit();
 
     const structured_output = global.isStructuredOutput();
-    var graph = ctx.createGraph();
     const dry_run = ce_args.dry_run;
 
     // Find all epics eligible for closing
@@ -501,9 +471,18 @@ fn runCloseEligible(
         eligible_epics.deinit(allocator);
     }
 
-    for (ctx.store.issues.items) |issue| {
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
+
+    for (all_issues) |issue| {
         if (issue.issue_type == .epic and issue.status != .tombstone and issue.status != .closed) {
-            const counts = try countEpicChildren(&graph, &ctx.store, issue.id, allocator);
+            const counts = try countEpicChildren(&ctx, issue.id, allocator);
             if (counts.total > 0 and counts.closed == counts.total) {
                 try eligible_epics.append(allocator, try allocator.dupe(u8, issue.id));
             }
@@ -534,16 +513,14 @@ fn runCloseEligible(
         const now = std.time.timestamp();
 
         for (eligible_epics.items) |id| {
-            const updates = storage.IssueStore.IssueUpdate{
+            const updates = storage.IssueUpdate{
                 .status = .closed,
                 .closed_at = now,
                 .close_reason = "all children closed",
             };
-            ctx.store.update(id, updates, now) catch continue;
+            ctx.issue_store.update(id, updates, now) catch continue;
             closed_count += 1;
         }
-
-        try ctx.saveIfAutoFlush();
 
         if (structured_output) {
             try ctx.output.printJson(EpicResult{
@@ -602,11 +579,12 @@ test "runCreate validates empty title" {
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
+    const db_path = try std.fs.path.join(allocator, &.{ data_path, "beads.db" });
+    defer allocator.free(db_path);
 
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    var db = try storage.SqlDatabase.open(allocator, db_path);
+    defer db.close();
+    try storage.createSchema(&db);
 
     const epic_args = args.EpicArgs{
         .subcommand = .{ .create = .{ .title = "" } },
@@ -629,11 +607,12 @@ test "runCreate creates epic successfully" {
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
+    const db_path = try std.fs.path.join(allocator, &.{ data_path, "beads.db" });
+    defer allocator.free(db_path);
 
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    var db = try storage.SqlDatabase.open(allocator, db_path);
+    defer db.close();
+    try storage.createSchema(&db);
 
     const epic_args = args.EpicArgs{
         .subcommand = .{ .create = .{
@@ -645,12 +624,7 @@ test "runCreate creates epic successfully" {
 
     try run(epic_args, global, allocator);
 
-    const file = try std.fs.cwd().openFile(issues_path, .{});
-    defer file.close();
-
-    const content = try file.readToEndAlloc(allocator, 8192);
-    defer allocator.free(content);
-
-    try std.testing.expect(std.mem.indexOf(u8, content, "Test Epic") != null);
-    try std.testing.expect(std.mem.indexOf(u8, content, "epic") != null);
+    var issue_store = storage.IssueStore.init(&db, allocator);
+    const count = try issue_store.countTotal();
+    try std.testing.expectEqual(@as(usize, 1), count);
 }

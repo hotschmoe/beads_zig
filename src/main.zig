@@ -93,18 +93,6 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .add_batch => |batch_args| {
-            cli.runAddBatch(batch_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError, error.InvalidInput, error.FileReadError, error.NoIssuesToAdd => std.process.exit(1),
-                else => return err,
-            };
-        },
-        .import_cmd => |import_args| {
-            cli.runImportCmd(import_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError, error.InvalidInput, error.FileReadError => std.process.exit(1),
-                else => return err,
-            };
-        },
         .ready => |ready_args| {
             cli.runReady(ready_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -141,12 +129,6 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .backup => |backup_args| {
-            cli.runBackup(backup_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.BackupNotFound, error.RestoreFailed, error.CreateFailed => std.process.exit(1),
-                else => return err,
-            };
-        },
         .search => |search_args| {
             cli.runSearch(search_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -177,10 +159,10 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .help => |help_args| {
-            cli.runHelp(help_args.topic, allocator) catch {
-                std.process.exit(1);
-            };
+        .help => |_| {
+            // Help is handled via --help flag in br; stub for now
+            const stderr = std.fs.File.stderr();
+            stderr.writeAll("Usage: bz <command> [options]\nRun 'bz <command> --help' for command-specific help.\n") catch {};
         },
         .version => {
             _ = cli.runVersion(result.global, allocator) catch |err| switch (err) {
@@ -195,11 +177,6 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         .completions => |comp_args| {
             _ = cli.runCompletions(comp_args, result.global, allocator) catch |err| switch (err) {
                 error.WriteError => std.process.exit(1),
-            };
-        },
-        .metrics => |metrics_args| {
-            cli.runMetrics(metrics_args, result.global, allocator) catch |err| switch (err) {
-                error.WriteError, error.OutOfMemory => std.process.exit(1),
             };
         },
         .info => {
@@ -277,6 +254,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         .upgrade => |upgrade_args| {
             cli.runUpgrade(upgrade_args, result.global, allocator) catch |err| switch (err) {
                 error.NetworkError, error.UnsupportedPlatform, error.WriteError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .agents => |agents_args| {
+            cli.runAgents(agents_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
                 else => return err,
             };
         },

@@ -7,7 +7,7 @@ const std = @import("std");
 
 /// Validation errors for Comment.
 pub const CommentError = error{
-    EmptyCommentBody,
+    EmptyCommentText,
     EmptyAuthor,
     EmptyIssueId,
 };
@@ -17,14 +17,14 @@ pub const Comment = struct {
     id: i64, // Unique identifier, 0 for new comments before insert
     issue_id: []const u8, // Parent issue ID
     author: []const u8, // Who wrote the comment
-    body: []const u8, // Comment content
+    text: []const u8, // Comment content
     created_at: i64, // Unix timestamp
 
     const Self = @This();
 
     /// Validate that the comment has all required fields populated.
     pub fn validate(self: Self) CommentError!void {
-        if (self.body.len == 0) return CommentError.EmptyCommentBody;
+        if (self.text.len == 0) return CommentError.EmptyCommentText;
         if (self.author.len == 0) return CommentError.EmptyAuthor;
         if (self.issue_id.len == 0) return CommentError.EmptyIssueId;
     }
@@ -35,7 +35,7 @@ pub const Comment = struct {
             a.created_at == b.created_at and
             std.mem.eql(u8, a.issue_id, b.issue_id) and
             std.mem.eql(u8, a.author, b.author) and
-            std.mem.eql(u8, a.body, b.body);
+            std.mem.eql(u8, a.text, b.text);
     }
 };
 
@@ -46,7 +46,7 @@ test "Comment.validate accepts valid comment" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "This is a valid comment.",
+        .text = "This is a valid comment.",
         .created_at = 1706540000,
     };
 
@@ -58,11 +58,11 @@ test "Comment.validate rejects empty body" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "",
+        .text = "",
         .created_at = 1706540000,
     };
 
-    try std.testing.expectError(CommentError.EmptyCommentBody, comment.validate());
+    try std.testing.expectError(CommentError.EmptyCommentText, comment.validate());
 }
 
 test "Comment.validate rejects empty author" {
@@ -70,7 +70,7 @@ test "Comment.validate rejects empty author" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "",
-        .body = "This is a comment.",
+        .text = "This is a comment.",
         .created_at = 1706540000,
     };
 
@@ -82,7 +82,7 @@ test "Comment.validate rejects empty issue_id" {
         .id = 1,
         .issue_id = "",
         .author = "alice@example.com",
-        .body = "This is a comment.",
+        .text = "This is a comment.",
         .created_at = 1706540000,
     };
 
@@ -94,7 +94,7 @@ test "Comment.validate with id=0 for new comment" {
         .id = 0,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "New comment before insert.",
+        .text = "New comment before insert.",
         .created_at = 1706540000,
     };
 
@@ -106,7 +106,7 @@ test "Comment.eql compares all fields" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "Test comment",
+        .text = "Test comment",
         .created_at = 1706540000,
     };
 
@@ -114,7 +114,7 @@ test "Comment.eql compares all fields" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "Test comment",
+        .text = "Test comment",
         .created_at = 1706540000,
     };
 
@@ -126,7 +126,7 @@ test "Comment.eql detects id difference" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "Test comment",
+        .text = "Test comment",
         .created_at = 1706540000,
     };
 
@@ -134,7 +134,7 @@ test "Comment.eql detects id difference" {
         .id = 2,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "Test comment",
+        .text = "Test comment",
         .created_at = 1706540000,
     };
 
@@ -146,7 +146,7 @@ test "Comment.eql detects body difference" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "First comment",
+        .text = "First comment",
         .created_at = 1706540000,
     };
 
@@ -154,7 +154,7 @@ test "Comment.eql detects body difference" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "Second comment",
+        .text = "Second comment",
         .created_at = 1706540000,
     };
 
@@ -166,7 +166,7 @@ test "Comment.eql detects author difference" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "Test comment",
+        .text = "Test comment",
         .created_at = 1706540000,
     };
 
@@ -174,7 +174,7 @@ test "Comment.eql detects author difference" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "bob@example.com",
-        .body = "Test comment",
+        .text = "Test comment",
         .created_at = 1706540000,
     };
 
@@ -188,7 +188,7 @@ test "Comment JSON serialization roundtrip" {
         .id = 42,
         .issue_id = "bd-abc123",
         .author = "alice@example.com",
-        .body = "This is a test comment.",
+        .text = "This is a test comment.",
         .created_at = 1706540000,
     };
 
@@ -211,7 +211,7 @@ test "Comment JSON serialization with multiline body" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "developer@example.com",
-        .body = "Line 1\nLine 2\nLine 3\n\nWith empty line above.",
+        .text = "Line 1\nLine 2\nLine 3\n\nWith empty line above.",
         .created_at = 1706540000,
     };
 
@@ -225,7 +225,7 @@ test "Comment JSON serialization with multiline body" {
     defer parsed.deinit();
 
     try std.testing.expect(Comment.eql(comment, parsed.value));
-    try std.testing.expectEqualStrings(comment.body, parsed.value.body);
+    try std.testing.expectEqualStrings(comment.text, parsed.value.text);
 }
 
 test "Comment JSON serialization with unicode body" {
@@ -235,7 +235,7 @@ test "Comment JSON serialization with unicode body" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "user@example.com",
-        .body = "Unicode test: Hello World! Chinese: \u{4F60}\u{597D} Japanese: \u{3053}\u{3093}\u{306B}\u{3061}\u{306F}",
+        .text = "Unicode test: Hello World! Chinese: \u{4F60}\u{597D} Japanese: \u{3053}\u{3093}\u{306B}\u{3061}\u{306F}",
         .created_at = 1706540000,
     };
 
@@ -249,7 +249,7 @@ test "Comment JSON serialization with unicode body" {
     defer parsed.deinit();
 
     try std.testing.expect(Comment.eql(comment, parsed.value));
-    try std.testing.expectEqualStrings(comment.body, parsed.value.body);
+    try std.testing.expectEqualStrings(comment.text, parsed.value.text);
 }
 
 test "Comment JSON contains expected fields" {
@@ -259,7 +259,7 @@ test "Comment JSON contains expected fields" {
         .id = 99,
         .issue_id = "bd-test",
         .author = "tester",
-        .body = "Test body",
+        .text = "Test body",
         .created_at = 1234567890,
     };
 
@@ -272,7 +272,7 @@ test "Comment JSON contains expected fields" {
     try std.testing.expect(std.mem.indexOf(u8, json_str, "\"id\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json_str, "\"issue_id\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json_str, "\"author\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json_str, "\"body\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_str, "\"text\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json_str, "\"created_at\"") != null);
 }
 
@@ -283,7 +283,7 @@ test "Comment JSON serialization with special characters in body" {
         .id = 1,
         .issue_id = "bd-abc123",
         .author = "dev@example.com",
-        .body = "Special chars: \"quotes\" and \\backslash\\ and \ttab and /slashes/",
+        .text = "Special chars: \"quotes\" and \\backslash\\ and \ttab and /slashes/",
         .created_at = 1706540000,
     };
 
@@ -297,7 +297,7 @@ test "Comment JSON serialization with special characters in body" {
     defer parsed.deinit();
 
     try std.testing.expect(Comment.eql(comment, parsed.value));
-    try std.testing.expectEqualStrings(comment.body, parsed.value.body);
+    try std.testing.expectEqualStrings(comment.text, parsed.value.text);
 }
 
 test "Comment with id=0 JSON roundtrip" {
@@ -307,7 +307,7 @@ test "Comment with id=0 JSON roundtrip" {
         .id = 0,
         .issue_id = "bd-new",
         .author = "creator@example.com",
-        .body = "New comment awaiting insert.",
+        .text = "New comment awaiting insert.",
         .created_at = 1706550000,
     };
 

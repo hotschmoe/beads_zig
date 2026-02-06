@@ -5,13 +5,12 @@
 const std = @import("std");
 const args = @import("args.zig");
 const common = @import("common.zig");
+const storage = @import("../storage/mod.zig");
 const models = @import("../models/mod.zig");
 
-const Issue = models.Issue;
-const Status = models.Status;
-const Priority = models.Priority;
-const IssueType = models.IssueType;
 const CommandContext = common.CommandContext;
+const GroupBy = storage.IssueStore.GroupBy;
+const GroupCount = storage.IssueStore.CountResult;
 
 pub const CountError = common.CommandError || error{WriteError};
 
@@ -20,11 +19,6 @@ pub const CountResult = struct {
     count: ?usize = null,
     group_by: ?[]const u8 = null,
     message: ?[]const u8 = null,
-};
-
-const GroupEntry = struct {
-    key: []const u8,
-    value: usize,
 };
 
 pub fn run(
@@ -37,19 +31,31 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const all_issues = ctx.store.getAllRef();
+    // Parse group_by field
+    const group_by: ?GroupBy = if (count_args.group_by) |field| parseGroupBy(field) else null;
 
-    // Filter out deleted issues
-    var active_count: usize = 0;
-    for (all_issues) |issue| {
-        if (!issue.status.eql(.tombstone)) active_count += 1;
+    const counts = try ctx.issue_store.count(group_by);
+    defer {
+        for (counts) |c| {
+            allocator.free(c.key);
+        }
+        allocator.free(counts);
     }
 
-    if (count_args.group_by) |group_field| {
-        try outputGrouped(&ctx.output, all_issues, group_field, global, allocator);
+    if (count_args.group_by != null) {
+        try outputGrouped(&ctx.output, counts, count_args.group_by.?, global);
     } else {
-        try outputTotal(&ctx.output, active_count, global);
+        const total: usize = if (counts.len > 0) @intCast(counts[0].count) else 0;
+        try outputTotal(&ctx.output, total, global);
     }
+}
+
+fn parseGroupBy(field: []const u8) ?GroupBy {
+    if (std.mem.eql(u8, field, "status")) return .status;
+    if (std.mem.eql(u8, field, "priority")) return .priority;
+    if (std.mem.eql(u8, field, "type") or std.mem.eql(u8, field, "issue_type")) return .issue_type;
+    if (std.mem.eql(u8, field, "assignee")) return .assignee;
+    return null;
 }
 
 fn outputTotal(out: *common.Output, count: usize, global: args.GlobalOptions) !void {
@@ -62,208 +68,62 @@ fn outputTotal(out: *common.Output, count: usize, global: args.GlobalOptions) !v
 
 fn outputGrouped(
     out: *common.Output,
-    issues: []const Issue,
-    group_field: []const u8,
+    counts: []const GroupCount,
+    field: []const u8,
     global: args.GlobalOptions,
-    allocator: std.mem.Allocator,
 ) !void {
-    var counts = std.StringHashMap(usize).init(allocator);
-    defer {
-        var it = counts.keyIterator();
-        while (it.next()) |key| {
-            allocator.free(key.*);
-        }
-        counts.deinit();
-    }
-
-    for (issues) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
-        const value = getFieldValue(issue, group_field) orelse "none";
-        const owned_value = allocator.dupe(u8, value) catch continue;
-
-        if (counts.get(owned_value)) |existing| {
-            counts.put(owned_value, existing + 1) catch continue;
-            allocator.free(owned_value);
-        } else {
-            counts.put(owned_value, 1) catch {
-                allocator.free(owned_value);
-                continue;
-            };
-        }
-    }
-
-    // Convert to array for sorting
-    var entries: std.ArrayListUnmanaged(GroupEntry) = .{};
-    defer entries.deinit(allocator);
-
-    var it = counts.iterator();
-    while (it.next()) |entry| {
-        entries.append(allocator, .{ .key = entry.key_ptr.*, .value = entry.value_ptr.* }) catch continue;
-    }
-
-    // Sort by count descending
-    std.mem.sort(GroupEntry, entries.items, {}, struct {
-        fn lessThan(_: void, a: GroupEntry, b: GroupEntry) bool {
-            return a.value > b.value;
-        }
-    }.lessThan);
-
     if (global.isStructuredOutput()) {
-        try outputGroupedJson(out, entries.items, group_field);
+        try out.raw("{\"group_by\":\"");
+        try out.raw(field);
+        try out.raw("\",\"groups\":[");
+
+        for (counts, 0..) |entry, i| {
+            if (i > 0) try out.raw(",");
+            try out.raw("{\"");
+            try out.raw(entry.key);
+            try out.raw("\":");
+            try out.print("{d}", .{entry.count});
+            try out.raw("}");
+        }
+
+        try out.raw("]}\n");
     } else {
-        try outputGroupedHuman(out, entries.items, group_field);
+        try out.print("Issues by {s}:\n", .{field});
+        var total: u64 = 0;
+        for (counts) |entry| {
+            try out.print("  {s}: {d}\n", .{ entry.key, entry.count });
+            total += entry.count;
+        }
+        try out.print("\nTotal: {d}\n", .{total});
     }
 }
 
-fn getFieldValue(issue: Issue, field: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, field, "status")) {
-        return issue.status.toString();
-    } else if (std.mem.eql(u8, field, "priority")) {
-        return issue.priority.toString();
-    } else if (std.mem.eql(u8, field, "type") or std.mem.eql(u8, field, "issue_type")) {
-        return issue.issue_type.toString();
-    } else if (std.mem.eql(u8, field, "assignee")) {
-        return issue.assignee;
-    } else {
-        return null;
-    }
+// --- Tests ---
+
+test "parseGroupBy returns correct enum" {
+    try std.testing.expect(parseGroupBy("status") == .status);
+    try std.testing.expect(parseGroupBy("priority") == .priority);
+    try std.testing.expect(parseGroupBy("type") == .issue_type);
+    try std.testing.expect(parseGroupBy("issue_type") == .issue_type);
+    try std.testing.expect(parseGroupBy("assignee") == .assignee);
+    try std.testing.expect(parseGroupBy("unknown") == null);
 }
 
-fn outputGroupedJson(out: *common.Output, entries: []const GroupEntry, field: []const u8) !void {
-    try out.raw("{\"group_by\":\"");
-    try out.raw(field);
-    try out.raw("\",\"groups\":[");
-
-    for (entries, 0..) |entry, i| {
-        if (i > 0) try out.raw(",");
-        try out.raw("{\"");
-        try out.raw(entry.key);
-        try out.raw("\":");
-        try out.print("{d}", .{entry.value});
-        try out.raw("}");
-    }
-
-    try out.raw("]}\n");
-}
-
-fn outputGroupedHuman(out: *common.Output, entries: []const GroupEntry, field: []const u8) !void {
-    try out.print("Issues by {s}:\n", .{field});
-    var total: usize = 0;
-    for (entries) |entry| {
-        try out.print("  {s}: {d}\n", .{ entry.key, entry.value });
-        total += entry.value;
-    }
-    try out.print("\nTotal: {d}\n", .{total});
-}
-
-test "getFieldValue returns status" {
-    const issue = Issue{
-        .id = "test-123",
-        .content_hash = null,
-        .title = "Test",
-        .description = null,
-        .design = null,
-        .acceptance_criteria = null,
-        .notes = null,
-        .status = .open,
-        .priority = Priority.MEDIUM,
-        .issue_type = .task,
-        .assignee = null,
-        .owner = null,
-        .created_at = .{ .value = 1704067200 },
-        .created_by = null,
-        .updated_at = .{ .value = 1704067200 },
-        .closed_at = .{ .value = null },
-        .close_reason = null,
-        .closed_by_session = null,
-        .due_at = .{ .value = null },
-        .defer_until = .{ .value = null },
-        .estimated_minutes = null,
-        .external_ref = null,
-        .source_system = null,
-        .pinned = false,
-        .is_template = false,
-        .ephemeral = false,
-        .labels = &.{},
-        .dependencies = &.{},
-        .comments = &.{},
+test "CountResult struct works" {
+    const result = CountResult{
+        .success = true,
+        .count = 5,
     };
-
-    const status = getFieldValue(issue, "status");
-    try std.testing.expectEqualStrings("open", status.?);
+    try std.testing.expect(result.success);
+    try std.testing.expectEqual(@as(usize, 5), result.count.?);
 }
 
-test "getFieldValue returns priority" {
-    const issue = Issue{
-        .id = "test-123",
-        .content_hash = null,
-        .title = "Test",
-        .description = null,
-        .design = null,
-        .acceptance_criteria = null,
-        .notes = null,
-        .status = .open,
-        .priority = Priority.HIGH,
-        .issue_type = .task,
-        .assignee = null,
-        .owner = null,
-        .created_at = .{ .value = 1704067200 },
-        .created_by = null,
-        .updated_at = .{ .value = 1704067200 },
-        .closed_at = .{ .value = null },
-        .close_reason = null,
-        .closed_by_session = null,
-        .due_at = .{ .value = null },
-        .defer_until = .{ .value = null },
-        .estimated_minutes = null,
-        .external_ref = null,
-        .source_system = null,
-        .pinned = false,
-        .is_template = false,
-        .ephemeral = false,
-        .labels = &.{},
-        .dependencies = &.{},
-        .comments = &.{},
-    };
+test "run detects uninitialized workspace" {
+    const allocator = std.testing.allocator;
 
-    const priority = getFieldValue(issue, "priority");
-    try std.testing.expectEqualStrings("high", priority.?);
-}
+    const count_args = args.CountArgs{};
+    const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
 
-test "getFieldValue returns null for unknown field" {
-    const issue = Issue{
-        .id = "test-123",
-        .content_hash = null,
-        .title = "Test",
-        .description = null,
-        .design = null,
-        .acceptance_criteria = null,
-        .notes = null,
-        .status = .open,
-        .priority = Priority.MEDIUM,
-        .issue_type = .task,
-        .assignee = null,
-        .owner = null,
-        .created_at = .{ .value = 1704067200 },
-        .created_by = null,
-        .updated_at = .{ .value = 1704067200 },
-        .closed_at = .{ .value = null },
-        .close_reason = null,
-        .closed_by_session = null,
-        .due_at = .{ .value = null },
-        .defer_until = .{ .value = null },
-        .estimated_minutes = null,
-        .external_ref = null,
-        .source_system = null,
-        .pinned = false,
-        .is_template = false,
-        .ephemeral = false,
-        .labels = &.{},
-        .dependencies = &.{},
-        .comments = &.{},
-    };
-
-    const unknown = getFieldValue(issue, "unknown");
-    try std.testing.expect(unknown == null);
+    const result = run(count_args, global, allocator);
+    try std.testing.expectError(CountError.WorkspaceNotInitialized, result);
 }

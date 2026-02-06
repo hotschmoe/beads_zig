@@ -6,13 +6,14 @@
 const std = @import("std");
 const args = @import("args.zig");
 const common = @import("common.zig");
+const storage = @import("../storage/mod.zig");
 const models = @import("../models/mod.zig");
 const timestamp = @import("../models/timestamp.zig");
 
 const Issue = models.Issue;
 const Status = models.Status;
 const CommandContext = common.CommandContext;
-const IssueStore = common.IssueStore;
+const IssueUpdate = storage.IssueUpdate;
 
 pub const DeferError = error{
     WorkspaceNotInitialized,
@@ -40,22 +41,18 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    const structured_output = global.isStructuredOutput();
+
     // Find the issue
-    const issue = ctx.store.getRef(defer_args.id) orelse {
-        if (global.isStructuredOutput()) {
-            try ctx.output.printJson(DeferResult{
-                .success = false,
-                .message = "issue not found",
-            });
-        } else {
-            try ctx.output.err("issue not found: {s}", .{defer_args.id});
-        }
+    var issue = (try ctx.issue_store.get(defer_args.id)) orelse {
+        try common.outputErrorTyped(DeferResult, &ctx.output, structured_output, "issue not found");
         return DeferError.IssueNotFound;
     };
+    defer issue.deinit(allocator);
 
     // Check if already deferred
     if (issue.status.eql(.deferred)) {
-        if (global.isStructuredOutput()) {
+        if (structured_output) {
             try ctx.output.printJson(DeferResult{
                 .success = false,
                 .id = defer_args.id,
@@ -71,7 +68,7 @@ pub fn run(
     var defer_until: ?i64 = null;
     if (defer_args.until) |until_str| {
         defer_until = parseUntilDate(until_str, allocator) catch |err| {
-            if (global.isStructuredOutput()) {
+            if (structured_output) {
                 try ctx.output.printJson(DeferResult{
                     .success = false,
                     .message = "invalid date format",
@@ -83,17 +80,15 @@ pub fn run(
         };
     }
 
-    // Update the issue
+    // Update the issue via SQLite
     const now = std.time.timestamp();
-    try ctx.store.update(defer_args.id, .{
+    try ctx.issue_store.update(defer_args.id, IssueUpdate{
         .status = .deferred,
         .defer_until = defer_until,
     }, now);
 
-    try ctx.saveIfAutoFlush();
-
     // Output result
-    if (global.isStructuredOutput()) {
+    if (structured_output) {
         try ctx.output.printJson(DeferResult{
             .success = true,
             .id = defer_args.id,
@@ -120,22 +115,18 @@ pub fn runUndefer(
     };
     defer ctx.deinit();
 
+    const structured_output = global.isStructuredOutput();
+
     // Find the issue
-    const issue = ctx.store.getRef(undefer_args.id) orelse {
-        if (global.isStructuredOutput()) {
-            try ctx.output.printJson(DeferResult{
-                .success = false,
-                .message = "issue not found",
-            });
-        } else {
-            try ctx.output.err("issue not found: {s}", .{undefer_args.id});
-        }
+    var issue = (try ctx.issue_store.get(undefer_args.id)) orelse {
+        try common.outputErrorTyped(DeferResult, &ctx.output, structured_output, "issue not found");
         return DeferError.IssueNotFound;
     };
+    defer issue.deinit(allocator);
 
     // Check if not deferred
     if (!issue.status.eql(.deferred)) {
-        if (global.isStructuredOutput()) {
+        if (structured_output) {
             try ctx.output.printJson(DeferResult{
                 .success = false,
                 .id = undefer_args.id,
@@ -149,15 +140,13 @@ pub fn runUndefer(
 
     // Update the issue - set status back to open and clear defer_until
     const now = std.time.timestamp();
-    try ctx.store.update(undefer_args.id, .{
+    try ctx.issue_store.update(undefer_args.id, IssueUpdate{
         .status = .open,
-        .defer_until = null,
+        .defer_until = 0,
     }, now);
 
-    try ctx.saveIfAutoFlush();
-
     // Output result
-    if (global.isStructuredOutput()) {
+    if (structured_output) {
         try ctx.output.printJson(DeferResult{
             .success = true,
             .id = undefer_args.id,
@@ -197,7 +186,7 @@ fn parseUntilDate(s: []const u8, allocator: std.mem.Allocator) !i64 {
         return switch (unit) {
             'd' => now + count * 24 * 60 * 60,
             'w' => now + count * 7 * 24 * 60 * 60,
-            'm' => now + count * 30 * 24 * 60 * 60, // Approximate month
+            'm' => now + count * 30 * 24 * 60 * 60,
             else => return DeferError.InvalidDate,
         };
     }
@@ -218,7 +207,6 @@ test "parseUntilDate parses ISO date" {
 test "parseUntilDate parses relative days" {
     const now = std.time.timestamp();
     const ts = try parseUntilDate("+7d", std.testing.allocator);
-    // Should be approximately 7 days in the future
     try std.testing.expect(ts > now);
     try std.testing.expect(ts < now + 8 * 24 * 60 * 60);
 }
@@ -226,7 +214,6 @@ test "parseUntilDate parses relative days" {
 test "parseUntilDate parses relative weeks" {
     const now = std.time.timestamp();
     const ts = try parseUntilDate("+2w", std.testing.allocator);
-    // Should be approximately 2 weeks in the future
     try std.testing.expect(ts > now);
     try std.testing.expect(ts < now + 15 * 24 * 60 * 60);
 }

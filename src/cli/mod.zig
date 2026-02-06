@@ -21,7 +21,6 @@ pub const dep = @import("dep.zig");
 pub const graph = @import("graph.zig");
 pub const epic = @import("epic.zig");
 pub const sync = @import("sync.zig");
-pub const batch = @import("batch.zig");
 pub const search = @import("search.zig");
 pub const stale = @import("stale.zig");
 pub const count = @import("count.zig");
@@ -40,11 +39,10 @@ pub const lint = @import("lint.zig");
 pub const version = @import("version.zig");
 pub const schema = @import("schema.zig");
 pub const completions = @import("completions.zig");
-pub const metrics_cmd = @import("metrics.zig");
-pub const help = @import("help.zig");
 pub const query = @import("query.zig");
 pub const upgrade = @import("upgrade.zig");
 pub const where = @import("where.zig");
+pub const agents = @import("agents.zig");
 
 pub const ArgParser = args.ArgParser;
 pub const ParseResult = args.ParseResult;
@@ -106,21 +104,6 @@ pub const SyncError = sync.SyncError;
 pub const SyncResult = sync.SyncResult;
 pub const runSync = sync.run;
 
-pub const backup = @import("backup.zig");
-pub const BackupError = backup.BackupError;
-pub const BackupResult = backup.BackupResult;
-pub const runBackup = backup.run;
-pub const BackupArgs = args.BackupArgs;
-
-pub const BatchError = batch.BatchError;
-pub const BatchResult = batch.BatchResult;
-pub const ImportResult = batch.ImportResult;
-pub const runAddBatch = batch.runAddBatch;
-pub const runImportCmd = batch.runImport;
-
-pub const AddBatchArgs = args.AddBatchArgs;
-pub const BatchFormat = args.BatchFormat;
-pub const ImportArgs = args.ImportArgs;
 pub const EpicArgs = args.EpicArgs;
 pub const SortField = args.SortField;
 
@@ -200,15 +183,6 @@ pub const CompletionsResult = completions.CompletionsResult;
 pub const runCompletions = completions.run;
 pub const Shell = completions.Shell;
 
-pub const MetricsError = metrics_cmd.MetricsError;
-pub const MetricsResult = metrics_cmd.MetricsResult;
-pub const runMetrics = metrics_cmd.run;
-pub const MetricsArgs = args.MetricsArgs;
-
-pub const HelpError = help.HelpError;
-pub const HelpResult = help.HelpResult;
-pub const runHelp = help.run;
-
 pub const QueryError = query.QueryError;
 pub const QueryResult = query.QueryResult;
 pub const runQuery = query.run;
@@ -222,6 +196,11 @@ pub const UpgradeArgs = args.UpgradeArgs;
 pub const WhereError = where.WhereError;
 pub const WhereResult = where.WhereResult;
 pub const runWhere = where.run;
+
+pub const AgentsError = agents.AgentsError;
+pub const AgentsResult = agents.AgentsResult;
+pub const runAgents = agents.run;
+pub const AgentsArgs = args.AgentsArgs;
 
 test {
     std.testing.refAllDecls(@This());

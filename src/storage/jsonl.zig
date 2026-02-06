@@ -9,8 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const fs = std.fs;
 const Issue = @import("../models/issue.zig").Issue;
-const simd = @import("simd.zig");
-const mmap = @import("mmap.zig");
+const mem = std.mem;
 const test_util = @import("../test_util.zig");
 
 // Windows API declarations (not exported by std.os.windows.kernel32)
@@ -71,16 +70,15 @@ pub const JsonlFile = struct {
     /// Read all issues from the JSONL file.
     /// Returns empty slice if file doesn't exist.
     /// Caller owns the returned slice and must free each issue.
-    /// Uses SIMD-accelerated newline scanning for efficient parsing of large files.
     pub fn readAll(self: *Self) ![]Issue {
-        // Use mmap for zero-copy reading
-        var mapping = mmap.MappedFile.open(self.path) catch |err| switch (err) {
-            mmap.MmapError.FileNotFound => return &[_]Issue{},
+        const file = fs.cwd().openFile(self.path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return &[_]Issue{},
             else => return error.InvalidJson,
         };
-        defer mapping.close();
+        defer file.close();
 
-        const content = mapping.data();
+        const content = file.readToEndAlloc(self.allocator, 256 * 1024 * 1024) catch return error.InvalidJson;
+        defer self.allocator.free(content);
 
         var issues: std.ArrayListUnmanaged(Issue) = .{};
         errdefer {
@@ -90,8 +88,7 @@ pub const JsonlFile = struct {
             issues.deinit(self.allocator);
         }
 
-        // Use SIMD-accelerated line iterator for efficient newline scanning
-        var line_iter = simd.LineIterator.init(content);
+        var line_iter = mem.splitScalar(u8, content, '\n');
         while (line_iter.next()) |line| {
             if (line.len == 0) continue;
 
@@ -111,11 +108,9 @@ pub const JsonlFile = struct {
     /// Read all issues from the JSONL file with detailed corruption tracking.
     /// Returns a LoadResult containing issues and corruption statistics.
     /// Logs and skips corrupt entries instead of failing.
-    /// Uses SIMD-accelerated newline scanning for efficient parsing of large files.
     pub fn readAllWithRecovery(self: *Self) !LoadResult {
-        // Use mmap for zero-copy reading
-        var mapping = mmap.MappedFile.open(self.path) catch |err| switch (err) {
-            mmap.MmapError.FileNotFound => return LoadResult{
+        const file = fs.cwd().openFile(self.path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return LoadResult{
                 .issues = &[_]Issue{},
                 .corruption_count = 0,
             },
@@ -124,9 +119,13 @@ pub const JsonlFile = struct {
                 .corruption_count = 0,
             },
         };
-        defer mapping.close();
+        defer file.close();
 
-        const content = mapping.data();
+        const content = file.readToEndAlloc(self.allocator, 256 * 1024 * 1024) catch return LoadResult{
+            .issues = &[_]Issue{},
+            .corruption_count = 0,
+        };
+        defer self.allocator.free(content);
 
         var issues: std.ArrayListUnmanaged(Issue) = .{};
         var corrupt_lines: std.ArrayListUnmanaged(usize) = .{};
@@ -138,8 +137,7 @@ pub const JsonlFile = struct {
             corrupt_lines.deinit(self.allocator);
         }
 
-        // Use SIMD-accelerated line iterator for efficient newline scanning
-        var line_iter = simd.LineIterator.init(content);
+        var line_iter = mem.splitScalar(u8, content, '\n');
         var line_num: usize = 0;
 
         while (line_iter.next()) |line| {
@@ -154,7 +152,6 @@ pub const JsonlFile = struct {
             )) |issue| {
                 try issues.append(self.allocator, issue);
             } else |_| {
-                // Track corrupt line (1-indexed for user display)
                 try corrupt_lines.append(self.allocator, line_num);
             }
         }

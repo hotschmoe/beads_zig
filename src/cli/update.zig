@@ -9,12 +9,13 @@ const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const storage = @import("../storage/mod.zig");
+const Event = @import("../models/event.zig").Event;
 
 const Status = models.Status;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
-const IssueStore = common.IssueStore;
-const IssueStoreError = common.IssueStoreError;
+const IssueUpdate = storage.IssueUpdate;
 const CommandContext = common.CommandContext;
 
 pub const UpdateError = error{
@@ -22,7 +23,6 @@ pub const UpdateError = error{
     IssueNotFound,
     InvalidArgument,
     StorageError,
-    VersionMismatch,
     OutOfMemory,
 };
 
@@ -43,12 +43,12 @@ pub fn run(
     defer ctx.deinit();
 
     const structured_output = global.isStructuredOutput();
-    if (!try ctx.store.exists(update_args.id)) {
+    if (!try ctx.issue_store.exists(update_args.id)) {
         try common.outputNotFoundError(UpdateResult, &ctx.output, structured_output, update_args.id, allocator);
         return UpdateError.IssueNotFound;
     }
 
-    var updates = IssueStore.IssueUpdate{};
+    var updates = IssueUpdate{};
 
     if (update_args.title) |t| {
         updates.title = t;
@@ -103,22 +103,23 @@ pub fn run(
         updates.external_ref = er;
     }
 
-    // Optimistic locking: pass expected version for compare-and-swap
-    if (update_args.expected_version) |v| {
-        updates.expected_version = v;
-    }
-
     const now = std.time.timestamp();
-    ctx.store.update(update_args.id, updates, now) catch |err| {
-        if (err == IssueStoreError.VersionMismatch) {
-            try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "version mismatch: issue was modified by another process");
-            return UpdateError.VersionMismatch;
-        }
+    ctx.issue_store.update(update_args.id, updates, now) catch {
         try common.outputErrorTyped(UpdateResult, &ctx.output, structured_output, "failed to update issue");
         return UpdateError.StorageError;
     };
 
-    try ctx.saveIfAutoFlush();
+    // Record audit event
+    const actor = global.actor orelse "unknown";
+    ctx.recordEvent(Event{
+        .id = 0,
+        .issue_id = update_args.id,
+        .event_type = .updated,
+        .actor = actor,
+        .old_value = null,
+        .new_value = null,
+        .created_at = now,
+    });
 
     if (structured_output) {
         try ctx.output.printJson(UpdateResult{
@@ -169,13 +170,9 @@ test "run returns error for missing issue" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    // Initialize workspace
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const update_args = args.UpdateArgs{ .id = "bd-nonexistent", .title = "New title" };
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
