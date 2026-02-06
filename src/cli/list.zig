@@ -151,21 +151,22 @@ pub fn run(
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.value,
+                .priority = issue.priority.toDisplayString(),
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
+                .created_by = issue.created_by,
                 .labels = issue.labels,
-                .created_at = issue.created_at.value,
-                .updated_at = issue.updated_at.value,
+                .created_at = issue.created_at,
+                .updated_at = issue.updated_at,
+                .source_repo = issue.source_repo,
+                .compaction_level = issue.compaction_level,
+                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else null,
                 .blocks = try common.collectBlocksIds(allocator, &ctx.dep_store, issue.id),
             };
         }
 
-        try ctx.output.printJson(ListResult{
-            .success = true,
-            .issues = full_issues,
-            .count = issues.len,
-        });
+        // Output bare array matching br format
+        try ctx.output.printJson(full_issues);
     } else {
         try ctx.output.printIssueList(issues);
         if (!global.quiet and issues.len == 0) {

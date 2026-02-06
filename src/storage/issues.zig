@@ -768,34 +768,21 @@ pub const IssueStore = struct {
         return index;
     }
 
-    /// Search issues using FTS5 full-text search. Falls back to LIKE if FTS5 fails.
-    pub fn search(self: *Self, query: []const u8) ![]Issue {
-        // Try FTS5 first
-        var fts_stmt = self.db.prepare(
-            \\SELECT i.id, i.content_hash, i.title, i.description, i.design,
-            \\       i.acceptance_criteria, i.notes, i.status, i.priority, i.issue_type,
-            \\       i.assignee, i.owner, i.estimated_minutes, i.created_at, i.created_by,
-            \\       i.updated_at, i.closed_at, i.close_reason, i.due_at, i.defer_until,
-            \\       i.external_ref, i.source_system, i.pinned, i.is_template
-            \\FROM issues_fts f
-            \\JOIN issues i ON f.rowid = i.rowid
-            \\WHERE issues_fts MATCH ?1 AND i.status != 'tombstone'
-            \\ORDER BY rank
-        ) catch {
-            return self.searchFallback(query);
-        };
-        defer fts_stmt.deinit();
-        fts_stmt.bindText(1, query) catch {
-            return self.searchFallback(query);
-        };
-
-        return self.collectIssuesFromStmt(&fts_stmt) catch {
-            return self.searchFallback(query);
-        };
+    /// Escape special LIKE pattern characters (%, _, \) in a search query.
+    fn escapeLikePattern(allocator: std.mem.Allocator, pattern: []const u8) ![]u8 {
+        var result: std.ArrayListUnmanaged(u8) = .{};
+        errdefer result.deinit(allocator);
+        for (pattern) |c| {
+            if (c == '%' or c == '_' or c == '\\') {
+                try result.append(allocator, '\\');
+            }
+            try result.append(allocator, c);
+        }
+        return result.toOwnedSlice(allocator);
     }
 
-    /// Fallback search using LIKE when FTS5 is unavailable.
-    fn searchFallback(self: *Self, query: []const u8) ![]Issue {
+    /// Search issues by title, description, or ID using LIKE.
+    pub fn search(self: *Self, query: []const u8) ![]Issue {
         const sql =
             \\SELECT id, content_hash, title, description, design, acceptance_criteria,
             \\       notes, status, priority, issue_type, assignee, owner,
@@ -803,13 +790,15 @@ pub const IssueStore = struct {
             \\       closed_at, close_reason, due_at, defer_until,
             \\       external_ref, source_system, pinned, is_template
             \\FROM issues WHERE status != 'tombstone'
-            \\ AND (title LIKE ?1 OR description LIKE ?1)
-            \\ ORDER BY updated_at DESC
+            \\ AND (title LIKE ?1 ESCAPE '\' OR description LIKE ?1 ESCAPE '\' OR id LIKE ?1 ESCAPE '\')
+            \\ ORDER BY priority ASC, created_at DESC
         ;
         var stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
-        const like_pattern = try std.fmt.allocPrint(self.allocator, "%{s}%", .{query});
+        const escaped = try escapeLikePattern(self.allocator, query);
+        defer self.allocator.free(escaped);
+        const like_pattern = try std.fmt.allocPrint(self.allocator, "%{s}%", .{escaped});
         defer self.allocator.free(like_pattern);
         try stmt.bindText(1, like_pattern);
 

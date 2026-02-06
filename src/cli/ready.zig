@@ -39,19 +39,20 @@ pub const BlockedResult = struct {
 
     /// Full blocked issue representation for agent consumption.
     /// Includes all fields commonly needed for workflow automation.
+    const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
     const BlockedIssueFull = struct {
         id: []const u8,
         title: []const u8,
         description: ?[]const u8 = null,
         status: []const u8,
-        priority: u3,
+        priority: []const u8,
         issue_type: []const u8,
         assignee: ?[]const u8 = null,
         labels: []const []const u8,
-        created_at: i64,
-        updated_at: i64,
-        blocked_by: []const []const u8, // IDs of blocking issues
-        blocks: []const []const u8, // IDs of issues this blocks (dependents)
+        created_at: Rfc3339Timestamp,
+        updated_at: Rfc3339Timestamp,
+        blocked_by: []const []const u8,
+        blocks: []const []const u8,
     };
 };
 
@@ -171,21 +172,22 @@ pub fn run(
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.value,
+                .priority = issue.priority.toDisplayString(),
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
+                .created_by = issue.created_by,
                 .labels = issue.labels,
-                .created_at = issue.created_at.value,
-                .updated_at = issue.updated_at.value,
+                .created_at = issue.created_at,
+                .updated_at = issue.updated_at,
+                .source_repo = issue.source_repo,
+                .compaction_level = issue.compaction_level,
+                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else null,
                 .blocks = try common.collectBlocksIds(allocator, &ctx.dep_store, issue.id),
             };
         }
 
-        try ctx.output.printJson(ReadyResult{
-            .success = true,
-            .issues = full_issues,
-            .count = display_issues.len,
-        });
+        // Bare array matching br format
+        try ctx.output.printJson(full_issues);
     } else {
         try ctx.output.printIssueList(display_issues);
         if (!global.quiet and display_issues.len == 0) {
@@ -281,22 +283,19 @@ pub fn runBlocked(
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.value,
+                .priority = issue.priority.toDisplayString(),
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
                 .labels = issue.labels,
-                .created_at = issue.created_at.value,
-                .updated_at = issue.updated_at.value,
+                .created_at = issue.created_at,
+                .updated_at = issue.updated_at,
                 .blocked_by = blocker_ids,
                 .blocks = try common.collectBlocksIds(allocator, &ctx.dep_store, issue.id),
             };
         }
 
-        try ctx.output.printJson(BlockedResult{
-            .success = true,
-            .issues = blocked_issues,
-            .count = display_issues.len,
-        });
+        // Bare array matching br format
+        try ctx.output.printJson(blocked_issues);
     } else {
         for (display_issues) |issue| {
             // Find blocker IDs for this issue

@@ -9,6 +9,7 @@ const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const output_mod = @import("../output/mod.zig");
 
 const Issue = models.Issue;
 const CommandContext = common.CommandContext;
@@ -44,21 +45,7 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const issues = ctx.issue_store.search(search_args.query) catch {
-        // FTS5 MATCH can fail on malformed queries; fall back to listing all
-        // TODO: implement title_contains filter for fallback search
-        const like_results = try ctx.issue_store.list(.{});
-        const display_count = if (search_args.limit) |lim| @min(like_results.len, lim) else @min(like_results.len, @as(usize, 50));
-        defer {
-            for (like_results) |*issue| {
-                var i = issue.*;
-                i.deinit(allocator);
-            }
-            allocator.free(like_results);
-        }
-        try outputResults(&ctx.output, like_results[0..display_count], like_results.len, search_args, global, allocator);
-        return;
-    };
+    const issues = try ctx.issue_store.search(search_args.query);
     defer {
         for (issues) |*issue| {
             var i = issue.*;
@@ -83,43 +70,48 @@ fn outputResults(
     allocator: std.mem.Allocator,
 ) !void {
     if (global.isStructuredOutput()) {
-        var result_issues = try allocator.alloc(SearchResult.IssueMatch, display_issues.len);
-        defer allocator.free(result_issues);
+        var full_issues = try allocator.alloc(common.IssueFull, display_issues.len);
+        defer allocator.free(full_issues);
 
         for (display_issues, 0..) |issue, i| {
-            result_issues[i] = .{
+            full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
+                .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.value,
+                .priority = issue.priority.toDisplayString(),
+                .issue_type = issue.issue_type.toString(),
+                .assignee = issue.assignee,
+                .created_by = issue.created_by,
+                .created_at = issue.created_at,
+                .updated_at = issue.updated_at,
             };
         }
 
-        try output.printJson(SearchResult{
-            .success = true,
-            .query = search_args.query,
-            .issues = result_issues,
-            .count = total_count,
-        });
+        // Bare array matching br format
+        try output.printJson(full_issues);
     } else if (global.quiet) {
         for (display_issues) |issue| {
             try output.print("{s}\n", .{issue.id});
         }
     } else {
         if (display_issues.len == 0) {
-            try output.info("No issues matching \"{s}\"", .{search_args.query});
+            try output.println("Found 0 issue(s) matching '{s}'", .{search_args.query});
         } else {
-            try output.println("Search results for \"{s}\" ({d} match{s}):", .{
-                search_args.query,
+            try output.println("Found {d} issue(s) matching '{s}'", .{
                 total_count,
-                if (total_count == 1) "" else "es",
+                search_args.query,
             });
             try output.print("\n", .{});
 
             for (display_issues) |issue| {
-                try output.print("{s}  [{s}]  {s}\n", .{
+                const icon = output_mod.statusIcon(issue.status);
+                const bullet = output_mod.priorityBullet(issue.priority);
+                try output.print("{s} {s} [{s} {s}]  - {s}\n", .{
+                    icon,
                     issue.id,
-                    issue.status.toString(),
+                    bullet,
+                    issue.priority.toDisplayString(),
                     issue.title,
                 });
             }

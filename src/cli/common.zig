@@ -19,19 +19,25 @@ pub const IssueStoreError = storage.IssueStoreError;
 pub const DependencyStore = storage.DependencyStore;
 pub const EventStore = storage.EventStore;
 
-/// Full issue representation for agent consumption in JSON output.
+const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
+
+/// Full issue representation for JSON output matching br's bare-array format.
 pub const IssueFull = struct {
     id: []const u8,
     title: []const u8,
     description: ?[]const u8 = null,
     status: []const u8,
-    priority: u3,
+    priority: []const u8,
     issue_type: []const u8,
     assignee: ?[]const u8 = null,
-    labels: []const []const u8,
-    created_at: i64,
-    updated_at: i64,
-    blocks: []const []const u8,
+    created_by: ?[]const u8 = null,
+    labels: []const []const u8 = &[_][]const u8{},
+    created_at: Rfc3339Timestamp,
+    updated_at: Rfc3339Timestamp,
+    source_repo: ?[]const u8 = null,
+    compaction_level: u32 = 0,
+    original_size: ?u64 = null,
+    blocks: []const []const u8 = &[_][]const u8{},
 };
 
 /// Collect IDs of issues that depend on the given issue (issues it blocks).

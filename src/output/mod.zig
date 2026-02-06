@@ -320,18 +320,35 @@ pub const Output = struct {
     // ========================================================================
 
     fn printIssuePlain(self: *Self, issue: Issue) !void {
-        try self.writeFormatted("ID: {s}\n", .{issue.id});
-        try self.writeWrapped("Title: ", issue.title, 7);
-        try self.writeFormatted("Status: {s}\n", .{issue.status.toString()});
-        try self.writeFormatted("Priority: {s}\n", .{issue.priority.toString()});
-        try self.writeFormatted("Type: {s}\n", .{issue.issue_type.toString()});
+        const icon = statusIcon(issue.status);
+        const bullet = priorityBullet(issue.priority);
+        const status_upper = statusUpper(issue.status);
+        const owner_str = issue.owner orelse issue.assignee orelse "(none)";
 
-        if (issue.description) |desc| {
-            try self.writeWrapped("Description: ", desc, 13);
-        }
-        if (issue.assignee) |assignee| {
-            try self.writeFormatted("Assignee: {s}\n", .{assignee});
-        }
+        // Line 1: {icon} {id} . {title}   [{bullet} P{n} . {STATUS}]
+        try self.writeFormatted("{s} {s} . {s}   [{s} {s} . {s}]\n", .{
+            icon,
+            issue.id,
+            issue.title,
+            bullet,
+            issue.priority.toDisplayString(),
+            status_upper,
+        });
+
+        // Line 2: Owner: {owner} . Type: {type}
+        try self.writeFormatted("Owner: {s} . Type: {s}\n", .{
+            owner_str,
+            issue.issue_type.toString(),
+        });
+
+        // Line 3: Created: {date} . Updated: {date}
+        const created_str = formatTimestampBuf(issue.created_at.value);
+        const updated_str = formatTimestampBuf(issue.updated_at.value);
+        try self.writeFormatted("Created: {s} . Updated: {s}\n", .{
+            created_str,
+            updated_str,
+        });
+
         if (issue.labels.len > 0) {
             try self.stdout.writeAll("Labels: ");
             for (issue.labels, 0..) |label, i| {
@@ -340,36 +357,28 @@ pub const Output = struct {
             }
             try self.stdout.writeAll("\n");
         }
-        if (issue.due_at.value) |due| {
-            try self.writeFormatted("Due: {d}\n", .{due});
+        if (issue.description) |desc| {
+            try self.writeWrapped("\nDescription: ", desc, 13);
         }
-
-        try self.writeFormatted("Created: {d}\n", .{issue.created_at.value});
-        try self.writeFormatted("Updated: {d}\n", .{issue.updated_at.value});
+        if (issue.due_at.value) |due| {
+            const due_str = formatTimestampBuf(due);
+            try self.writeFormatted("Due: {s}\n", .{due_str});
+        }
     }
 
     fn printIssueListPlain(self: *Self, issues: []const Issue) !void {
         for (issues) |issue| {
-            const status_abbrev = abbreviateStatus(issue.status);
-            // Format: "bd-xxx  [STAT] "  = ID(variable) + 2 spaces + [ + 4 + ] + 1 space
-            const prefix_len = issue.id.len + 2 + 1 + 4 + 1 + 1;
-            const prefix = try std.fmt.allocPrint(self.allocator, "{s}  [{s}] ", .{
+            const icon = statusIcon(issue.status);
+            const bullet = priorityBullet(issue.priority);
+            // Format: "{icon} {id} [{bullet} P{n}] [{type}] - {title}"
+            try self.writeFormatted("{s} {s} [{s} {s}] [{s}] - {s}\n", .{
+                icon,
                 issue.id,
-                status_abbrev,
+                bullet,
+                issue.priority.toDisplayString(),
+                issue.issue_type.toString(),
+                issue.title,
             });
-            defer self.allocator.free(prefix);
-            try self.stdout.writeAll(prefix);
-
-            if (self.wrap and issue.title.len + prefix_len > self.terminal_width) {
-                const wrapped = wrapText(self.allocator, issue.title, self.terminal_width, prefix_len) catch issue.title;
-                const should_free = wrapped.ptr != issue.title.ptr;
-                defer if (should_free) self.allocator.free(wrapped);
-                try self.stdout.writeAll(wrapped);
-                try self.stdout.writeAll("\n");
-            } else {
-                try self.stdout.writeAll(issue.title);
-                try self.stdout.writeAll("\n");
-            }
         }
     }
 
@@ -378,56 +387,82 @@ pub const Output = struct {
     // ========================================================================
 
     fn printIssueRich(self: *Self, issue: Issue) !void {
-        // Bold ID
-        try self.writeFormatted("{s}{s}{s}\n", .{ Color.bold, issue.id, Color.reset });
-
-        // Title
-        try self.writeFormatted("  {s}\n", .{issue.title});
-
-        // Status with color
+        const icon = statusIcon(issue.status);
+        const bullet = priorityBullet(issue.priority);
         const status_color = getStatusColor(issue.status);
-        try self.writeFormatted("  Status: {s}{s}{s}\n", .{ status_color, issue.status.toString(), Color.reset });
-
-        // Priority with color
         const priority_color = getPriorityColor(issue.priority);
-        try self.writeFormatted("  Priority: {s}{s}{s}\n", .{ priority_color, issue.priority.toString(), Color.reset });
+        const status_upper = statusUpper(issue.status);
+        const owner_str = issue.owner orelse issue.assignee orelse "(none)";
 
-        // Type
-        try self.writeFormatted("  Type: {s}\n", .{issue.issue_type.toString()});
+        // Line 1: {icon} {id} . {title}   [{bullet} P{n} . {STATUS}]
+        try self.writeFormatted("{s} {s}{s}{s} . {s}   [{s}{s} {s}{s} . {s}{s}{s}]\n", .{
+            icon,
+            Color.bold,
+            issue.id,
+            Color.reset,
+            issue.title,
+            priority_color,
+            bullet,
+            issue.priority.toDisplayString(),
+            Color.reset,
+            status_color,
+            status_upper,
+            Color.reset,
+        });
 
-        // Optional fields
-        if (issue.description) |desc| {
-            try self.writeFormatted("  Description: {s}{s}{s}\n", .{ Color.dim, desc, Color.reset });
-        }
-        if (issue.assignee) |assignee| {
-            try self.writeFormatted("  Assignee: {s}{s}{s}\n", .{ Color.cyan, assignee, Color.reset });
-        }
+        // Line 2: Owner: {owner} . Type: {type}
+        try self.writeFormatted("Owner: {s}{s}{s} . Type: {s}\n", .{
+            Color.cyan,
+            owner_str,
+            Color.reset,
+            issue.issue_type.toString(),
+        });
+
+        // Line 3: Created: {date} . Updated: {date}
+        const created_str = formatTimestampBuf(issue.created_at.value);
+        const updated_str = formatTimestampBuf(issue.updated_at.value);
+        try self.writeFormatted("Created: {s}{s}{s} . Updated: {s}{s}{s}\n", .{
+            Color.dim,
+            created_str,
+            Color.reset,
+            Color.dim,
+            updated_str,
+            Color.reset,
+        });
+
         if (issue.labels.len > 0) {
-            try self.stdout.writeAll("  Labels: ");
+            try self.stdout.writeAll("Labels: ");
             for (issue.labels, 0..) |label, i| {
                 if (i > 0) try self.stdout.writeAll(", ");
                 try self.writeFormatted("{s}{s}{s}", .{ Color.magenta, label, Color.reset });
             }
             try self.stdout.writeAll("\n");
         }
+        if (issue.description) |desc| {
+            try self.writeFormatted("\nDescription: {s}{s}{s}\n", .{ Color.dim, desc, Color.reset });
+        }
+        if (issue.due_at.value) |due| {
+            const due_str = formatTimestampBuf(due);
+            try self.writeFormatted("Due: {s}\n", .{due_str});
+        }
     }
 
     fn printIssueListRich(self: *Self, issues: []const Issue) !void {
         for (issues) |issue| {
-            const status_color = getStatusColor(issue.status);
+            const icon = statusIcon(issue.status);
+            const bullet = priorityBullet(issue.priority);
             const priority_color = getPriorityColor(issue.priority);
-            const status_abbrev = abbreviateStatus(issue.status);
-
-            try self.writeFormatted("{s}{s}{s}  {s}[{s}]{s}  {s}{s}{s}  {s}\n", .{
+            // Format: "{icon} {id} [{bullet} P{n}] [{type}] - {title}"
+            try self.writeFormatted("{s} {s}{s}{s} [{s}{s} {s}{s}] [{s}] - {s}\n", .{
+                icon,
                 Color.bold,
                 issue.id,
                 Color.reset,
-                status_color,
-                status_abbrev,
-                Color.reset,
                 priority_color,
-                priorityIndicator(issue.priority),
+                bullet,
+                issue.priority.toDisplayString(),
                 Color.reset,
+                issue.issue_type.toString(),
                 issue.title,
             });
         }
@@ -743,6 +778,67 @@ fn checkNoColorEnv() bool {
     return std.process.hasEnvVarConstant("NO_COLOR");
 }
 
+/// Get Unicode status icon matching br.
+pub fn statusIcon(status: Status) []const u8 {
+    return switch (status) {
+        .open => "\xE2\x97\x8B", // U+25CB WHITE CIRCLE
+        .in_progress => "\xE2\x97\x90", // U+25D0 CIRCLE WITH LEFT HALF BLACK
+        .blocked => "\xE2\x97\x8F", // U+25CF BLACK CIRCLE
+        .deferred => "\xE2\x9D\x84", // U+2744 SNOWFLAKE
+        .closed => "\xE2\x9C\x93", // U+2713 CHECK MARK
+        .tombstone => "\xE2\x9C\x97", // U+2717 BALLOT X
+        .pinned => ">",
+        .custom => "?",
+    };
+}
+
+/// Get priority bullet matching br.
+pub fn priorityBullet(priority: Priority) []const u8 {
+    return switch (priority.value) {
+        0, 1, 2 => "*",
+        3 => ".",
+        4 => " ",
+        else => " ",
+    };
+}
+
+/// Get uppercase status name for show display.
+fn statusUpper(status: Status) []const u8 {
+    return switch (status) {
+        .open => "OPEN",
+        .in_progress => "IN_PROGRESS",
+        .blocked => "BLOCKED",
+        .deferred => "DEFERRED",
+        .closed => "CLOSED",
+        .tombstone => "TOMBSTONE",
+        .pinned => "PINNED",
+        .custom => "CUSTOM",
+    };
+}
+
+/// Format a Unix timestamp into a stack buffer as "YYYY-MM-DD HH:MM:SS".
+fn formatTimestampBuf(unix_ts: i64) []const u8 {
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    // Use a static buffer - safe since we consume the result immediately in writeFormatted
+    const S = struct {
+        threadlocal var buf: [19]u8 = undefined;
+    };
+    const result = std.fmt.bufPrint(&S.buf, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    }) catch "0000-00-00 00:00:00";
+    return result;
+}
+
 /// Get ANSI color for a status.
 fn getStatusColor(status: Status) []const u8 {
     return switch (status) {
@@ -927,17 +1023,18 @@ test "Output printIssueListQuiet writes IDs only" {
 }
 
 test "Output printIssueListPlain writes formatted lines" {
-    // Test the plain formatting logic via abbreviateStatus and Issue fields
     const issue = Issue.init("bd-abc123", "Test issue", 1706540000);
 
-    // Verify issue fields are correct
     try std.testing.expectEqualStrings("bd-abc123", issue.id);
     try std.testing.expectEqualStrings("Test issue", issue.title);
     try std.testing.expectEqual(Status.open, issue.status);
 
-    // Verify status abbreviation
-    const status_abbrev = abbreviateStatus(issue.status);
-    try std.testing.expectEqualStrings("OPEN", status_abbrev);
+    // Verify new format helpers
+    const icon = statusIcon(issue.status);
+    try std.testing.expectEqualStrings("\xE2\x97\x8B", icon);
+    const bullet = priorityBullet(issue.priority);
+    try std.testing.expectEqualStrings("*", bullet);
+    try std.testing.expectEqualStrings("P2", issue.priority.toDisplayString());
 }
 
 test "Output printIssueListRich includes ANSI codes" {

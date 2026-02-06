@@ -133,6 +133,11 @@ pub const CreateArgs = struct {
     estimate: ?i32 = null,
     ephemeral: bool = false, // Local-only, not written to JSONL
     dry_run: bool = false, // Preview issue creation without persisting
+    silent: bool = false, // Suppress success message, print ID only
+    status: ?[]const u8 = null, // Initial status (e.g., closed, deferred)
+    defer_until: ?[]const u8 = null, // Defer until date
+    parent: ?[]const u8 = null, // Parent issue ID (creates parent_child dependency)
+    file: ?[]const u8 = null, // Import from markdown file
 };
 
 /// Quick capture command arguments.
@@ -1062,6 +1067,25 @@ pub const ArgParser = struct {
                 result.ephemeral = true;
             } else if (self.consumeFlag(null, "--dry-run")) {
                 result.dry_run = true;
+            } else if (self.consumeFlag("-s", "--status")) {
+                result.status = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--defer")) {
+                result.defer_until = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--parent")) {
+                result.parent = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-f", "--file")) {
+                result.file = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--labels")) {
+                const csv = self.next() orelse return error.MissingFlagValue;
+                var it = std.mem.splitScalar(u8, csv, ',');
+                while (it.next()) |label_raw| {
+                    const label = std.mem.trim(u8, label_raw, " ");
+                    if (label.len > 0) {
+                        labels.append(self.allocator, label) catch return error.InvalidArgument;
+                    }
+                }
+            } else if (self.consumeFlag(null, "--silent")) {
+                result.silent = true;
             } else if (self.peekPositional()) |_| {
                 if (!title_set) {
                     result.title = self.next().?;

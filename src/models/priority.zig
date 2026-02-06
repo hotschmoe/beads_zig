@@ -29,7 +29,8 @@ pub const Priority = struct {
         return Self{ .value = @intCast(val) };
     }
 
-    /// Parse a string into a Priority (case-insensitive names or numeric).
+    /// Parse a string into a Priority (case-insensitive names, numeric, or P-prefixed).
+    /// Accepts: "critical"/"high"/etc, "0"-"4", "P0"-"P4"/"p0"-"p4".
     pub fn fromString(s: []const u8) !Self {
         if (std.ascii.eqlIgnoreCase(s, "critical")) return CRITICAL;
         if (std.ascii.eqlIgnoreCase(s, "high")) return HIGH;
@@ -37,11 +38,17 @@ pub const Priority = struct {
         if (std.ascii.eqlIgnoreCase(s, "low")) return LOW;
         if (std.ascii.eqlIgnoreCase(s, "backlog")) return BACKLOG;
 
-        const num = std.fmt.parseInt(u8, s, 10) catch return error.InvalidPriority;
+        // Strip P/p prefix for P0-P4 style input
+        const numeric_str = if (s.len >= 2 and (s[0] == 'P' or s[0] == 'p'))
+            s[1..]
+        else
+            s;
+
+        const num = std.fmt.parseInt(u8, numeric_str, 10) catch return error.InvalidPriority;
         return fromInt(num);
     }
 
-    /// Convert Priority to its string representation.
+    /// Convert Priority to its string representation (named, for storage).
     pub fn toString(self: Self) []const u8 {
         return switch (self.value) {
             0 => "critical",
@@ -49,6 +56,18 @@ pub const Priority = struct {
             2 => "medium",
             3 => "low",
             4 => "backlog",
+            else => unreachable,
+        };
+    }
+
+    /// Convert Priority to display format matching br ("P0"-"P4").
+    pub fn toDisplayString(self: Self) []const u8 {
+        return switch (self.value) {
+            0 => "P0",
+            1 => "P1",
+            2 => "P2",
+            3 => "P3",
+            4 => "P4",
             else => unreachable,
         };
     }
@@ -151,6 +170,18 @@ test "fromString with numeric strings" {
     try std.testing.expectEqual(Priority.BACKLOG, try Priority.fromString("4"));
 }
 
+test "fromString with P-prefixed strings" {
+    try std.testing.expectEqual(Priority.CRITICAL, try Priority.fromString("P0"));
+    try std.testing.expectEqual(Priority.HIGH, try Priority.fromString("P1"));
+    try std.testing.expectEqual(Priority.MEDIUM, try Priority.fromString("P2"));
+    try std.testing.expectEqual(Priority.LOW, try Priority.fromString("P3"));
+    try std.testing.expectEqual(Priority.BACKLOG, try Priority.fromString("P4"));
+    try std.testing.expectEqual(Priority.CRITICAL, try Priority.fromString("p0"));
+    try std.testing.expectEqual(Priority.HIGH, try Priority.fromString("p1"));
+    try std.testing.expectError(error.InvalidPriority, Priority.fromString("P5"));
+    try std.testing.expectError(error.InvalidPriority, Priority.fromString("P"));
+}
+
 test "fromString with invalid values" {
     try std.testing.expectError(error.InvalidPriority, Priority.fromString("5"));
     try std.testing.expectError(error.InvalidPriority, Priority.fromString("-1"));
@@ -165,6 +196,14 @@ test "toString returns correct strings" {
     try std.testing.expectEqualStrings("medium", Priority.MEDIUM.toString());
     try std.testing.expectEqualStrings("low", Priority.LOW.toString());
     try std.testing.expectEqualStrings("backlog", Priority.BACKLOG.toString());
+}
+
+test "toDisplayString returns P-prefixed strings" {
+    try std.testing.expectEqualStrings("P0", Priority.CRITICAL.toDisplayString());
+    try std.testing.expectEqualStrings("P1", Priority.HIGH.toDisplayString());
+    try std.testing.expectEqualStrings("P2", Priority.MEDIUM.toDisplayString());
+    try std.testing.expectEqualStrings("P3", Priority.LOW.toDisplayString());
+    try std.testing.expectEqualStrings("P4", Priority.BACKLOG.toDisplayString());
 }
 
 test "toInt returns correct values" {

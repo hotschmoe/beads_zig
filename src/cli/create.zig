@@ -55,6 +55,16 @@ pub fn run(
     var output = common.initOutput(allocator, global);
     const structured_output = global.isStructuredOutput();
 
+    // Handle --file flag (not yet implemented)
+    if (create_args.file != null) {
+        if (structured_output) {
+            try common.outputErrorTyped(CreateResult, &output, structured_output, "markdown import not yet implemented");
+        } else {
+            try output.err("markdown import not yet implemented", .{});
+        }
+        return;
+    }
+
     // Validate title
     if (create_args.title.len == 0) {
         try common.outputErrorTyped(CreateResult, &output, structured_output, "title cannot be empty");
@@ -119,6 +129,26 @@ pub fn run(
     issue.estimated_minutes = create_args.estimate;
     issue.ephemeral = create_args.ephemeral;
 
+    // Handle --status flag
+    if (create_args.status) |status_str| {
+        const status = @import("../models/status.zig").Status.fromString(status_str);
+        issue.status = status;
+        if (status == .closed or status == .tombstone) {
+            issue.closed_at = .{ .value = now };
+        }
+    }
+
+    // Handle --defer flag
+    if (create_args.defer_until) |defer_str| {
+        if (parseDateString(defer_str)) |defer_ts| {
+            issue.defer_until = .{ .value = defer_ts };
+            // If no explicit status set, auto-set to deferred
+            if (create_args.status == null) {
+                issue.status = .deferred;
+            }
+        }
+    }
+
     // Dry-run mode: preview without persisting
     if (create_args.dry_run) {
         if (structured_output) {
@@ -156,6 +186,22 @@ pub fn run(
         }
     }
 
+    // Add dependencies if provided
+    if (create_args.deps.len > 0) {
+        for (create_args.deps) |dep_id| {
+            if (try ctx.issue_store.exists(dep_id)) {
+                ctx.dep_store.add(issue_id, dep_id, .blocks, actor, now) catch {};
+            }
+        }
+    }
+
+    // Handle --parent flag (create parent_child dependency)
+    if (create_args.parent) |parent_id| {
+        if (try ctx.issue_store.exists(parent_id)) {
+            ctx.dep_store.add(issue_id, parent_id, .parent_child, actor, now) catch {};
+        }
+    }
+
     // Record audit event
     const event_actor = actor orelse "unknown";
     ctx.recordEvent(Event.issueCreated(issue_id, event_actor, now));
@@ -167,11 +213,11 @@ pub fn run(
             .id = issue_id,
             .title = create_args.title,
         });
-    } else if (global.quiet) {
+    } else if (global.quiet or create_args.silent) {
         try ctx.output.raw(issue_id);
         try ctx.output.raw("\n");
     } else {
-        try ctx.output.success("Created issue {s}", .{issue_id});
+        try ctx.output.success("Created {s}: {s}", .{ issue_id, create_args.title });
     }
 }
 
