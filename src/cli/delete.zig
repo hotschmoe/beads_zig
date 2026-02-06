@@ -18,7 +18,7 @@ const Event = @import("../models/event.zig").Event;
 
 const Status = models.Status;
 const CommandContext = common.CommandContext;
-const Output = @import("../output/mod.zig").Output;
+const Output = common.Output;
 
 /// Output a list of IDs, one per line (used for quiet/robot output).
 fn outputIdList(output: *Output, ids: []const []const u8) !void {
@@ -141,20 +141,7 @@ pub fn run(
         while (work_queue.items.len > 0) {
             const current_id = work_queue.orderedRemove(0);
             const dependents = ctx.dep_store.getDependents(current_id) catch continue;
-            defer {
-                for (dependents) |dep| {
-                    allocator.free(dep.issue_id);
-                    allocator.free(dep.depends_on_id);
-                    switch (dep.dep_type) {
-                        .custom => |s| allocator.free(s),
-                        else => {},
-                    }
-                    if (dep.created_by) |c| allocator.free(c);
-                    if (dep.metadata) |m| allocator.free(m);
-                    if (dep.thread_id) |t| allocator.free(t);
-                }
-                allocator.free(dependents);
-            }
+            defer ctx.dep_store.freeDependencies(dependents);
 
             for (dependents) |dep| {
                 if (!expanded_ids.contains(dep.issue_id)) {

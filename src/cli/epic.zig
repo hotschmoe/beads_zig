@@ -11,7 +11,6 @@
 const std = @import("std");
 const models = @import("../models/mod.zig");
 const storage = @import("../storage/mod.zig");
-const id_gen = @import("../id/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
@@ -145,8 +144,8 @@ fn runCreate(
     const prefix = try common.getConfigPrefix(allocator, beads_dir);
     defer allocator.free(prefix);
 
-    var generator = id_gen.IdGenerator.init(prefix);
-    const issue_id = try generateUniqueId(allocator, &generator, &ctx.issue_store);
+    var generator = common.IdGenerator.init(prefix);
+    const issue_id = try common.generateUniqueId(allocator, &generator, &ctx.issue_store);
     defer allocator.free(issue_id);
 
     const now = std.time.timestamp();
@@ -175,24 +174,6 @@ fn runCreate(
     }
 }
 
-fn generateUniqueId(
-    allocator: std.mem.Allocator,
-    generator: *id_gen.IdGenerator,
-    issue_store: *storage.IssueStore,
-) ![]u8 {
-    var attempts: usize = 0;
-    while (attempts < 100) : (attempts += 1) {
-        const candidate = try generator.generate(allocator, attempts);
-        const exists = issue_store.exists(candidate) catch {
-            allocator.free(candidate);
-            continue;
-        };
-        if (!exists) return candidate;
-        allocator.free(candidate);
-    }
-    return error.CollisionLimitExceeded;
-}
-
 fn runAdd(
     add_args: anytype,
     global: args.GlobalOptions,
@@ -214,14 +195,7 @@ fn runAdd(
     defer e.deinit(allocator);
 
     if (e.issue_type != .epic) {
-        if (structured_output) {
-            try ctx.output.printJson(EpicResult{
-                .success = false,
-                .message = "issue is not an epic",
-            });
-        } else {
-            try ctx.output.err("issue {s} is not an epic (type: {s})", .{ add_args.epic_id, e.issue_type.toString() });
-        }
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "issue is not an epic");
         return EpicError.NotAnEpic;
     }
 
@@ -238,11 +212,7 @@ fn runAdd(
             DependencyStoreError.CycleDetected => "adding to epic would create a cycle",
             else => "failed to add issue to epic",
         };
-        if (structured_output) {
-            try ctx.output.printJson(EpicResult{ .success = false, .message = msg });
-        } else {
-            try ctx.output.err("{s}", .{msg});
-        }
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, msg);
         return EpicError.StorageError;
     };
 
@@ -271,12 +241,7 @@ fn runRemove(
     const structured_output = global.isStructuredOutput();
 
     ctx.dep_store.remove(remove_args.issue_id, remove_args.epic_id) catch {
-        const msg = "failed to remove issue from epic";
-        if (structured_output) {
-            try ctx.output.printJson(EpicResult{ .success = false, .message = msg });
-        } else {
-            try ctx.output.err("{s}", .{msg});
-        }
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "failed to remove issue from epic");
         return EpicError.StorageError;
     };
 
@@ -313,14 +278,7 @@ fn runList(
     defer e.deinit(allocator);
 
     if (e.issue_type != .epic) {
-        if (structured_output) {
-            try ctx.output.printJson(EpicResult{
-                .success = false,
-                .message = "issue is not an epic",
-            });
-        } else {
-            try ctx.output.err("issue {s} is not an epic (type: {s})", .{ list_args.epic_id, e.issue_type.toString() });
-        }
+        try common.outputErrorTyped(EpicResult, &ctx.output, structured_output, "issue is not an epic");
         return EpicError.NotAnEpic;
     }
 

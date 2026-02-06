@@ -7,12 +7,9 @@
 //! Provides ASCII tree visualization and DOT format export for dependency graphs.
 
 const std = @import("std");
-const models = @import("../models/mod.zig");
-const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 
-const Status = models.Status;
 const CommandContext = common.CommandContext;
 const DependencyStore = common.DependencyStore;
 const Output = common.Output;
@@ -164,7 +161,7 @@ fn renderAsciiSubtree(
                 var b = blocker;
                 b.deinit(allocator);
             }
-            const status_indicator = if (statusEql(blocker.status, .closed)) "[x]" else "[ ]";
+            const status_indicator = if (blocker.status.eql(.closed)) "[x]" else "[ ]";
             try writer.print("{s}{s}{s} {s} - {s}\n", .{
                 prefix,
                 connector,
@@ -209,7 +206,7 @@ fn renderAsciiFullGraph(
 
         if (deps.len > 0) {
             has_deps = true;
-            const status_indicator = if (statusEql(issue.status, .closed)) "[x]" else "[ ]";
+            const status_indicator = if (issue.status.eql(.closed)) "[x]" else "[ ]";
             try writer.print("{s} {s} - {s}\n", .{ issue.id, status_indicator, truncateTitle(issue.title, 50) });
 
             for (deps, 0..) |dep, i| {
@@ -218,7 +215,7 @@ fn renderAsciiFullGraph(
 
                 if (try ctx.issue_store.get(dep.depends_on_id)) |blocker| {
                     defer { var b = blocker; b.deinit(allocator); }
-                    const blocker_status = if (statusEql(blocker.status, .closed)) "[x]" else "[ ]";
+                    const blocker_status = if (blocker.status.eql(.closed)) "[x]" else "[ ]";
                     try writer.print("  {s}{s} {s} - {s}\n", .{ connector, blocker.id, blocker_status, truncateTitle(blocker.title, 40) });
                 } else {
                     try writer.print("  {s}{s} [?] - (not found)\n", .{ connector, dep.depends_on_id });
@@ -295,7 +292,7 @@ fn renderDotGraph(
                 var i = issue;
                 i.deinit(allocator);
             }
-            const shape = if (statusEql(issue.status, .closed)) "box, style=\"rounded,filled\", fillcolor=lightgray" else "box, style=rounded";
+            const shape = if (issue.status.eql(.closed)) "box, style=\"rounded,filled\", fillcolor=lightgray" else "box, style=rounded";
             try writer.print("  \"{s}\" [label=\"{s}\\n{s}\", {s}];\n", .{
                 key.*,
                 key.*,
@@ -356,7 +353,7 @@ fn renderDotFullGraph(
         defer ctx.dep_store.freeDependencies(deps);
 
         if (deps.len > 0 or try hasAnyDependents(ctx, issue.id)) {
-            const shape = if (statusEql(issue.status, .closed)) "box, style=\"rounded,filled\", fillcolor=lightgray" else "box, style=rounded";
+            const shape = if (issue.status.eql(.closed)) "box, style=\"rounded,filled\", fillcolor=lightgray" else "box, style=rounded";
             try writer.print("  \"{s}\" [label=\"{s}\\n{s}\", {s}];\n", .{
                 issue.id,
                 issue.id,
@@ -451,14 +448,6 @@ fn escapeDotString(s: []const u8) []const u8 {
     return s;
 }
 
-fn statusEql(a: Status, b: Status) bool {
-    const Tag = std.meta.Tag(Status);
-    const tag_a: Tag = a;
-    const tag_b: Tag = b;
-    if (tag_a != tag_b) return false;
-    return if (tag_a == .custom) std.mem.eql(u8, a.custom, b.custom) else true;
-}
-
 fn renderCompactIssueGraph(
     ctx: *CommandContext,
     output: *Output,
@@ -485,7 +474,7 @@ fn renderCompactIssueGraph(
             var i = issue;
             i.deinit(allocator);
         }
-        const status_indicator = if (statusEql(issue.status, .closed)) "[x]" else "[ ]";
+        const status_indicator = if (issue.status.eql(.closed)) "[x]" else "[ ]";
         try writer.print("{s} {s} {s}\n", .{ issue.id, status_indicator, truncateTitle(issue.title, 60) });
     }
 
@@ -529,7 +518,7 @@ fn renderCompactDeps(
                 var b = blocker;
                 b.deinit(allocator);
             }
-            const status_indicator = if (statusEql(blocker.status, .closed)) "[x]" else "[ ]";
+            const status_indicator = if (blocker.status.eql(.closed)) "[x]" else "[ ]";
             var i: u32 = 0;
             while (i < depth) : (i += 1) {
                 try writer.writeAll("  ");
@@ -567,7 +556,7 @@ fn renderAllOpenGraph(
     }
 
     for (issues) |*issue| {
-        if (statusEql(issue.status, .closed) or statusEql(issue.status, .tombstone)) {
+        if (issue.status.eql(.closed) or issue.status.eql(.tombstone)) {
             continue;
         }
 
@@ -581,7 +570,7 @@ fn renderAllOpenGraph(
             open_with_deps += 1;
 
             if (graph_args.compact) {
-                const status_indicator = if (statusEql(issue.status, .blocked)) "[B]" else "[ ]";
+                const status_indicator = if (issue.status.eql(.blocked)) "[B]" else "[ ]";
                 const dep_count = deps.len;
                 if (dep_count > 0) {
                     try writer.print("{s} {s} {s} (deps: {d})\n", .{
@@ -607,7 +596,7 @@ fn renderAllOpenGraph(
 
                     if (try ctx.issue_store.get(dep.depends_on_id)) |blocker| {
                         defer { var b = blocker; b.deinit(allocator); }
-                        const blocker_status = if (statusEql(blocker.status, .closed)) "[x]" else "[ ]";
+                        const blocker_status = if (blocker.status.eql(.closed)) "[x]" else "[ ]";
                         try writer.print("  {s}{s} {s} - {s}\n", .{ connector, blocker.id, blocker_status, truncateTitle(blocker.title, 40) });
                     } else {
                         try writer.print("  {s}{s} [?] - (not found)\n", .{ connector, dep.depends_on_id });

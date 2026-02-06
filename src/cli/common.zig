@@ -6,7 +6,10 @@
 const std = @import("std");
 const storage = @import("../storage/mod.zig");
 const output_mod = @import("../output/mod.zig");
+const id_gen = @import("../id/mod.zig");
 const args = @import("args.zig");
+
+pub const IdGenerator = id_gen.IdGenerator;
 
 pub const Output = output_mod.Output;
 pub const OutputOptions = output_mod.OutputOptions;
@@ -39,20 +42,7 @@ pub fn collectBlocksIds(
     issue_id: []const u8,
 ) ![][]const u8 {
     const dependents = try dep_store.getDependents(issue_id);
-    defer {
-        for (dependents) |dep| {
-            allocator.free(dep.issue_id);
-            allocator.free(dep.depends_on_id);
-            switch (dep.dep_type) {
-                .custom => |s| allocator.free(s),
-                else => {},
-            }
-            if (dep.created_by) |c| allocator.free(c);
-            if (dep.metadata) |m| allocator.free(m);
-            if (dep.thread_id) |t| allocator.free(t);
-        }
-        allocator.free(dependents);
-    }
+    defer dep_store.freeDependencies(dependents);
 
     var blocks_ids = try allocator.alloc([]const u8, dependents.len);
     errdefer {
@@ -98,16 +88,7 @@ pub const CommandContext = struct {
         allocator: std.mem.Allocator,
         global: args.GlobalOptions,
     ) CommandError!?CommandContext {
-        var output = Output.init(allocator, .{
-            .json = global.json,
-            .toon = global.toon,
-            .robot = global.robot,
-            .quiet = global.quiet,
-            .silent = global.silent,
-            .no_color = global.no_color,
-            .wrap = global.wrap,
-            .stats = global.stats,
-        });
+        var output = initOutput(allocator, global);
 
         const beads_dir_str = global.data_path orelse ".beads";
         const beads_dir = allocator.dupe(u8, beads_dir_str) catch {
@@ -287,6 +268,26 @@ pub fn getConfigPrefix(allocator: std.mem.Allocator, beads_dir: []const u8) ![]u
     }
 
     return try allocator.dupe(u8, "bd");
+}
+
+/// Generate a unique issue ID by checking SQLite for collisions.
+/// Tries up to 100 candidates before giving up.
+pub fn generateUniqueId(
+    allocator: std.mem.Allocator,
+    generator: *IdGenerator,
+    issue_store: *IssueStore,
+) ![]u8 {
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        const candidate = try generator.generate(allocator, attempts);
+        const exists = issue_store.exists(candidate) catch {
+            allocator.free(candidate);
+            continue;
+        };
+        if (!exists) return candidate;
+        allocator.free(candidate);
+    }
+    return error.CollisionLimitExceeded;
 }
 
 // --- Tests ---

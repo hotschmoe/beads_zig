@@ -16,7 +16,6 @@ const DependencyType = @import("../models/dependency.zig").DependencyType;
 pub const DependencyStoreError = error{
     SelfDependency,
     CycleDetected,
-    DependencyNotFound,
 };
 
 pub const BlockedInfo = struct {

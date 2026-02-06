@@ -11,7 +11,6 @@ const Event = @import("../models/event.zig").Event;
 const EventType = @import("../models/event.zig").EventType;
 
 pub const EventStoreError = error{
-    InsertFailed,
     QueryFailed,
 };
 
@@ -19,11 +18,15 @@ pub const EventStore = struct {
     db: *Database,
     allocator: std.mem.Allocator,
 
-    pub fn init(db: *Database, allocator: std.mem.Allocator) EventStore {
+    const Self = @This();
+
+    const select_cols = "id, issue_id, event_type, actor, old_value, new_value, comment, created_at";
+
+    pub fn init(db: *Database, allocator: std.mem.Allocator) Self {
         return .{ .db = db, .allocator = allocator };
     }
 
-    pub fn insert(self: *EventStore, event: Event) !void {
+    pub fn insert(self: *Self, event: Event) !void {
         var stmt = try self.db.prepare(
             "INSERT INTO events (issue_id, event_type, actor, old_value, new_value, comment, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         );
@@ -34,74 +37,60 @@ pub const EventStore = struct {
         try stmt.bindText(3, event.actor);
         try stmt.bindText(4, event.old_value);
         try stmt.bindText(5, event.new_value);
-        try stmt.bindNull(6); // comment column - not in Event struct, reserved for future use
+        try stmt.bindText(6, event.comment);
         try stmt.bindInt(7, event.created_at);
 
         _ = try stmt.step();
     }
 
-    pub fn getForIssue(self: *EventStore, issue_id: []const u8) ![]Event {
-        var stmt = try self.db.prepare(
-            "SELECT id, issue_id, event_type, actor, old_value, new_value, created_at FROM events WHERE issue_id = ?1 ORDER BY id ASC",
-        );
+    pub fn getForIssue(self: *Self, issue_id: []const u8) ![]Event {
+        var stmt = try self.db.prepare("SELECT " ++ select_cols ++ " FROM events WHERE issue_id = ?1 ORDER BY id ASC");
         defer stmt.deinit();
 
         try stmt.bindText(1, issue_id);
         return self.collectRows(&stmt);
     }
 
-    pub fn getAll(self: *EventStore, limit: ?u32) ![]Event {
+    pub fn getAll(self: *Self, limit: ?u32) ![]Event {
         if (limit) |lim| {
-            var stmt = try self.db.prepare(
-                "SELECT id, issue_id, event_type, actor, old_value, new_value, created_at FROM events ORDER BY id ASC LIMIT ?1",
-            );
+            var stmt = try self.db.prepare("SELECT " ++ select_cols ++ " FROM events ORDER BY id ASC LIMIT ?1");
             defer stmt.deinit();
             try stmt.bindInt(1, @intCast(lim));
             return self.collectRows(&stmt);
         } else {
-            var stmt = try self.db.prepare(
-                "SELECT id, issue_id, event_type, actor, old_value, new_value, created_at FROM events ORDER BY id ASC",
-            );
+            var stmt = try self.db.prepare("SELECT " ++ select_cols ++ " FROM events ORDER BY id ASC");
             defer stmt.deinit();
             return self.collectRows(&stmt);
         }
     }
 
-    pub fn getByType(self: *EventStore, event_type: []const u8) ![]Event {
-        var stmt = try self.db.prepare(
-            "SELECT id, issue_id, event_type, actor, old_value, new_value, created_at FROM events WHERE event_type = ?1 ORDER BY id ASC",
-        );
+    pub fn getByType(self: *Self, event_type: []const u8) ![]Event {
+        var stmt = try self.db.prepare("SELECT " ++ select_cols ++ " FROM events WHERE event_type = ?1 ORDER BY id ASC");
         defer stmt.deinit();
 
         try stmt.bindText(1, event_type);
         return self.collectRows(&stmt);
     }
 
-    pub fn count(self: *EventStore) !u64 {
+    pub fn count(self: *Self) !u64 {
         var stmt = try self.db.prepare("SELECT COUNT(*) FROM events");
         defer stmt.deinit();
         _ = try stmt.step();
         return @intCast(stmt.columnInt(0));
     }
 
-    pub fn freeEvents(self: *EventStore, events: []Event) void {
+    pub fn freeEvents(self: *Self, events: []Event) void {
         for (events) |*e| {
-            self.allocator.free(e.issue_id);
-            self.allocator.free(e.actor);
-            if (e.old_value) |v| self.allocator.free(v);
-            if (e.new_value) |v| self.allocator.free(v);
+            self.freeEvent(@constCast(e));
         }
         self.allocator.free(events);
     }
 
-    fn collectRows(self: *EventStore, stmt: *Statement) ![]Event {
-        var list: std.ArrayListUnmanaged(Event) = .{};
+    fn collectRows(self: *Self, stmt: *Statement) ![]Event {
+        var list: std.ArrayList(Event) = .empty;
         errdefer {
             for (list.items) |*e| {
-                self.allocator.free(e.issue_id);
-                self.allocator.free(e.actor);
-                if (e.old_value) |v| self.allocator.free(v);
-                if (e.new_value) |v| self.allocator.free(v);
+                self.freeEvent(e);
             }
             list.deinit(self.allocator);
         }
@@ -114,12 +103,21 @@ pub const EventStore = struct {
                 .actor = try self.allocator.dupe(u8, stmt.columnText(3) orelse return error.QueryFailed),
                 .old_value = if (stmt.columnText(4)) |v| try self.allocator.dupe(u8, v) else null,
                 .new_value = if (stmt.columnText(5)) |v| try self.allocator.dupe(u8, v) else null,
-                .created_at = stmt.columnInt(6),
+                .comment = if (stmt.columnText(6)) |v| try self.allocator.dupe(u8, v) else null,
+                .created_at = stmt.columnInt(7),
             };
             try list.append(self.allocator, event);
         }
 
         return list.toOwnedSlice(self.allocator);
+    }
+
+    fn freeEvent(self: *Self, e: *Event) void {
+        self.allocator.free(e.issue_id);
+        self.allocator.free(e.actor);
+        if (e.old_value) |v| self.allocator.free(v);
+        if (e.new_value) |v| self.allocator.free(v);
+        if (e.comment) |v| self.allocator.free(v);
     }
 };
 

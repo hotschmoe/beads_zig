@@ -6,7 +6,6 @@ const std = @import("std");
 const args = @import("args.zig");
 const common = @import("common.zig");
 const storage = @import("../storage/mod.zig");
-const models = @import("../models/mod.zig");
 
 const CommandContext = common.CommandContext;
 const GroupBy = storage.IssueStore.GroupBy;

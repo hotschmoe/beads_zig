@@ -227,7 +227,7 @@ pub fn getSchemaVersion(db: *Database) !?u32 {
     return null;
 }
 
-// Tests
+// --- Tests ---
 
 test "createSchema on fresh database" {
     const allocator = std.testing.allocator;

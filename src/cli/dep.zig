@@ -83,7 +83,7 @@ fn runAdd(
             DependencyStoreError.CycleDetected => "adding dependency would create a cycle",
             else => "failed to add dependency",
         };
-        try outputError(&ctx.output, structured_output, msg);
+        try common.outputErrorTyped(DepResult, &ctx.output, structured_output, msg);
 
         return switch (err) {
             DependencyStoreError.SelfDependency => DepError.SelfDependency,
@@ -111,8 +111,7 @@ fn runRemove(
 ) !void {
     const structured_output = global.isStructuredOutput();
     ctx.dep_store.remove(remove_args.child, remove_args.parent) catch {
-        const msg = "failed to remove dependency";
-        try outputError(&ctx.output, structured_output, msg);
+        try common.outputErrorTyped(DepResult, &ctx.output, structured_output, "failed to remove dependency");
         return DepError.StorageError;
     };
 
@@ -595,17 +594,6 @@ fn runCycles(
         } else {
             try ctx.output.success("No cycles detected", .{});
         }
-    }
-}
-
-fn outputError(output: *common.Output, json_mode: bool, message: []const u8) !void {
-    if (json_mode) {
-        try output.printJson(DepResult{
-            .success = false,
-            .message = message,
-        });
-    } else {
-        try output.err("{s}", .{message});
     }
 }
 

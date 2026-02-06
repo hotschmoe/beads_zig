@@ -139,55 +139,18 @@ fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
         allocator.free(remote_issues);
     }
 
-    var added: usize = 0;
-    var updated: usize = 0;
-
-    for (remote_issues) |remote_issue| {
-        if (try ctx.issue_store.exists(remote_issue.id)) {
-            // Update existing
-            const local_issue = (try ctx.issue_store.get(remote_issue.id)) orelse continue;
-            defer {
-                var li = local_issue;
-                li.deinit(allocator);
-            }
-
-            if (remote_issue.updated_at.value > local_issue.updated_at.value) {
-                try ctx.issue_store.update(remote_issue.id, .{
-                    .title = remote_issue.title,
-                    .description = remote_issue.description,
-                    .status = remote_issue.status,
-                    .priority = remote_issue.priority,
-                    .issue_type = remote_issue.issue_type,
-                    .assignee = remote_issue.assignee,
-                    .owner = remote_issue.owner,
-                    .notes = remote_issue.notes,
-                    .close_reason = remote_issue.close_reason,
-                    .pinned = remote_issue.pinned,
-                    .is_template = remote_issue.is_template,
-                }, remote_issue.updated_at.value);
-                updated += 1;
-            }
-        } else {
-            // Insert new - clone the issue since insert takes ownership
-            var cloned = try remote_issue.clone(allocator);
-            ctx.issue_store.insert(cloned) catch {
-                cloned.deinit(allocator);
-                continue;
-            };
-            added += 1;
-        }
-    }
+    const counts = try upsertRemoteIssues(&ctx.issue_store, remote_issues, allocator);
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
             .success = true,
             .action = "import",
             .issues_imported = remote_issues.len,
-            .issues_added = if (added > 0) added else null,
-            .issues_updated = if (updated > 0) updated else null,
+            .issues_added = if (counts.added > 0) counts.added else null,
+            .issues_updated = if (counts.updated > 0) counts.updated else null,
         });
     } else if (!quiet) {
-        try ctx.output.success("Imported: {d} added, {d} updated from JSONL", .{ added, updated });
+        try ctx.output.success("Imported: {d} added, {d} updated from JSONL", .{ counts.added, counts.updated });
     }
 }
 
@@ -270,46 +233,10 @@ fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocato
         allocator.free(remote_issues);
     }
 
-    var added: usize = 0;
-    var updated: usize = 0;
-
-    for (remote_issues) |remote_issue| {
-        if (try ctx.issue_store.exists(remote_issue.id)) {
-            const local_issue = (try ctx.issue_store.get(remote_issue.id)) orelse continue;
-            defer {
-                var li = local_issue;
-                li.deinit(allocator);
-            }
-
-            if (remote_issue.updated_at.value > local_issue.updated_at.value) {
-                try ctx.issue_store.update(remote_issue.id, .{
-                    .title = remote_issue.title,
-                    .description = remote_issue.description,
-                    .status = remote_issue.status,
-                    .priority = remote_issue.priority,
-                    .issue_type = remote_issue.issue_type,
-                    .assignee = remote_issue.assignee,
-                    .owner = remote_issue.owner,
-                    .notes = remote_issue.notes,
-                    .close_reason = remote_issue.close_reason,
-                    .pinned = remote_issue.pinned,
-                    .is_template = remote_issue.is_template,
-                }, remote_issue.updated_at.value);
-                updated += 1;
-            }
-        } else {
-            // Insert new - clone the issue since insert takes ownership
-            var cloned = try remote_issue.clone(allocator);
-            ctx.issue_store.insert(cloned) catch {
-                cloned.deinit(allocator);
-                continue;
-            };
-            added += 1;
-        }
-    }
+    const counts = try upsertRemoteIssues(&ctx.issue_store, remote_issues, allocator);
 
     // Re-export merged state (including tombstones for full export)
-    if (added > 0 or updated > 0) {
+    if (counts.added > 0 or counts.updated > 0) {
         const all_issues = try ctx.issue_store.list(.{ .include_tombstones = true });
         defer ctx.issue_store.freeIssues(all_issues);
         exportToJsonl(all_issues, jsonl_path, allocator) catch {};
@@ -321,15 +248,15 @@ fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocato
         try ctx.output.printJson(SyncResult{
             .success = true,
             .action = "merge",
-            .issues_added = added,
-            .issues_updated = updated,
+            .issues_added = counts.added,
+            .issues_updated = counts.updated,
             .issues_exported = total,
         });
     } else if (!quiet) {
-        if (added == 0 and updated == 0) {
+        if (counts.added == 0 and counts.updated == 0) {
             try ctx.output.info("No changes to merge", .{});
         } else {
-            try ctx.output.success("Merged: {d} added, {d} updated ({d} total)", .{ added, updated, total });
+            try ctx.output.success("Merged: {d} added, {d} updated ({d} total)", .{ counts.added, counts.updated, total });
         }
     }
 }
@@ -371,6 +298,58 @@ fn runStatus(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
 }
 
 // -- Helpers --
+
+const UpsertCounts = struct {
+    added: usize,
+    updated: usize,
+};
+
+/// Upsert remote issues into the local store. Updates existing issues only if
+/// the remote version is newer; inserts issues that do not yet exist locally.
+fn upsertRemoteIssues(
+    issue_store: *IssueStore,
+    remote_issues: []const Issue,
+    allocator: std.mem.Allocator,
+) !UpsertCounts {
+    var added: usize = 0;
+    var updated: usize = 0;
+
+    for (remote_issues) |remote_issue| {
+        if (try issue_store.exists(remote_issue.id)) {
+            const local_issue = (try issue_store.get(remote_issue.id)) orelse continue;
+            defer {
+                var li = local_issue;
+                li.deinit(allocator);
+            }
+
+            if (remote_issue.updated_at.value > local_issue.updated_at.value) {
+                try issue_store.update(remote_issue.id, .{
+                    .title = remote_issue.title,
+                    .description = remote_issue.description,
+                    .status = remote_issue.status,
+                    .priority = remote_issue.priority,
+                    .issue_type = remote_issue.issue_type,
+                    .assignee = remote_issue.assignee,
+                    .owner = remote_issue.owner,
+                    .notes = remote_issue.notes,
+                    .close_reason = remote_issue.close_reason,
+                    .pinned = remote_issue.pinned,
+                    .is_template = remote_issue.is_template,
+                }, remote_issue.updated_at.value);
+                updated += 1;
+            }
+        } else {
+            var cloned = try remote_issue.clone(allocator);
+            issue_store.insert(cloned) catch {
+                cloned.deinit(allocator);
+                continue;
+            };
+            added += 1;
+        }
+    }
+
+    return .{ .added = added, .updated = updated };
+}
 
 fn exportToJsonl(issues: []const Issue, path: []const u8, allocator: std.mem.Allocator) !void {
     const file = try std.fs.cwd().createFile(path, .{});

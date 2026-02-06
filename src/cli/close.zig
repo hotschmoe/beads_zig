@@ -55,7 +55,7 @@ pub fn run(
         i.deinit(allocator);
     }
 
-    if (statusEql(issue.status, .closed)) {
+    if (issue.status.eql(.closed)) {
         try common.outputErrorTyped(CloseResult, &ctx.output, structured_output, "issue is already closed");
         return CloseError.AlreadyClosed;
     }
@@ -79,18 +79,11 @@ pub fn run(
         return CloseError.StorageError;
     };
 
-    // Record audit event
+    // Record audit event (best-effort)
     const actor = global.actor orelse "unknown";
-    const event = Event.issueClosed(allocator, close_args.id, actor, close_args.reason, now) catch Event{
-        .id = 0,
-        .issue_id = close_args.id,
-        .event_type = .closed,
-        .actor = actor,
-        .old_value = null,
-        .new_value = close_args.reason,
-        .created_at = now,
-    };
-    ctx.recordEvent(event);
+    if (Event.issueClosed(allocator, close_args.id, actor, close_args.reason, now)) |event| {
+        ctx.recordEvent(event);
+    } else |_| {}
 
     try outputSuccess(&ctx.output, global, close_args.id, "closed", "Closed issue {s}");
 }
@@ -117,7 +110,7 @@ pub fn runReopen(
         i.deinit(allocator);
     }
 
-    if (!statusEql(issue.status, .closed)) {
+    if (!issue.status.eql(.closed)) {
         try common.outputErrorTyped(CloseResult, &ctx.output, structured_output, "issue is not closed");
         return CloseError.NotClosed;
     }
@@ -165,17 +158,6 @@ fn outputSuccess(
     } else {
         try output.success(fmt, .{id});
     }
-}
-
-fn statusEql(a: Status, b: Status) bool {
-    const Tag = std.meta.Tag(Status);
-    const tag_a: Tag = a;
-    const tag_b: Tag = b;
-    if (tag_a != tag_b) return false;
-    if (tag_a == .custom) {
-        return std.mem.eql(u8, a.custom, b.custom);
-    }
-    return true;
 }
 
 // --- Tests ---

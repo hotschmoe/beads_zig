@@ -60,7 +60,7 @@ pub fn run(
     try checks.append(allocator, try checkValidTitles(&ctx.issue_store, allocator));
 
     // Check 6: Database schema version
-    try checks.append(allocator, try checkSchemaVersion(&ctx.db, allocator));
+    try checks.append(allocator, try checkSchemaVersion(&ctx.db));
 
     // Count results
     var passed: usize = 0;
@@ -243,9 +243,7 @@ fn checkValidTitles(issue_store: *IssueStore, allocator: std.mem.Allocator) !Doc
     };
 }
 
-fn checkSchemaVersion(db: *storage.SqlDatabase, allocator: std.mem.Allocator) !DoctorResult.Check {
-    _ = allocator;
-
+fn checkSchemaVersion(db: *storage.SqlDatabase) !DoctorResult.Check {
     const current_version = try storage.getSchemaVersion(db);
 
     if (current_version) |version| {

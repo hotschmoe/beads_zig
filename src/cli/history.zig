@@ -5,8 +5,6 @@
 const std = @import("std");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const Event = @import("../models/event.zig").Event;
-
 const CommandContext = common.CommandContext;
 
 pub const HistoryError = error{
@@ -58,9 +56,8 @@ pub fn run(
         return HistoryError.IssueNotFound;
     }
 
-    // Get real events from the event store
-    const stored_events = ctx.event_store.getForIssue(id) catch &[_]Event{};
-    defer if (stored_events.len > 0) ctx.event_store.freeEvents(@constCast(stored_events));
+    const stored_events = try ctx.event_store.getForIssue(id);
+    defer ctx.event_store.freeEvents(stored_events);
 
     // Convert to output format
     var events: std.ArrayListUnmanaged(HistoryResult.EventInfo) = .{};

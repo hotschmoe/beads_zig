@@ -5,13 +5,11 @@
 const std = @import("std");
 const args = @import("args.zig");
 const common = @import("common.zig");
-const storage = @import("../storage/mod.zig");
 const models = @import("../models/mod.zig");
 const timestamp = @import("../models/timestamp.zig");
 
 const Issue = models.Issue;
 const CommandContext = common.CommandContext;
-const ListFilters = storage.ListFilters;
 
 pub const StaleError = common.CommandError || error{WriteError};
 
@@ -35,7 +33,6 @@ pub fn run(
     // Fetch open issues sorted by updated_at ascending (oldest first)
     const all_issues = try ctx.issue_store.list(.{
         .status = .open,
-        // Note: include_deferred removed - deferred issues are now just regular open issues with defer_until set
         .order_by = .updated_at,
         .order_desc = false,
     });
@@ -56,7 +53,7 @@ pub fn run(
 
     for (all_issues) |issue| {
         if (issue.updated_at.value < stale_threshold) {
-            stale_issues.append(allocator, issue) catch continue;
+            try stale_issues.append(allocator, issue);
         }
     }
 
@@ -66,10 +63,8 @@ pub fn run(
     else
         stale_issues.items;
 
-    if (global.json) {
+    if (global.isStructuredOutput()) {
         try outputJson(&ctx.output, display_items, stale_args.days, allocator);
-    } else if (global.toon) {
-        try outputToon(&ctx.output, display_items, stale_args.days);
     } else {
         try outputHuman(&ctx.output, display_items, stale_args.days, now);
     }
@@ -98,16 +93,6 @@ fn outputJson(out: *common.Output, issues: []const Issue, days: u32, allocator: 
         .count = issues.len,
         .issues = compact_issues.items,
     });
-}
-
-fn outputToon(out: *common.Output, issues: []const Issue, days: u32) !void {
-    try out.print("stale issues (>{d} days without update): {d}\n", .{ days, issues.len });
-    for (issues) |issue| {
-        var buf: [timestamp.RFC3339_BUFFER_SIZE]u8 = undefined;
-        const formatted_ts = timestamp.formatRfc3339(issue.updated_at.value, &buf) catch "unknown";
-        const date_part = if (formatted_ts.len >= 10) formatted_ts[0..10] else formatted_ts;
-        try out.print("- {s}: {s} (last: {s})\n", .{ issue.id, issue.title, date_part });
-    }
 }
 
 fn outputHuman(out: *common.Output, issues: []const Issue, days: u32, now: i64) !void {

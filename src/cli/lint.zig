@@ -18,7 +18,6 @@ const args = @import("args.zig");
 const id_mod = @import("../id/mod.zig");
 const orphans = @import("orphans.zig");
 
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 
 pub const LintError = error{

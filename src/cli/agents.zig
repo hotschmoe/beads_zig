@@ -4,10 +4,10 @@
 //! at the workspace root. Compatible with beads_rust agents command.
 
 const std = @import("std");
-const common = @import("common.zig");
-const args_mod = @import("args.zig");
-const AgentsArgs = args_mod.AgentsArgs;
-const GlobalOptions = args_mod.GlobalOptions;
+const args = @import("args.zig");
+
+const AgentsArgs = args.AgentsArgs;
+const GlobalOptions = args.GlobalOptions;
 
 pub const AgentsError = error{
     WorkspaceNotInitialized,
@@ -22,9 +22,9 @@ pub const AgentsResult = struct {
     message: ?[]const u8 = null,
 };
 
-fn writeFormatted(file: std.fs.File, comptime fmt: []const u8, args: anytype) void {
+fn writeFormatted(file: std.fs.File, comptime fmt: []const u8, fmt_args: anytype) void {
     var buf: [4096]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    const msg = std.fmt.bufPrint(&buf, fmt, fmt_args) catch return;
     file.writeAll(msg) catch {};
 }
 

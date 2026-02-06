@@ -52,7 +52,7 @@ pub fn run(
 
     if (list_args.priority) |p| {
         filters.priority = Priority.fromString(p) catch {
-            try outputError(&ctx.output, global.isStructuredOutput(), "invalid priority value");
+            try common.outputErrorTyped(ListResult, &ctx.output, global.isStructuredOutput(), "invalid priority value");
             return ListError.InvalidFilter;
         };
     }
@@ -116,7 +116,7 @@ pub fn run(
                 }
             }
 
-            if (is_child or (list_args.recursive and try isDescendantOf(&ctx, issue.id, parent_id, allocator))) {
+            if (is_child or (list_args.recursive and try isDescendantOf(&ctx, issue.id, parent_id))) {
                 try filtered.append(allocator, issue);
             } else {
                 var i = issue;
@@ -179,9 +179,7 @@ fn isDescendantOf(
     ctx: *CommandContext,
     issue_id: []const u8,
     ancestor_id: []const u8,
-    allocator: std.mem.Allocator,
 ) !bool {
-    _ = allocator;
     const deps = try ctx.dep_store.getDependencies(issue_id);
     defer ctx.dep_store.freeDependencies(deps);
 
@@ -192,17 +190,6 @@ fn isDescendantOf(
         // Recursive check omitted to avoid stack overflow; only direct children checked
     }
     return false;
-}
-
-fn outputError(output: *common.Output, structured_mode: bool, message: []const u8) !void {
-    if (structured_mode) {
-        try output.printJson(ListResult{
-            .success = false,
-            .message = message,
-        });
-    } else {
-        try output.err("{s}", .{message});
-    }
 }
 
 // --- Tests ---

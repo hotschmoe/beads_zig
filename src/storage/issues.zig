@@ -12,7 +12,6 @@ const std = @import("std");
 const sqlite = @import("sqlite.zig");
 const Database = sqlite.Database;
 const Statement = sqlite.Statement;
-const SqliteError = sqlite.SqliteError;
 
 const Issue = @import("../models/issue.zig").Issue;
 const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
@@ -26,7 +25,6 @@ const Comment = @import("../models/comment.zig").Comment;
 
 pub const IssueStoreError = error{
     IssueNotFound,
-    DuplicateId,
     InvalidIssue,
 };
 
@@ -42,8 +40,7 @@ pub const IssueStore = struct {
 
     pub fn freeIssues(self: *Self, issues: []Issue) void {
         for (issues) |*issue| {
-            var i = issue.*;
-            i.deinit(self.allocator);
+            @constCast(issue).deinit(self.allocator);
         }
         self.allocator.free(issues);
     }
@@ -87,8 +84,8 @@ pub const IssueStore = struct {
         try stmt.bindOptionalInt(20, issue.defer_until.value);
         try stmt.bindText(21, issue.external_ref);
         try stmt.bindText(22, issue.source_system);
-        try stmt.bindInt(23, if (issue.pinned) 1 else 0);
-        try stmt.bindInt(24, if (issue.is_template) 1 else 0);
+        try stmt.bindBool(23, issue.pinned);
+        try stmt.bindBool(24, issue.is_template);
 
         _ = try stmt.step();
 
@@ -462,7 +459,7 @@ pub const IssueStore = struct {
         }
 
         // Collect results
-        var results: std.ArrayList(Issue) = .{};
+        var results: std.ArrayList(Issue) = .empty;
         errdefer {
             for (results.items) |*issue| {
                 issue.deinit(self.allocator);
@@ -496,7 +493,7 @@ pub const IssueStore = struct {
         var stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
-        var results: std.ArrayList(CountResult) = .{};
+        var results: std.ArrayList(CountResult) = .empty;
         errdefer {
             for (results.items) |item| {
                 self.allocator.free(item.key);
@@ -547,7 +544,7 @@ pub const IssueStore = struct {
         defer stmt.deinit();
         try stmt.bindText(1, issue_id);
 
-        var labels: std.ArrayList([]const u8) = .{};
+        var labels: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (labels.items) |label| {
                 self.allocator.free(label);
@@ -597,7 +594,7 @@ pub const IssueStore = struct {
         defer stmt.deinit();
         try stmt.bindText(1, issue_id);
 
-        var deps: std.ArrayList(Dependency) = .{};
+        var deps: std.ArrayList(Dependency) = .empty;
         errdefer {
             for (deps.items) |*dep| {
                 self.allocator.free(dep.issue_id);
@@ -632,24 +629,9 @@ pub const IssueStore = struct {
             };
 
             dep.created_at = stmt.columnInt(3);
-
-            if (stmt.columnText(4)) |c| {
-                dep.created_by = try self.allocator.dupe(u8, c);
-            } else {
-                dep.created_by = null;
-            }
-
-            if (stmt.columnText(5)) |m| {
-                dep.metadata = try self.allocator.dupe(u8, m);
-            } else {
-                dep.metadata = null;
-            }
-
-            if (stmt.columnText(6)) |t| {
-                dep.thread_id = try self.allocator.dupe(u8, t);
-            } else {
-                dep.thread_id = null;
-            }
+            dep.created_by = try self.dupeColumnText(&stmt, 4);
+            dep.metadata = try self.dupeColumnText(&stmt, 5);
+            dep.thread_id = try self.dupeColumnText(&stmt, 6);
 
             try deps.append(self.allocator, dep);
         }
@@ -660,13 +642,13 @@ pub const IssueStore = struct {
     /// Get comments for an issue.
     pub fn getComments(self: *Self, issue_id: []const u8) ![]const Comment {
         var stmt = try self.db.prepare(
-            \\SELECT id, issue_id, author, body, created_at
+            \\SELECT id, issue_id, author, text, created_at
             \\FROM comments WHERE issue_id = ?1 ORDER BY created_at
         );
         defer stmt.deinit();
         try stmt.bindText(1, issue_id);
 
-        var comments: std.ArrayList(Comment) = .{};
+        var comments: std.ArrayList(Comment) = .empty;
         errdefer {
             for (comments.items) |*c| {
                 self.allocator.free(c.issue_id);
@@ -689,8 +671,8 @@ pub const IssueStore = struct {
             comment.author = try self.allocator.dupe(u8, author_raw);
             errdefer self.allocator.free(comment.author);
 
-            const body_raw = stmt.columnText(3) orelse continue;
-            comment.text = try self.allocator.dupe(u8, body_raw);
+            const text_raw = stmt.columnText(3) orelse continue;
+            comment.text = try self.allocator.dupe(u8, text_raw);
 
             comment.created_at = stmt.columnInt(4);
 
@@ -703,7 +685,7 @@ pub const IssueStore = struct {
     /// Add a comment to an issue.
     pub fn addComment(self: *Self, issue_id: []const u8, comment: Comment) !void {
         var stmt = try self.db.prepare(
-            "INSERT INTO comments (issue_id, author, body, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?1, ?2, ?3, ?4)",
         );
         defer stmt.deinit();
         try stmt.bindText(1, issue_id);
@@ -714,14 +696,14 @@ pub const IssueStore = struct {
         try self.markDirty(issue_id);
     }
 
-    /// Count total non-tombstone issues.
+    /// Get all distinct labels across all issues.
     pub fn getAllLabels(self: *Self) ![]const []const u8 {
         var stmt = try self.db.prepare(
             "SELECT DISTINCT label FROM labels ORDER BY label",
         );
         defer stmt.deinit();
 
-        var labels: std.ArrayList([]const u8) = .{};
+        var labels: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (labels.items) |label| {
                 self.allocator.free(label);
@@ -814,11 +796,7 @@ pub const IssueStore = struct {
 
     /// Fallback search using LIKE when FTS5 is unavailable.
     fn searchFallback(self: *Self, query: []const u8) ![]Issue {
-        var sql_buf: [512]u8 = undefined;
-        var stream = std.io.fixedBufferStream(&sql_buf);
-        const writer = stream.writer();
-
-        try writer.writeAll(
+        const sql =
             \\SELECT id, content_hash, title, description, design, acceptance_criteria,
             \\       notes, status, priority, issue_type, assignee, owner,
             \\       estimated_minutes, created_at, created_by, updated_at,
@@ -827,9 +805,7 @@ pub const IssueStore = struct {
             \\FROM issues WHERE status != 'tombstone'
             \\ AND (title LIKE ?1 OR description LIKE ?1)
             \\ ORDER BY updated_at DESC
-        );
-
-        const sql = stream.getWritten();
+        ;
         var stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
@@ -865,7 +841,7 @@ pub const IssueStore = struct {
         var stmt = try self.db.prepare("SELECT issue_id FROM dirty_issues");
         defer stmt.deinit();
 
-        var ids: std.ArrayList([]const u8) = .{};
+        var ids: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (ids.items) |id| {
                 self.allocator.free(id);
@@ -885,7 +861,7 @@ pub const IssueStore = struct {
     /// Collect issues from an already-prepared statement.
     /// Useful for callers who need custom SQL but want standard issue parsing.
     pub fn collectIssuesFromStmt(self: *Self, stmt: *Statement) ![]Issue {
-        var results: std.ArrayList(Issue) = .{};
+        var results: std.ArrayList(Issue) = .empty;
         errdefer {
             for (results.items) |*issue| {
                 issue.deinit(self.allocator);
@@ -992,7 +968,7 @@ pub const IssueStore = struct {
     }
 };
 
-// Tests
+// --- Tests ---
 
 const schema = @import("schema.zig");
 
@@ -1370,11 +1346,11 @@ test "IssueStore.getWithRelations includes comments" {
 
     // Add comments manually
     try db.exec(
-        \\INSERT INTO comments (issue_id, author, body, created_at)
+        \\INSERT INTO comments (issue_id, author, text, created_at)
         \\VALUES ('bd-comments', 'alice', 'First comment', 1706540000)
     );
     try db.exec(
-        \\INSERT INTO comments (issue_id, author, body, created_at)
+        \\INSERT INTO comments (issue_id, author, text, created_at)
         \\VALUES ('bd-comments', 'bob', 'Second comment', 1706550000)
     );
 

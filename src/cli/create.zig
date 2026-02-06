@@ -6,7 +6,6 @@
 const std = @import("std");
 const models = @import("../models/mod.zig");
 const storage = @import("../storage/mod.zig");
-const id_gen = @import("../id/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
@@ -15,7 +14,7 @@ const Event = @import("../models/event.zig").Event;
 const Issue = models.Issue;
 const Priority = models.Priority;
 const IssueType = models.IssueType;
-const IdGenerator = id_gen.IdGenerator;
+const IdGenerator = common.IdGenerator;
 const CommandContext = common.CommandContext;
 
 pub const CreateError = error{
@@ -101,7 +100,7 @@ pub fn run(
 
     // Generate ID with collision checking via SQLite exists()
     var generator = IdGenerator.init(prefix);
-    const issue_id = try generateUniqueId(allocator, &generator, &ctx.issue_store);
+    const issue_id = try common.generateUniqueId(allocator, &generator, &ctx.issue_store);
     defer allocator.free(issue_id);
 
     // Create issue
@@ -195,25 +194,6 @@ pub fn runQuick(
     }
 
     try run(create_args, modified_global, allocator);
-}
-
-/// Generate a unique ID by checking SQLite for collisions.
-fn generateUniqueId(
-    allocator: std.mem.Allocator,
-    generator: *IdGenerator,
-    issue_store: *common.IssueStore,
-) ![]u8 {
-    var attempts: usize = 0;
-    while (attempts < 100) : (attempts += 1) {
-        const candidate = try generator.generate(allocator, attempts);
-        const exists = issue_store.exists(candidate) catch {
-            allocator.free(candidate);
-            continue;
-        };
-        if (!exists) return candidate;
-        allocator.free(candidate);
-    }
-    return error.CollisionLimitExceeded;
 }
 
 /// Parse a date string in various formats to Unix timestamp.
