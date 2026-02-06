@@ -60,7 +60,7 @@ pub fn run(
     try checks.append(allocator, try checkValidTitles(&ctx.issue_store, allocator));
 
     // Check 6: Database schema version
-    try checks.append(allocator, try checkSchemaVersion(&ctx.db));
+    try checks.append(allocator, try checkSchemaVersion(ctx.db));
 
     // Count results
     var passed: usize = 0;

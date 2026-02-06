@@ -74,7 +74,7 @@ pub const CommandError = error{
 pub const CommandContext = struct {
     allocator: std.mem.Allocator,
     output: Output,
-    db: Database,
+    db: *Database,
     issue_store: IssueStore,
     dep_store: DependencyStore,
     event_store: EventStore,
@@ -115,25 +115,32 @@ pub const CommandContext = struct {
             return CommandError.StorageError;
         };
 
-        var db = Database.open(allocator, db_path) catch {
+        const db = allocator.create(Database) catch {
+            allocator.free(db_path);
+            allocator.free(beads_dir);
+            return CommandError.OutOfMemory;
+        };
+        db.* = Database.open(allocator, db_path) catch {
             outputErrorGeneric(&output, global.isStructuredOutput(), "failed to open database") catch {};
+            allocator.destroy(db);
             allocator.free(db_path);
             allocator.free(beads_dir);
             return CommandError.StorageError;
         };
 
         // Ensure schema is up to date (idempotent)
-        storage.createSchema(&db) catch {
+        storage.createSchema(db) catch {
             outputErrorGeneric(&output, global.isStructuredOutput(), "failed to initialize database schema") catch {};
             db.close();
+            allocator.destroy(db);
             allocator.free(db_path);
             allocator.free(beads_dir);
             return CommandError.StorageError;
         };
 
-        const issue_store = IssueStore.init(&db, allocator);
-        const dep_store = DependencyStore.init(&db, allocator);
-        const event_store = EventStore.init(&db, allocator);
+        const issue_store = IssueStore.init(db, allocator);
+        const dep_store = DependencyStore.init(db, allocator);
+        const event_store = EventStore.init(db, allocator);
 
         return CommandContext{
             .allocator = allocator,
@@ -151,6 +158,7 @@ pub const CommandContext = struct {
     /// Clean up resources.
     pub fn deinit(self: *CommandContext) void {
         self.db.close();
+        self.allocator.destroy(self.db);
         self.allocator.free(self.db_path);
         self.allocator.free(self.beads_dir);
     }

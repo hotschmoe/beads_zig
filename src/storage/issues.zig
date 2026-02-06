@@ -951,6 +951,21 @@ pub const IssueStore = struct {
         issue.pinned = stmt.columnBool(22);
         issue.is_template = stmt.columnBool(23);
 
+        // Fields with defaults not stored in the SELECT (or not yet in schema)
+        issue.closed_by_session = null;
+        issue.source_repo = null;
+        issue.deleted_at = null;
+        issue.deleted_by = null;
+        issue.delete_reason = null;
+        issue.original_type = null;
+        issue.compaction_level = 0;
+        issue.compacted_at = null;
+        issue.compacted_at_commit = null;
+        issue.original_size = null;
+        issue.sender = null;
+        issue.ephemeral = false;
+        issue.version = 1;
+
         // Initialize embedded relations as empty
         issue.labels = &[_][]const u8{};
         issue.dependencies = &[_]Dependency{};
