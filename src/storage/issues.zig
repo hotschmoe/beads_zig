@@ -9,7 +9,7 @@
 //! - Count issues grouped by field
 
 const std = @import("std");
-const sqlite = @import("sqlite.zig");
+const sqlite = @import("zqlite");
 const Database = sqlite.Database;
 const Statement = sqlite.Statement;
 

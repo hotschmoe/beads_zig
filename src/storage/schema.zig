@@ -4,7 +4,7 @@
 //! schema exactly. Schema is idempotent - can be run multiple times.
 
 const std = @import("std");
-const sqlite = @import("sqlite.zig");
+const sqlite = @import("zqlite");
 const Database = sqlite.Database;
 
 pub const SCHEMA_VERSION: u32 = 1;

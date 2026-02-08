@@ -4,7 +4,7 @@
 //! Schema: id, issue_id, event_type, actor, old_value, new_value, comment, created_at
 
 const std = @import("std");
-const sqlite = @import("sqlite.zig");
+const sqlite = @import("zqlite");
 const Database = sqlite.Database;
 const Statement = sqlite.Statement;
 const Event = @import("../models/event.zig").Event;

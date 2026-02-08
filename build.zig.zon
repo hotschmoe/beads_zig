@@ -40,6 +40,10 @@
             .url = "https://github.com/hotschmoe/toon_zig/archive/refs/tags/v0.1.8.tar.gz",
             .hash = "toon_zig-0.1.8-k_hmCJZ5BQDIuXGsxovT8Q9uWn0I_6CHh__xlFeYaV1l",
         },
+        .zqlite = .{
+            .url = "https://github.com/hotschmoe/zqlite/archive/refs/heads/master.tar.gz",
+            .hash = "zqlite-0.1.0-qtf-W1dElwAm9s9Y6hJSxyXWD0t4Iegy-mP66FxYUVdF",
+        },
     },
     .paths = .{
         "build.zig",

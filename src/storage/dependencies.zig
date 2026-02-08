@@ -7,7 +7,7 @@
 //! - Blocked cache management
 
 const std = @import("std");
-const sqlite = @import("sqlite.zig");
+const sqlite = @import("zqlite");
 const Database = sqlite.Database;
 const Statement = sqlite.Statement;
 const Dependency = @import("../models/dependency.zig").Dependency;

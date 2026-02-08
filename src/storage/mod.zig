@@ -10,7 +10,7 @@
 const std = @import("std");
 
 // SQLite storage
-pub const sqlite = @import("sqlite.zig");
+pub const sqlite = @import("zqlite");
 pub const sql_schema = @import("schema.zig");
 
 // JSONL storage (kept for sync export/import)

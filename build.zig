@@ -1,44 +1,15 @@
 const std = @import("std");
 
-const sqlite_flags = .{
-    "-DSQLITE_DQS=0",
-    "-DSQLITE_THREADSAFE=2",
-    "-DSQLITE_DEFAULT_MEMSTATUS=0",
-    "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
-    "-DSQLITE_LIKE_DOESNT_MATCH_BLOBS",
-    "-DSQLITE_OMIT_DEPRECATED",
-    "-DSQLITE_OMIT_PROGRESS_CALLBACK",
-    "-DSQLITE_OMIT_SHARED_CACHE",
-    "-DSQLITE_USE_ALLOCA",
-    "-DSQLITE_ENABLE_FTS5",
-    "-DSQLITE_ENABLE_JSON1",
-};
-
-fn linkSqlite(compile: *std.Build.Step.Compile, b: *std.Build, system_sqlite: bool) void {
-    if (system_sqlite) {
-        compile.linkSystemLibrary("sqlite3");
-    } else {
-        compile.addCSourceFile(.{
-            .file = b.path("vendor/sqlite3.c"),
-            .flags = &sqlite_flags,
-        });
-        compile.root_module.addIncludePath(b.path("vendor"));
-    }
-    compile.linkLibC();
-}
-
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const system_sqlite = b.option(
-        bool,
-        "system-sqlite",
-        "Link system SQLite instead of bundled amalgamation",
-    ) orelse false;
-
     // External dependencies
     const toon_zig = b.dependency("toon_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zqlite = b.dependency("zqlite", .{
         .target = target,
         .optimize = optimize,
     });
@@ -49,13 +20,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "toon_zig", .module = toon_zig.module("toon_zig") },
+            .{ .name = "zqlite", .module = zqlite.module("zqlite") },
         },
     });
-
-    // Add SQLite include path to module for @cImport
-    if (!system_sqlite) {
-        mod.addIncludePath(b.path("vendor"));
-    }
 
     // Main executable
     const exe = b.addExecutable(.{
@@ -69,13 +36,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-
-    // Add include path to exe's root module as well
-    if (!system_sqlite) {
-        exe.root_module.addIncludePath(b.path("vendor"));
-    }
-
-    linkSqlite(exe, b, system_sqlite);
 
     // Strip in release builds
     if (optimize != .Debug) {
@@ -101,11 +61,10 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "toon_zig", .module = toon_zig.module("toon_zig") },
+                .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             },
         }),
     });
-
-    linkSqlite(mod_tests, b, system_sqlite);
 
     // Create run step manually to avoid IPC protocol hang (zig 0.15.x bug)
     // See: https://github.com/ziglang/zig/issues/18111
