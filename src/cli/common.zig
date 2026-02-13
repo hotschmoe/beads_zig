@@ -43,6 +43,47 @@ pub const IssueFull = struct {
     original_size: u64 = 0,
 };
 
+/// Build an IssueFull from an Issue and dependency counts.
+pub fn issueToFull(issue: models.Issue, dep_count: usize, dependent_count: usize) IssueFull {
+    return .{
+        .id = issue.id,
+        .title = issue.title,
+        .description = issue.description,
+        .status = issue.status.toString(),
+        .priority = issue.priority,
+        .issue_type = issue.issue_type.toString(),
+        .assignee = issue.assignee,
+        .created_by = issue.created_by,
+        .labels = issue.labels,
+        .created_at = issue.created_at,
+        .updated_at = issue.updated_at,
+        .dependency_count = dep_count,
+        .dependent_count = dependent_count,
+        .source_repo = issue.source_repo orelse ".",
+        .compaction_level = issue.compaction_level,
+        .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
+    };
+}
+
+/// Format a Unix timestamp as "YYYY-MM-DD HH:MM:SS".
+/// Caller owns returned string and must free it.
+pub fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    });
+}
+
 /// Collect IDs of issues that depend on the given issue (issues it blocks).
 /// Caller owns returned slice and must free each ID and the slice itself.
 pub fn collectBlocksIds(

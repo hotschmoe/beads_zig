@@ -56,25 +56,7 @@ pub fn run(
     defer ctx.dep_store.freeDependencies(dependents);
 
     if (structured_output) {
-        // Bare array with single issue matching br format
-        const full_issue = common.IssueFull{
-            .id = issue.id,
-            .title = issue.title,
-            .description = issue.description,
-            .status = issue.status.toString(),
-            .priority = issue.priority,
-            .issue_type = issue.issue_type.toString(),
-            .assignee = issue.assignee,
-            .created_by = issue.created_by,
-            .labels = issue.labels,
-            .created_at = issue.created_at,
-            .updated_at = issue.updated_at,
-            .dependency_count = deps.len,
-            .dependent_count = dependents.len,
-            .source_repo = issue.source_repo orelse ".",
-            .compaction_level = issue.compaction_level,
-            .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
-        };
+        const full_issue = common.issueToFull(issue, deps.len, dependents.len);
 
         const arr = [_]common.IssueFull{full_issue};
         try ctx.output.printJson(&arr);
@@ -119,7 +101,7 @@ pub fn run(
 
             try ctx.output.print("\n--- History ({d}) ---\n", .{events.len});
             for (events) |evt| {
-                const ts_str: ?[]const u8 = formatTimestamp(evt.created_at, allocator) catch null;
+                const ts_str: ?[]const u8 = common.formatTimestamp(evt.created_at, allocator) catch null;
                 defer if (ts_str) |ts| allocator.free(ts);
                 try ctx.output.print("  [{s}] {s} by {s}\n", .{
                     ts_str orelse "unknown",
@@ -131,31 +113,12 @@ pub fn run(
     }
 }
 
-/// Format and print a single comment.
 fn printComment(output: *common.Output, comment: Comment, allocator: std.mem.Allocator) !void {
-    const timestamp_str: ?[]const u8 = formatTimestamp(comment.created_at, allocator) catch null;
+    const timestamp_str: ?[]const u8 = common.formatTimestamp(comment.created_at, allocator) catch null;
     defer if (timestamp_str) |ts| allocator.free(ts);
 
     try output.print("\n[{s}] {s}:\n", .{ timestamp_str orelse "unknown", comment.author });
     try output.print("{s}\n", .{comment.text});
-}
-
-/// Format a Unix timestamp as a human-readable string.
-fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
-    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
-    const day_seconds = epoch_seconds.getDaySeconds();
-    const epoch_day = epoch_seconds.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-
-    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
-        year_day.year,
-        @as(u32, month_day.month.numeric()),
-        @as(u32, month_day.day_index) + 1,
-        day_seconds.getHoursIntoDay(),
-        day_seconds.getMinutesIntoHour(),
-        day_seconds.getSecondsIntoMinute(),
-    });
 }
 
 // --- Tests ---
@@ -207,8 +170,7 @@ test "run returns error for missing issue" {
 test "formatTimestamp formats correctly" {
     const allocator = std.testing.allocator;
 
-    // 2024-01-29T14:53:20Z = 1706540000
-    const ts_str = try formatTimestamp(1706540000, allocator);
+    const ts_str = try common.formatTimestamp(1706540000, allocator);
     defer allocator.free(ts_str);
 
     try std.testing.expectEqualStrings("2024-01-29 14:53:20", ts_str);

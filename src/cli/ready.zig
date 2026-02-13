@@ -167,24 +167,7 @@ pub fn run(
             const issue_dependents = try ctx.dep_store.getDependents(issue.id);
             defer ctx.dep_store.freeDependencies(issue_dependents);
 
-            full_issues[i] = .{
-                .id = issue.id,
-                .title = issue.title,
-                .description = issue.description,
-                .status = issue.status.toString(),
-                .priority = issue.priority,
-                .issue_type = issue.issue_type.toString(),
-                .assignee = issue.assignee,
-                .created_by = issue.created_by,
-                .labels = issue.labels,
-                .created_at = issue.created_at,
-                .updated_at = issue.updated_at,
-                .dependency_count = issue_deps.len,
-                .dependent_count = issue_dependents.len,
-                .source_repo = issue.source_repo orelse ".",
-                .compaction_level = issue.compaction_level,
-                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
-            };
+            full_issues[i] = common.issueToFull(issue, issue_deps.len, issue_dependents.len);
         }
 
         // Bare array matching br format

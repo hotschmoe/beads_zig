@@ -210,22 +210,7 @@ pub fn run(
                 var ci = created;
                 ci.deinit(allocator);
             }
-            const full_issue = common.IssueFull{
-                .id = created.id,
-                .title = created.title,
-                .description = created.description,
-                .status = created.status.toString(),
-                .priority = created.priority,
-                .issue_type = created.issue_type.toString(),
-                .assignee = created.assignee,
-                .created_by = created.created_by,
-                .labels = created.labels,
-                .created_at = created.created_at,
-                .updated_at = created.updated_at,
-                .source_repo = created.source_repo orelse ".",
-                .compaction_level = created.compaction_level,
-                .original_size = if (created.original_size) |size| @as(u64, @intCast(size)) else 0,
-            };
+            const full_issue = common.issueToFull(created, 0, 0);
             try ctx.output.printJson(full_issue);
         } else {
             try ctx.output.printJson(CreateResult{

@@ -74,18 +74,7 @@ fn outputResults(
         defer allocator.free(full_issues);
 
         for (display_issues, 0..) |issue, i| {
-            full_issues[i] = .{
-                .id = issue.id,
-                .title = issue.title,
-                .description = issue.description,
-                .status = issue.status.toString(),
-                .priority = issue.priority,
-                .issue_type = issue.issue_type.toString(),
-                .assignee = issue.assignee,
-                .created_by = issue.created_by,
-                .created_at = issue.created_at,
-                .updated_at = issue.updated_at,
-            };
+            full_issues[i] = common.issueToFull(issue, 0, 0);
         }
 
         // Bare array matching br format
