@@ -4,10 +4,12 @@
 //! to reduce duplication across command implementations.
 
 const std = @import("std");
+const json = std.json;
 const storage = @import("../storage/mod.zig");
 const output_mod = @import("../output/mod.zig");
 const id_gen = @import("../id/mod.zig");
 const args = @import("args.zig");
+const models = @import("../models/mod.zig");
 
 pub const IdGenerator = id_gen.IdGenerator;
 
@@ -20,8 +22,6 @@ pub const DependencyStore = storage.DependencyStore;
 pub const EventStore = storage.EventStore;
 
 const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
-
-const models = @import("../models/mod.zig");
 
 /// Full issue representation for JSON output matching br's bare-array format.
 /// Field order matches br's JSON output (Zig serializes in declaration order).
@@ -196,6 +196,13 @@ pub const CommandContext = struct {
             return CommandError.StorageError;
         };
 
+        // Apply user-specified lock_timeout (override zqlite default of 5000ms)
+        if (global.lock_timeout != 5000) {
+            var pragma_buf: [64]u8 = undefined;
+            const pragma = std.fmt.bufPrint(&pragma_buf, "PRAGMA busy_timeout = {d}", .{global.lock_timeout}) catch unreachable;
+            db.exec(pragma) catch {};
+        }
+
         // Ensure schema is up to date (idempotent)
         storage.createSchema(db) catch {
             outputErrorGeneric(&output, global.isStructuredOutput(), "failed to initialize database schema") catch {};
@@ -234,6 +241,33 @@ pub const CommandContext = struct {
     /// Record an audit event. Silently ignores errors (audit is best-effort).
     pub fn recordEvent(self: *CommandContext, event: @import("../models/event.zig").Event) void {
         self.event_store.insert(event) catch {};
+    }
+
+    /// Auto-flush DB to JSONL after mutations (unless --no-auto-flush).
+    /// Best-effort: silently ignores all errors.
+    pub fn autoFlush(self: *CommandContext) void {
+        if (self.global.no_auto_flush) return;
+
+        const all_issues = self.issue_store.list(.{ .include_tombstones = true }) catch return;
+        defer self.issue_store.freeIssues(all_issues);
+
+        const jsonl_path = std.fs.path.join(self.allocator, &.{ self.beads_dir, "issues.jsonl" }) catch return;
+        defer self.allocator.free(jsonl_path);
+
+        const file = std.fs.cwd().createFile(jsonl_path, .{}) catch return;
+        defer file.close();
+
+        for (all_issues) |issue| {
+            const line = json.Stringify.valueAlloc(self.allocator, issue, .{}) catch continue;
+            defer self.allocator.free(line);
+            file.writeAll(line) catch continue;
+            file.writeAll("\n") catch continue;
+        }
+
+        // Clear dirty flags
+        for (all_issues) |issue| {
+            self.issue_store.clearDirty(issue.id) catch {};
+        }
     }
 };
 

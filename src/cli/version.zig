@@ -37,9 +37,7 @@ pub fn run(global: anytype, allocator: std.mem.Allocator) VersionError!VersionRe
         };
         out.printJson(version_info) catch return VersionError.WriteError;
     } else {
-        out.print("bz {s}\n", .{VERSION}) catch return VersionError.WriteError;
-        out.print("zig {s}\n", .{zig_version}) catch return VersionError.WriteError;
-        out.print("{s}\n", .{target}) catch return VersionError.WriteError;
+        out.print("bz version {s}\n", .{VERSION}) catch return VersionError.WriteError;
     }
 
     return .{

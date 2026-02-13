@@ -342,9 +342,17 @@ pub const IssueStore = struct {
     pub const ListFilters = struct {
         status: ?Status = null,
         priority: ?Priority = null,
+        priority_min: ?Priority = null,
+        priority_max: ?Priority = null,
         issue_type: ?IssueType = null,
         assignee: ?[]const u8 = null,
         label: ?[]const u8 = null,
+        label_any: []const []const u8 = &[_][]const u8{},
+        title_contains: ?[]const u8 = null,
+        desc_contains: ?[]const u8 = null,
+        notes_contains: ?[]const u8 = null,
+        overdue: bool = false,
+        include_deferred: bool = true,
         include_tombstones: bool = false,
         limit: ?u32 = null,
         offset: ?u32 = null,
@@ -360,7 +368,7 @@ pub const IssueStore = struct {
 
     /// List issues with optional filters.
     pub fn list(self: *Self, filters: ListFilters) ![]Issue {
-        var sql_buf: [1024]u8 = undefined;
+        var sql_buf: [2048]u8 = undefined;
         var stream = std.io.fixedBufferStream(&sql_buf);
         const writer = stream.writer();
 
@@ -388,8 +396,8 @@ pub const IssueStore = struct {
             );
         }
 
-        var params: [6]?[]const u8 = .{null} ** 6;
-        var int_params: [6]?i64 = .{null} ** 6;
+        var params: [20]?[]const u8 = .{null} ** 20;
+        var int_params: [20]?i64 = .{null} ** 20;
         var param_count: usize = 0;
 
         if (!filters.include_tombstones) {
@@ -424,6 +432,59 @@ pub const IssueStore = struct {
             param_count += 1;
             try writer.print(" AND l.label = ?{d}", .{param_count});
             params[param_count - 1] = lbl;
+        }
+
+        if (filters.priority_min) |p| {
+            param_count += 1;
+            try writer.print(" AND priority >= ?{d}", .{param_count});
+            int_params[param_count - 1] = @as(i64, p.value);
+        }
+
+        if (filters.priority_max) |p| {
+            param_count += 1;
+            try writer.print(" AND priority <= ?{d}", .{param_count});
+            int_params[param_count - 1] = @as(i64, p.value);
+        }
+
+        if (filters.title_contains) |t| {
+            param_count += 1;
+            try writer.print(" AND title LIKE '%' || ?{d} || '%'", .{param_count});
+            params[param_count - 1] = t;
+        }
+
+        if (filters.desc_contains) |d| {
+            param_count += 1;
+            try writer.print(" AND description LIKE '%' || ?{d} || '%'", .{param_count});
+            params[param_count - 1] = d;
+        }
+
+        if (filters.notes_contains) |n| {
+            param_count += 1;
+            try writer.print(" AND notes LIKE '%' || ?{d} || '%'", .{param_count});
+            params[param_count - 1] = n;
+        }
+
+        if (filters.overdue) {
+            param_count += 1;
+            try writer.print(" AND due_at IS NOT NULL AND due_at < ?{d}", .{param_count});
+            int_params[param_count - 1] = std.time.timestamp();
+        }
+
+        if (!filters.include_deferred) {
+            param_count += 1;
+            try writer.print(" AND (defer_until IS NULL OR defer_until <= ?{d})", .{param_count});
+            int_params[param_count - 1] = std.time.timestamp();
+        }
+
+        if (filters.label == null and filters.label_any.len > 0) {
+            try writer.writeAll(" AND id IN (SELECT issue_id FROM labels WHERE label IN (");
+            for (filters.label_any, 0..) |lbl, idx| {
+                param_count += 1;
+                if (idx > 0) try writer.writeAll(", ");
+                try writer.print("?{d}", .{param_count});
+                params[param_count - 1] = lbl;
+            }
+            try writer.writeAll("))");
         }
 
         // Order by

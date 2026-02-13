@@ -7,6 +7,7 @@
 const std = @import("std");
 const output_mod = @import("../output/mod.zig");
 const args = @import("args.zig");
+const common = @import("common.zig");
 
 pub const WhereError = error{
     WriteError,
@@ -71,6 +72,14 @@ pub fn run(global: args.GlobalOptions, allocator: std.mem.Allocator) WhereError!
         }) catch return WhereError.WriteError;
     } else if (!global.quiet) {
         out.print("{s}\n", .{abs_path}) catch return WhereError.WriteError;
+
+        // Read prefix from config
+        const prefix = common.getConfigPrefix(allocator, beads_dir) catch
+            (allocator.dupe(u8, "bd") catch return WhereError.WriteError);
+        defer allocator.free(prefix);
+
+        out.print("  prefix: {s}\n", .{prefix}) catch return WhereError.WriteError;
+        out.print("  database: {s}/beads.db\n", .{abs_path}) catch return WhereError.WriteError;
     }
 
     return WhereResult{

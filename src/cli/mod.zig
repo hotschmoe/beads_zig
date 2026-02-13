@@ -146,7 +146,8 @@ pub const InfoResult = info.InfoResult;
 pub const runInfo = info.run;
 
 pub const StatsError = stats.StatsError;
-pub const StatsResult = stats.StatsResult;
+pub const StatsJsonResult = stats.StatsJsonResult;
+pub const StatsSummary = stats.StatsSummary;
 pub const runStats = stats.run;
 pub const StatsArgs = args.StatsArgs;
 

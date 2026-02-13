@@ -57,15 +57,20 @@ pub fn run(
         };
     }
 
-    // TODO: These filters are not yet implemented in SQLite backend
-    _ = list_args.priority_min;
-    _ = list_args.priority_max;
-    _ = list_args.label_any;
-    _ = list_args.title_contains;
-    _ = list_args.desc_contains;
-    _ = list_args.notes_contains;
-    _ = list_args.overdue;
-    _ = list_args.include_deferred;
+    if (list_args.priority_min) |p| {
+        filters.priority_min = Priority.fromString(p) catch null;
+    }
+    if (list_args.priority_max) |p| {
+        filters.priority_max = Priority.fromString(p) catch null;
+    }
+    if (list_args.label_any.len > 0) {
+        filters.label_any = list_args.label_any;
+    }
+    filters.title_contains = list_args.title_contains;
+    filters.desc_contains = list_args.desc_contains;
+    filters.notes_contains = list_args.notes_contains;
+    filters.overdue = list_args.overdue;
+    filters.include_deferred = list_args.include_deferred;
 
     if (list_args.issue_type) |t| {
         filters.issue_type = IssueType.fromString(t);

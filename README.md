@@ -2,13 +2,13 @@
 
 A local-first issue tracker for git repositories -- an aligned Zig port of [beads_rust](https://github.com/Dicklesworthstone/beads_rust).
 
-> **Status**: Drop-in replacement for `br`. Same commands, same arguments, same outputs. SQLite storage with bundled amalgamation.
+> **Status**: Aligned Zig port of `br`. All 38 CLI commands implemented with shared SQLite schema. Core CRUD workflow has output parity; some auxiliary commands (stats, info, schema, lint, audit, history) have divergent output formats. See [Parity Status](#parity-status) for details.
 
 ## Overview
 
 beads_zig (`bz`) is a command-line issue tracker that lives in your git repository. No accounts, no internet required. Your issues stay with your code.
 
-`bz` is designed to be fully command-compatible with `br` (beads_rust) -- same CLI interface, same SQLite schema, same JSONL sync format. You can switch between them seamlessly.
+`bz` is an aligned Zig port of `br` (beads_rust) -- same CLI commands, same SQLite schema, same JSONL sync format. Core issue workflows (create/list/show/update/close/reopen/delete) produce matching output; some auxiliary commands have implementation differences.
 
 ```
 .beads/
@@ -19,8 +19,8 @@ beads_zig (`bz`) is a command-line issue tracker that lives in your git reposito
 
 ## Features
 
-- **br-compatible**: Drop-in replacement for beads_rust -- identical CLI and schema
-- **SQLite storage**: Bundled SQLite 3.49.1 amalgamation, WAL mode, FTS5 full-text search
+- **br-aligned**: Zig port of beads_rust -- same 38 commands, shared SQLite schema
+- **SQLite storage**: Via zqlite package dependency, WAL mode, FTS5 full-text search
 - **Local-first**: All data lives in `.beads/` within your repo
 - **Offline**: Works without internet connectivity
 - **Git-friendly**: JSONL sync export for clean version control diffs
@@ -43,7 +43,7 @@ beads_zig (`bz`) is a command-line issue tracker that lives in your git reposito
 
 - **[rich_zig](https://github.com/hotschmoe-zig/rich_zig)** - Terminal formatting (colors, TTY detection)
 - **[toon_zig](https://github.com/hotschmoe-zig/toon_zig)** - LLM-optimized output format
-- **SQLite** 3.49.1 - Bundled amalgamation (vendor/sqlite3.c), no system install needed
+- **[zqlite](https://github.com/hotschmoe/zqlite)** - SQLite package (bundles amalgamation + FTS5/JSON1 flags)
 
 ## Installation
 
@@ -94,13 +94,10 @@ Requires Zig 0.15.2 or later. See [Building](#building) below.
 
 ## Building
 
-Requires Zig 0.15.2 or later.
+Requires Zig 0.15.2 or later. SQLite is provided automatically via the zqlite package dependency -- no vendor setup or system install needed.
 
 ```bash
-# Setup vendor (downloads SQLite amalgamation, first time only)
-./scripts/setup-vendor.sh
-
-# Build (bundles SQLite by default)
+# Build (SQLite bundled via zqlite dependency)
 zig build
 
 # Run
@@ -109,11 +106,8 @@ zig build run
 # Run with arguments
 zig build run -- <args>
 
-# Run tests
+# Run tests (625 tests)
 zig build test
-
-# Use system SQLite instead of bundled
-zig build -Dsystem-sqlite=true
 
 # Cross-compile (SQLite bundled via Zig's C cross-compiler)
 zig build -Dtarget=aarch64-linux-gnu      # Linux ARM64
@@ -178,7 +172,7 @@ bz show <id> --toon    # LLM-optimized format
 
 ## Commands
 
-**Workspace**: `init`, `info`, `stats`, `doctor`, `config`
+**Workspace**: `init`, `info`, `stats`, `doctor`, `config`, `where`
 
 **Issue CRUD**: `create` (add, new), `q` (quick), `show` (get, view), `update` (edit), `close` (done), `reopen`, `delete` (rm)
 
@@ -192,30 +186,75 @@ bz show <id> --toon    # LLM-optimized format
 
 **Scheduling**: `defer`, `undefer`
 
-**Audit**: `history` (log), `audit`
+**Audit**: `history`, `audit`
 
 **Sync**: `sync` (flush, export) with `--flush-only` and `--import-only`
 
+**Advanced**: `epic`, `query`, `agents`, `upgrade`, `orphans`, `lint`, `changelog`
+
 **System**: `version`, `schema`, `completions`, `help`
+
+## Parity Status
+
+bz aims to match br's CLI interface and output. Current state (2026-02-13):
+
+**625/625 unit tests pass, 28/30 conformance tests pass.**
+
+### Full parity (output matches br)
+
+create, list, show, update, close, reopen, delete, q, search, count,
+dep (add/remove/list/tree/cycles), label (add/remove/list/list-all),
+comments (add/list), defer, undefer, doctor (text), ready (JSON), blocked (JSON)
+
+### Partial parity (functional but output differs from br)
+
+| Command | Difference |
+|---------|-----------|
+| `stats` | Missing padding alignment and "Recent Activity" section; JSON schema differs |
+| `info` | Missing daemon detail indentation; JSON missing fields (mode, jsonl_path) |
+| `version` | Multi-line format (bz/zig/platform) vs br's single-line format |
+| `where` | Shows 1 line (path) vs br's 3 lines (path, prefix, database) |
+| `ready` | Uses list format vs br's numbered format with emoji header |
+| `blocked` | Plain text vs br's emoji header format |
+| `stale` | Different empty-state message |
+| `init` | Prints 4 lines vs br's 1 line |
+| Timestamps | Second precision in JSON vs br's nanosecond precision |
+
+### Different behavior (same command name, different semantics)
+
+| Command | br behavior | bz behavior |
+|---------|-------------|-------------|
+| `history` | Backup management (list/diff/restore/prune) | Per-issue event viewer |
+| `schema` | JSON Schema (draft-07) for output types | Markdown storage format description |
+| `lint` | Template section checker | Database consistency checker |
+| `audit` | Agent interaction recorder (subcommands) | Event log dump |
+| `config` | Requires subcommand (list/get/set/delete) | Dumps config directly |
+
+### Known gaps
+
+- `--file` flag in create is a stub (prints "not yet implemented")
+- List filters `--priority-min`, `--priority-max`, `--overdue`, `--include-deferred` are parsed but ignored
+- No auto-flush to JSONL after mutations (br auto-flushes)
+- Missing global flags: `--actor`, `--no-auto-flush`, `--no-auto-import`, `--lock-timeout`, `--no-db`
+- Memory leak in `ready`/`blocked` commands (issue_store.get() result not freed)
 
 ## Architecture
 
 ```
 src/
-  main.zig           # CLI entry point
+  main.zig           # CLI entry point + dispatch
   root.zig           # Library exports + test runner
-  cli/               # Command implementation files
-    args.zig         # Argument parsing (34 commands + subcommands)
+  cli/               # Command implementation files (38 commands)
+    args.zig         # Argument parsing
     common.zig       # CommandContext (SQLite DB + stores)
   storage/
-    sqlite.zig      # SQLite C bindings wrapper
+    sqlite.zig      # SQLite C bindings wrapper (via zqlite)
     schema.zig      # Database schema (11 tables, 29+ indexes, FTS5)
-    issues.zig      # Issue CRUD via SQLite
+    issues.zig      # Issue CRUD + labels + comments via SQLite
     dependencies.zig # Dependency management via SQLite
     events.zig      # Event/audit trail via SQLite
-    labels.zig      # Label management via SQLite
-    comments.zig    # Comment management via SQLite
     jsonl.zig       # JSONL file I/O (for sync export/import)
+    mod.zig         # Storage module re-exports
   models/            # Data structures (Issue, Status, Priority, etc.)
   id/                # Hash-based ID generation (base36)
   config/            # YAML configuration
@@ -254,14 +293,12 @@ Both `bz` and `br` now use SQLite with WAL mode, so performance characteristics 
 --json              Machine-readable JSON output
 --toon              LLM-optimized TOON format
 -q, --quiet         Suppress non-essential output
--v, --verbose       Increase verbosity (-vv for debug)
+-v, --verbose       Increase verbosity
 --no-color          Disable ANSI colors (respects NO_COLOR env)
 --data <path>       Override .beads/ directory
---actor <name>      Set actor for audit trail
---lock-timeout <ms> SQLite busy timeout (default 5000)
---no-auto-flush     Skip automatic JSONL export after writes
---no-auto-import    Skip automatic JSONL import on reads
 ```
+
+br also supports `--actor`, `--db`, `--lock-timeout`, `--no-auto-flush`, `--no-auto-import`, `--no-db`, and `--allow-stale` which are not yet implemented in bz.
 
 ## Why Zig?
 

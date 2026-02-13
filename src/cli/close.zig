@@ -86,6 +86,8 @@ pub fn run(
     } else |_| {}
 
     try outputSuccess(&ctx.output, global, close_args.id, issue.title, "closed", "\xe2\x9c\x93 Closed {s}: {s} (done)");
+
+    ctx.autoFlush();
 }
 
 pub fn runReopen(
@@ -131,6 +133,8 @@ pub fn runReopen(
     ctx.recordEvent(Event.issueReopened(reopen_args.id, actor, now));
 
     try outputSuccess(&ctx.output, global, reopen_args.id, issue.title, "reopened", "\xe2\x9c\x93 Reopened {s}: {s}");
+
+    ctx.autoFlush();
 }
 
 fn outputSuccess(

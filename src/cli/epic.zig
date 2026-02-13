@@ -172,6 +172,8 @@ fn runCreate(
     } else {
         try ctx.output.success("Created epic {s}", .{issue_id});
     }
+
+    ctx.autoFlush();
 }
 
 fn runAdd(
@@ -226,6 +228,8 @@ fn runAdd(
     } else if (!global.quiet) {
         try ctx.output.success("Added {s} to epic {s}", .{ add_args.issue_id, add_args.epic_id });
     }
+
+    ctx.autoFlush();
 }
 
 fn runRemove(

@@ -1,23 +1,16 @@
 //! Lint command for beads_zig.
 //!
-//! `bz lint` - Validate database consistency
+//! `bz lint` - Check issue descriptions for required template sections
 //!
-//! Performs comprehensive validation checks on the issue database:
-//! - ID format validation
-//! - Orphaned hierarchical children
-//! - Orphaned dependencies
-//! - Circular dependencies
-//! - Empty or invalid titles
-//! - Duplicate content hashes
-//! - Invalid status combinations
-//! - Future timestamps
+//! Scans non-closed issues for missing markdown template sections
+//! (matching br's template-checking behavior).
 
 const std = @import("std");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const id_mod = @import("../id/mod.zig");
-const orphans = @import("orphans.zig");
+const models = @import("../models/mod.zig");
 
+const Issue = models.Issue;
 const CommandContext = common.CommandContext;
 
 pub const LintError = error{
@@ -27,19 +20,23 @@ pub const LintError = error{
 };
 
 pub const LintIssue = struct {
-    id: ?[]const u8,
-    severity: []const u8, // "error", "warning", "info"
-    category: []const u8,
-    message: []const u8,
+    id: []const u8,
+    issue_type: []const u8,
+    title: []const u8,
+    warnings: []const []const u8,
 };
 
 pub const LintResult = struct {
     success: bool,
     issues: ?[]const LintIssue = null,
-    errors: usize = 0,
-    warnings: usize = 0,
-    infos: usize = 0,
+    total_issues: usize = 0,
+    total_warnings: usize = 0,
     message: ?[]const u8 = null,
+};
+
+const required_sections = [_][]const u8{
+    "## Steps to Reproduce",
+    "## Acceptance Criteria",
 };
 
 pub fn run(
@@ -52,327 +49,107 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    var issues: std.ArrayListUnmanaged(LintIssue) = .{};
-    defer issues.deinit(allocator);
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
-    // Run all lint checks
-    try lintIdFormats(&ctx, allocator, &issues);
-    try lintOrphanedHierarchy(&ctx, allocator, &issues);
-    try lintOrphanedDependencies(&ctx, allocator, &issues);
-    try lintCircularDependencies(&ctx, allocator, &issues);
-    try lintTitles(&ctx, allocator, &issues);
-    try lintDuplicateHashes(&ctx, allocator, &issues);
-    try lintStatusConsistency(&ctx, allocator, &issues);
-    try lintTimestamps(&ctx, allocator, &issues);
+    var lint_issues: std.ArrayListUnmanaged(LintIssue) = .{};
+    defer {
+        for (lint_issues.items) |li| {
+            allocator.free(li.warnings);
+        }
+        lint_issues.deinit(allocator);
+    }
 
-    // Count by severity
-    var errors: usize = 0;
-    var warnings: usize = 0;
-    var infos: usize = 0;
+    // All allocated warning message strings
+    var owned_msgs: std.ArrayListUnmanaged([]const u8) = .{};
+    defer {
+        for (owned_msgs.items) |msg| allocator.free(msg);
+        owned_msgs.deinit(allocator);
+    }
 
-    for (issues.items) |issue| {
-        if (std.mem.eql(u8, issue.severity, "error")) {
-            errors += 1;
-        } else if (std.mem.eql(u8, issue.severity, "warning")) {
-            warnings += 1;
-        } else {
-            infos += 1;
+    var total_warnings: usize = 0;
+
+    for (all_issues) |issue| {
+        if (issue.status.eql(.closed) or issue.status.eql(.tombstone)) continue;
+
+        var missing: std.ArrayListUnmanaged([]const u8) = .{};
+        defer missing.deinit(allocator);
+
+        const desc = issue.description orelse "";
+        const desc_lower = try toLowerAlloc(allocator, desc);
+        defer allocator.free(desc_lower);
+
+        for (required_sections) |section| {
+            const section_lower = try toLowerAlloc(allocator, section);
+            defer allocator.free(section_lower);
+
+            if (std.mem.indexOf(u8, desc_lower, section_lower) == null) {
+                const msg = try std.fmt.allocPrint(allocator, "Missing: {s}", .{section});
+                try owned_msgs.append(allocator, msg);
+                try missing.append(allocator, msg);
+            }
+        }
+
+        if (missing.items.len > 0) {
+            total_warnings += missing.items.len;
+            const warnings_slice = try allocator.dupe([]const u8, missing.items);
+
+            try lint_issues.append(allocator, .{
+                .id = issue.id,
+                .issue_type = issue.issue_type.toString(),
+                .title = issue.title,
+                .warnings = warnings_slice,
+            });
         }
     }
 
-    // Apply limit if specified
+    // Apply limit
     const display_issues = if (cmd_args.limit) |limit|
-        issues.items[0..@min(limit, issues.items.len)]
+        lint_issues.items[0..@min(limit, lint_issues.items.len)]
     else
-        issues.items;
+        lint_issues.items;
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(LintResult{
-            .success = errors == 0,
+            .success = total_warnings == 0,
             .issues = display_issues,
-            .errors = errors,
-            .warnings = warnings,
-            .infos = infos,
+            .total_issues = lint_issues.items.len,
+            .total_warnings = total_warnings,
         });
     } else if (!global.quiet) {
-        if (issues.items.len == 0) {
-            try ctx.output.println("No issues found. Database is consistent.", .{});
-        } else {
-            try ctx.output.println("Database Lint Results", .{});
-            try ctx.output.print("\n", .{});
-
-            for (display_issues) |issue| {
-                const icon = if (std.mem.eql(u8, issue.severity, "error"))
-                    "[ERR]"
-                else if (std.mem.eql(u8, issue.severity, "warning"))
-                    "[WARN]"
-                else
-                    "[INFO]";
-
-                if (issue.id) |id| {
-                    try ctx.output.print("{s} {s}: {s}\n", .{ icon, id, issue.message });
-                } else {
-                    try ctx.output.print("{s} {s}\n", .{ icon, issue.message });
-                }
-            }
-
-            try ctx.output.print("\nSummary: {d} error(s), {d} warning(s), {d} info(s)\n", .{ errors, warnings, infos });
-
-            if (cmd_args.limit) |limit| {
-                if (issues.items.len > limit) {
-                    try ctx.output.print("(showing {d} of {d}, use --limit to see more)\n", .{ limit, issues.items.len });
-                }
-            }
-        }
-    }
-}
-
-fn lintIdFormats(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
-    }
-
-    for (all_issues) |*issue| {
-        if (!id_mod.validateId(issue.id)) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "error",
-                .category = "id_format",
-                .message = "Invalid issue ID format",
-            });
-        }
-    }
-}
-
-fn lintOrphanedHierarchy(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
-    }
-
-    for (all_issues) |*issue| {
-        if (orphans.getParentId(issue.id)) |parent_id| {
-            if (!try ctx.issue_store.exists(parent_id)) {
-                try issues.append(allocator, .{
-                    .id = issue.id,
-                    .severity = "warning",
-                    .category = "orphan_hierarchy",
-                    .message = "Parent issue does not exist",
-                });
-            }
-        }
-    }
-}
-
-fn lintOrphanedDependencies(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
-    }
-
-    for (all_issues) |*issue| {
-        const deps = try ctx.dep_store.getDependencies(issue.id);
-        defer ctx.dep_store.freeDependencies(deps);
-
-        for (deps) |dep| {
-            if (!try ctx.issue_store.exists(dep.depends_on_id)) {
-                try issues.append(allocator, .{
-                    .id = issue.id,
-                    .severity = "warning",
-                    .category = "orphan_dependency",
-                    .message = "Dependency references non-existent issue",
-                });
-            }
-        }
-    }
-}
-
-fn lintCircularDependencies(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const cycles = try ctx.dep_store.detectAllCycles();
-    defer ctx.dep_store.freeCycles(cycles);
-
-    if (cycles.len > 0) {
-        try issues.append(allocator, .{
-            .id = null,
-            .severity = "error",
-            .category = "circular_dependency",
-            .message = "Circular dependencies detected in dependency graph",
+        try ctx.output.println("Template warnings ({d} issues, {d} warnings):", .{
+            lint_issues.items.len,
+            total_warnings,
         });
-    }
-}
 
-fn lintTitles(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
-    }
-
-    for (all_issues) |*issue| {
-        if (issue.title.len == 0) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "error",
-                .category = "empty_title",
-                .message = "Issue has empty title",
-            });
-        } else if (issue.title.len > 500) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "warning",
-                .category = "long_title",
-                .message = "Title exceeds 500 character limit",
-            });
-        }
-    }
-}
-
-fn lintDuplicateHashes(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
-    }
-
-    var hash_map = std.StringHashMap([]const u8).init(allocator);
-    defer hash_map.deinit();
-
-    for (all_issues) |*issue| {
-        if (issue.content_hash) |hash| {
-            if (hash_map.get(hash)) |existing_id| {
-                try issues.append(allocator, .{
-                    .id = issue.id,
-                    .severity = "info",
-                    .category = "duplicate_hash",
-                    .message = try std.fmt.allocPrint(allocator, "Duplicate content hash with {s}", .{existing_id}),
+        if (display_issues.len > 0) {
+            try ctx.output.print("\n", .{});
+            for (display_issues) |lint_issue| {
+                try ctx.output.print("{s} [{s}]: {s}\n", .{
+                    lint_issue.id,
+                    lint_issue.issue_type,
+                    lint_issue.title,
                 });
-            } else {
-                try hash_map.put(hash, issue.id);
+                for (lint_issue.warnings) |warning| {
+                    try ctx.output.print("  (warning) {s}\n", .{warning});
+                }
             }
         }
     }
 }
 
-fn lintStatusConsistency(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
+fn toLowerAlloc(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
+    const result = try allocator.alloc(u8, s.len);
+    for (s, 0..) |c, i| {
+        result[i] = std.ascii.toLower(c);
     }
-
-    for (all_issues) |*issue| {
-        // Closed issues should have closed_at timestamp
-        if (issue.status.eql(.closed) and issue.closed_at.value == null) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "warning",
-                .category = "status_consistency",
-                .message = "Closed issue missing closed_at timestamp",
-            });
-        }
-
-        // Deferred issues should have defer_until
-        if (issue.status.eql(.deferred) and issue.defer_until.value == null) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "info",
-                .category = "status_consistency",
-                .message = "Deferred issue missing defer_until date",
-            });
-        }
-    }
-}
-
-fn lintTimestamps(
-    ctx: *CommandContext,
-    allocator: std.mem.Allocator,
-    issues: *std.ArrayListUnmanaged(LintIssue),
-) !void {
-    const all_issues = try ctx.issue_store.list(.{});
-    defer {
-        for (all_issues) |*issue| {
-            issue.deinit(allocator);
-        }
-        allocator.free(all_issues);
-    }
-
-    const now = std.time.timestamp();
-    const one_day_future = now + (24 * 60 * 60);
-
-    for (all_issues) |*issue| {
-        // Check for timestamps too far in the future (more than 1 day)
-        if (issue.created_at.value > one_day_future) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "warning",
-                .category = "future_timestamp",
-                .message = "created_at timestamp is in the future",
-            });
-        }
-
-        if (issue.updated_at.value > one_day_future) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "warning",
-                .category = "future_timestamp",
-                .message = "updated_at timestamp is in the future",
-            });
-        }
-
-        // Check that updated_at >= created_at
-        if (issue.updated_at.value < issue.created_at.value) {
-            try issues.append(allocator, .{
-                .id = issue.id,
-                .severity = "warning",
-                .category = "timestamp_order",
-                .message = "updated_at is before created_at",
-            });
-        }
-    }
+    return result;
 }
 
 // --- Tests ---
@@ -380,23 +157,23 @@ fn lintTimestamps(
 test "LintResult struct works" {
     const result = LintResult{
         .success = true,
-        .errors = 0,
-        .warnings = 0,
-        .infos = 0,
+        .total_issues = 0,
+        .total_warnings = 0,
     };
     try std.testing.expect(result.success);
-    try std.testing.expectEqual(@as(usize, 0), result.errors);
+    try std.testing.expectEqual(@as(usize, 0), result.total_warnings);
 }
 
 test "LintIssue struct works" {
+    const warnings = [_][]const u8{"Missing: ## Steps to Reproduce"};
     const issue = LintIssue{
         .id = "bd-abc",
-        .severity = "error",
-        .category = "id_format",
-        .message = "Invalid ID",
+        .issue_type = "bug",
+        .title = "Test issue",
+        .warnings = &warnings,
     };
-    try std.testing.expectEqualStrings("bd-abc", issue.id.?);
-    try std.testing.expectEqualStrings("error", issue.severity);
+    try std.testing.expectEqualStrings("bd-abc", issue.id);
+    try std.testing.expectEqual(@as(usize, 1), issue.warnings.len);
 }
 
 test "run detects uninitialized workspace" {
@@ -406,4 +183,11 @@ test "run detects uninitialized workspace" {
 
     const result = run(cmd_args, global, allocator);
     try std.testing.expectError(LintError.WorkspaceNotInitialized, result);
+}
+
+test "toLowerAlloc works" {
+    const allocator = std.testing.allocator;
+    const result = try toLowerAlloc(allocator, "Hello WORLD");
+    defer allocator.free(result);
+    try std.testing.expectEqualStrings("hello world", result);
 }

@@ -20,9 +20,11 @@ pub const IssueError = error{
 };
 
 /// RFC3339 timestamp wrapper for JSON serialization.
-/// Stores Unix epoch internally but serializes as RFC3339 string.
+/// Stores Unix epoch seconds + nanoseconds. Serializes as RFC3339 with
+/// fractional seconds when nanos > 0, matching br's nanosecond precision.
 pub const Rfc3339Timestamp = struct {
     value: i64,
+    nanos: u32 = 0,
 
     const Self = @This();
 
@@ -33,17 +35,30 @@ pub const Rfc3339Timestamp = struct {
         const year_day = epoch_day.calculateYearDay();
         const month_day = year_day.calculateMonthDay();
 
-        var buf: [25]u8 = undefined;
-        const formatted = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
-            year_day.year,
-            @as(u32, month_day.month.numeric()),
-            @as(u32, month_day.day_index) + 1,
-            day_seconds.getHoursIntoDay(),
-            day_seconds.getMinutesIntoHour(),
-            day_seconds.getSecondsIntoMinute(),
-        }) catch unreachable;
-
-        try jws.write(formatted);
+        if (self.nanos > 0) {
+            var buf: [35]u8 = undefined;
+            const formatted = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>9}Z", .{
+                year_day.year,
+                @as(u32, month_day.month.numeric()),
+                @as(u32, month_day.day_index) + 1,
+                day_seconds.getHoursIntoDay(),
+                day_seconds.getMinutesIntoHour(),
+                day_seconds.getSecondsIntoMinute(),
+                self.nanos,
+            }) catch unreachable;
+            try jws.write(formatted);
+        } else {
+            var buf: [25]u8 = undefined;
+            const formatted = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+                year_day.year,
+                @as(u32, month_day.month.numeric()),
+                @as(u32, month_day.day_index) + 1,
+                day_seconds.getHoursIntoDay(),
+                day_seconds.getMinutesIntoHour(),
+                day_seconds.getSecondsIntoMinute(),
+            }) catch unreachable;
+            try jws.write(formatted);
+        }
     }
 
     pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Self {
@@ -52,14 +67,18 @@ pub const Rfc3339Timestamp = struct {
             .string, .allocated_string => |s| s,
             else => return error.UnexpectedToken,
         };
-        return Self{ .value = timestamp.parseRfc3339(str) orelse return error.InvalidCharacter };
+        const result = timestamp.parseRfc3339WithNanos(str) orelse return error.InvalidCharacter;
+        return Self{ .value = result.seconds, .nanos = result.nanos };
     }
 
     pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !Self {
         _ = allocator;
         _ = options;
         return switch (source) {
-            .string => |s| Self{ .value = timestamp.parseRfc3339(s) orelse return error.InvalidCharacter },
+            .string => |s| blk: {
+                const result = timestamp.parseRfc3339WithNanos(s) orelse return error.InvalidCharacter;
+                break :blk Self{ .value = result.seconds, .nanos = result.nanos };
+            },
             .integer => |i| Self{ .value = i },
             else => error.UnexpectedToken,
         };
@@ -69,12 +88,13 @@ pub const Rfc3339Timestamp = struct {
 /// Optional RFC3339 timestamp wrapper for nullable timestamp fields.
 pub const OptionalRfc3339Timestamp = struct {
     value: ?i64,
+    nanos: u32 = 0,
 
     const Self = @This();
 
     pub fn jsonStringify(self: Self, jws: anytype) !void {
         if (self.value) |v| {
-            const ts = Rfc3339Timestamp{ .value = v };
+            const ts = Rfc3339Timestamp{ .value = v, .nanos = self.nanos };
             try ts.jsonStringify(jws);
         } else {
             try jws.write(null);
@@ -85,7 +105,10 @@ pub const OptionalRfc3339Timestamp = struct {
         const token = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
         return switch (token) {
             .null => Self{ .value = null },
-            .string, .allocated_string => |s| Self{ .value = timestamp.parseRfc3339(s) orelse return error.InvalidCharacter },
+            .string, .allocated_string => |s| blk: {
+                const result = timestamp.parseRfc3339WithNanos(s) orelse return error.InvalidCharacter;
+                break :blk Self{ .value = result.seconds, .nanos = result.nanos };
+            },
             else => error.UnexpectedToken,
         };
     }
@@ -95,7 +118,10 @@ pub const OptionalRfc3339Timestamp = struct {
         _ = options;
         return switch (source) {
             .null => Self{ .value = null },
-            .string => |s| Self{ .value = timestamp.parseRfc3339(s) orelse return error.InvalidCharacter },
+            .string => |s| blk: {
+                const result = timestamp.parseRfc3339WithNanos(s) orelse return error.InvalidCharacter;
+                break :blk Self{ .value = result.seconds, .nanos = result.nanos };
+            },
             .integer => |i| Self{ .value = i },
             else => error.UnexpectedToken,
         };

@@ -57,9 +57,36 @@ pub fn run(
     allocator: std.mem.Allocator,
 ) !void {
     switch (config_args.subcommand) {
+        .help => try runHelp(global, allocator),
         .list => try runList(global, allocator),
         .get => |get| try runGet(get.key, global, allocator),
         .set => |set| try runSet(set.key, set.value, global, allocator),
+        .delete => |del| try runDelete(del.key, global, allocator),
+        .path => try runPath(global, allocator),
+        .edit => try runEdit(global, allocator),
+    }
+}
+
+fn runHelp(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var output = common.initOutput(allocator, global);
+    if (global.isStructuredOutput()) {
+        try output.printJson(.{
+            .success = false,
+            .message = "config requires a subcommand: list, get, set, delete, path, edit",
+        });
+    } else if (!global.quiet) {
+        try output.println("Usage: bz config <subcommand>", .{});
+        try output.print("\n", .{});
+        try output.print("Subcommands:\n", .{});
+        try output.print("  list             List all configuration values\n", .{});
+        try output.print("  get <key>        Get a configuration value\n", .{});
+        try output.print("  set <key> <val>  Set a configuration value\n", .{});
+        try output.print("  delete <key>     Remove a configuration key\n", .{});
+        try output.print("  path             Print config file path\n", .{});
+        try output.print("  edit             Open config in $EDITOR\n", .{});
     }
 }
 
@@ -201,6 +228,139 @@ fn runSet(
     }
 }
 
+fn runDelete(
+    key: []const u8,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return ConfigError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const beads_dir = global.data_path orelse ".beads";
+
+    try deleteConfigValue(allocator, beads_dir, key);
+
+    if (global.isStructuredOutput()) {
+        try ctx.output.printJson(ConfigResult{
+            .success = true,
+            .key = key,
+            .message = "Configuration key deleted",
+        });
+    } else if (!global.quiet) {
+        try ctx.output.print("Deleted {s}\n", .{key});
+    }
+}
+
+fn runPath(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return ConfigError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const beads_dir = global.data_path orelse ".beads";
+    const config_path = try std.fs.path.join(allocator, &.{ beads_dir, "config.yaml" });
+    defer allocator.free(config_path);
+
+    var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs_path = std.fs.cwd().realpath(config_path, &abs_buf) catch config_path;
+
+    if (global.isStructuredOutput()) {
+        try ctx.output.printJson(ConfigResult{
+            .success = true,
+            .value = abs_path,
+        });
+    } else if (!global.quiet) {
+        try ctx.output.print("{s}\n", .{abs_path});
+    }
+}
+
+fn runEdit(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return ConfigError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const beads_dir = global.data_path orelse ".beads";
+    const config_path = try std.fs.path.join(allocator, &.{ beads_dir, "config.yaml" });
+    defer allocator.free(config_path);
+
+    var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs_path = std.fs.cwd().realpath(config_path, &abs_buf) catch config_path;
+
+    const editor = std.posix.getenv("EDITOR") orelse std.posix.getenv("VISUAL") orelse {
+        if (!global.quiet) {
+            try ctx.output.print("{s}\n", .{abs_path});
+            try ctx.output.info("Set $EDITOR to open in your editor", .{});
+        }
+        return;
+    };
+
+    var child = std.process.Child.init(&.{ editor, abs_path }, allocator);
+    _ = child.spawnAndWait() catch {
+        try ctx.output.err("Failed to launch editor: {s}", .{editor});
+    };
+}
+
+/// Delete a config key from the project config file.
+fn deleteConfigValue(
+    allocator: std.mem.Allocator,
+    beads_dir: []const u8,
+    key: []const u8,
+) !void {
+    const config_path = try std.fs.path.join(allocator, &.{ beads_dir, "config" });
+    defer allocator.free(config_path);
+
+    const existing_file = std.fs.cwd().openFile(config_path, .{}) catch |err| {
+        if (err == error.FileNotFound) return;
+        return err;
+    };
+
+    const existing_content = try existing_file.readToEndAlloc(allocator, 1024 * 1024);
+    existing_file.close();
+    defer allocator.free(existing_content);
+
+    var new_content: std.ArrayListUnmanaged(u8) = .{};
+    defer new_content.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, existing_content, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+
+        if (trimmed.len > 0 and trimmed[0] != '#') {
+            if (std.mem.indexOf(u8, trimmed, "=")) |eq_pos| {
+                const line_key = std.mem.trim(u8, trimmed[0..eq_pos], " \t");
+                if (std.mem.eql(u8, line_key, key)) {
+                    continue; // Skip this line (delete the key)
+                }
+            }
+        }
+
+        if (line.len > 0 or lines.rest().len > 0) {
+            try new_content.appendSlice(allocator, line);
+            try new_content.append(allocator, '\n');
+        }
+    }
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ beads_dir, "config.tmp" });
+    defer allocator.free(tmp_path);
+
+    const tmp_file = try std.fs.cwd().createFile(tmp_path, .{});
+    errdefer std.fs.cwd().deleteFile(tmp_path) catch {};
+    try tmp_file.writeAll(new_content.items);
+    try tmp_file.sync();
+    tmp_file.close();
+
+    try std.fs.cwd().rename(tmp_path, config_path);
+}
+
 /// Read a config value from project config file.
 /// Returns null if not set.
 fn getConfigValue(
@@ -332,10 +492,17 @@ test "run detects uninitialized workspace" {
     const allocator = std.testing.allocator;
 
     const global = args.GlobalOptions{ .silent = true, .data_path = "/nonexistent/path" };
-    const config_args = ConfigArgs{ .subcommand = .list };
+    const config_args = ConfigArgs{ .subcommand = .{ .list = {} } };
 
     const result = run(config_args, global, allocator);
     try std.testing.expectError(ConfigError.WorkspaceNotInitialized, result);
+}
+
+test "run help for bare config" {
+    const allocator = std.testing.allocator;
+    const config_args = ConfigArgs{ .subcommand = .help };
+    const global = args.GlobalOptions{ .silent = true };
+    try run(config_args, global, allocator);
 }
 
 test "getConfigValue returns null for missing file" {

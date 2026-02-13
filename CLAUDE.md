@@ -142,14 +142,13 @@ we love you, Claude! do your best today
 
 ### beads_zig Architecture Overview
 
-**beads_zig (`bz`) is an aligned Zig port of beads_rust (`br`) -- same commands, same arguments, same outputs for same inputs.** Binary is `bz`, behavior matches `br` exactly, storage is SQLite.
+**beads_zig (`bz`) is an aligned Zig port of beads_rust (`br`).** All 38 CLI commands are implemented with shared SQLite schema. Core CRUD workflow has output parity; some auxiliary commands have divergent behavior/output (see Parity Status below).
 
 #### Architecture
 
-1. **SQLite primary storage** - Bundled amalgamation (vendor/sqlite3.c), matches br schema exactly
+1. **SQLite primary storage** - Via zqlite package dependency, matches br schema exactly
 2. **JSONL for sync** - Git-tracked export file for collaboration (not primary storage)
-3. **Bundled SQLite** - No system dependencies; `-Dsystem-sqlite=true` to use system lib
-4. **34 CLI commands** - All use SQLite-backed stores (IssueStore, DependencyStore, EventStore)
+3. **38 CLI commands** - All use SQLite-backed stores (IssueStore, DependencyStore, EventStore)
 
 #### Storage Layer
 
@@ -158,7 +157,6 @@ we love you, Claude! do your best today
   beads.db          # SQLite database (primary, gitignored)
   beads.db-wal      # SQLite WAL (auto-managed, gitignored)
   issues.jsonl      # Git-tracked export (sync only)
-  metadata.json     # Workspace metadata
   config.yaml       # Configuration
 ```
 
@@ -174,26 +172,24 @@ All CLI commands go through `CommandContext` (common.zig) which provides:
 - `ctx.event_store` - EventStore (insert, getForIssue, getAll, getByType, count)
 - `ctx.db` - Direct Database handle for advanced queries
 
-Key difference from the old in-memory store: `get(id)` returns an owned `?Issue` copy (not a mutable pointer). Callers must use `update()` to persist changes.
+Key: `get(id)` returns an owned `?Issue` copy (not a mutable pointer). Callers must call `deinit()` to free and use `update()` to persist changes.
 
 #### Codebase Structure
 
 ```
 src/
-  main.zig           # CLI entry point
+  main.zig           # CLI entry point + dispatch
   root.zig           # Library exports + test runner
-  cli/               # Command implementation files
+  cli/               # Command implementation files (38 commands)
     args.zig         # Argument parsing
     common.zig       # CommandContext (SQLite DB + stores)
   storage/
-    sqlite.zig      # SQLite C bindings wrapper (Database, Statement, transactions)
+    sqlite.zig      # SQLite C bindings wrapper (via zqlite)
     schema.zig      # Database schema (11 tables, 29+ indexes, FTS5)
-    issues.zig      # Issue CRUD via SQLite
+    issues.zig      # Issue CRUD + labels + comments via SQLite
     dependencies.zig # Dependency management via SQLite
     events.zig      # Event/audit trail via SQLite
-    labels.zig      # Label management via SQLite
-    comments.zig    # Comment management via SQLite
-    jsonl.zig       # JSONL file I/O (kept for sync export/import)
+    jsonl.zig       # JSONL file I/O (for sync export/import)
     mod.zig         # Storage module re-exports
   models/            # Data structures (Issue, Status, Priority, etc.)
   id/                # Hash-based ID generation (base36)
@@ -202,30 +198,22 @@ src/
   errors.zig         # Structured error handling
 ```
 
-Legacy files (store.zig, wal.zig, compact.zig, lock.zig, graph.zig, etc.) are pending archive.
-
 #### Dependencies
 
 - **rich_zig** - Terminal formatting/colors
 - **toon_zig** - LLM-optimized output format
-- **SQLite** 3.49.1 - Bundled amalgamation (vendor/sqlite3.c)
+- **zqlite** - SQLite package (bundles amalgamation + FTS5/JSON1 flags)
 
 #### Build and Test
 
 ```bash
-zig build                  # Build (bundles SQLite by default)
+zig build                  # Build (SQLite via zqlite dependency)
 zig build run              # Run CLI
-zig build test             # Run all tests
-
-# Use system SQLite instead of bundled
-zig build -Dsystem-sqlite=true
+zig build test             # Run all tests (625 tests)
 
 # Cross-compile (SQLite bundled via Zig's C cross-compiler)
 zig build -Dtarget=aarch64-linux-gnu
 zig build -Dtarget=x86_64-windows-gnu
-
-# Setup vendor (if vendor/ is empty)
-./scripts/setup-vendor.sh
 ```
 
 #### Sandbox Testing
@@ -239,4 +227,25 @@ cd sandbox
 ```
 
 The project root may have a `.beads/` for beads_rust tracking.
+
+#### Parity Status (2026-02-13)
+
+**625/625 unit tests pass, 28/30 conformance tests pass.**
+
+Commands with FULL output parity: create, list, show, update, close, reopen, delete, q,
+search, count, dep, label, comments, defer, undefer, doctor (text)
+
+Commands with PARTIAL parity (functional, output differs): stats, info, version, where,
+ready (text), blocked (text), stale, init
+
+Commands with DIFFERENT semantics than br: history (event viewer vs backup manager),
+schema (markdown vs JSON Schema), lint (DB checker vs template checker),
+audit (event dump vs subcommand-based recorder), config (dump vs subcommands)
+
+Known bugs: Memory leak in ready/blocked (issue_store.get() result not freed)
+
+Known stubs: --file in create, list priority-range filters, audit limit/days,
+sync orphan_policy/rename_prefix
+
+Missing: auto-flush to JSONL, global flags (--actor, --lock-timeout, --no-auto-flush, etc.)
 

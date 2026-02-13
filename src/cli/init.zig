@@ -123,9 +123,6 @@ pub fn run(
         });
     } else {
         try output.success("Initialized beads workspace in {s}/", .{beads_dir});
-        try output.print("  Issue prefix: {s}\n", .{init_args.prefix});
-        try output.print("  Database: {s}/beads.db\n", .{beads_dir});
-        try output.print("  Sync export: {s}/issues.jsonl\n", .{beads_dir});
     }
 }
 

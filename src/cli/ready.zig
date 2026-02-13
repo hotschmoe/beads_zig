@@ -113,7 +113,6 @@ pub fn run(
     }
 
     const issues_slice = try issues.toOwnedSlice(allocator);
-    defer allocator.free(issues_slice);
 
     // Apply parent filter if specified
     var filtered_issues: []Issue = issues_slice;
@@ -124,6 +123,15 @@ pub fn run(
         }
         allocator.free(owned);
     };
+    defer {
+        if (parent_owned == null) {
+            for (issues_slice) |*issue| {
+                var i = issue.*;
+                i.deinit(allocator);
+            }
+        }
+        allocator.free(issues_slice);
+    }
 
     if (ready_args.parent) |parent_id| {
         var parent_filtered: std.ArrayList(Issue) = .empty;
@@ -172,10 +180,24 @@ pub fn run(
 
         // Bare array matching br format
         try ctx.output.printJson(full_issues);
-    } else {
-        try ctx.output.printIssueList(display_issues);
-        if (!global.quiet and display_issues.len == 0) {
+    } else if (!global.quiet) {
+        if (display_issues.len == 0) {
             try ctx.output.info("No ready issues", .{});
+        } else {
+            try ctx.output.println("Ready work ({d} issue(s) with no blockers):", .{display_issues.len});
+            try ctx.output.print("\n", .{});
+            for (display_issues, 0..) |issue, idx| {
+                const output_mod = @import("../output/mod.zig");
+                const bullet = output_mod.priorityBullet(issue.priority);
+                try ctx.output.print("{d}. [{s} P{d}] [{s}] {s}: {s}\n", .{
+                    idx + 1,
+                    bullet,
+                    issue.priority.value,
+                    issue.issue_type.toString(),
+                    issue.id,
+                    issue.title,
+                });
+            }
         }
     }
 }
@@ -226,7 +248,13 @@ pub fn runBlocked(
     }
 
     const issues_slice = try issues.toOwnedSlice(allocator);
-    defer allocator.free(issues_slice);
+    defer {
+        for (issues_slice) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(issues_slice);
+    }
 
     // Apply filters (blocked command doesn't support overdue filter)
     const filtered = try applyFilters(allocator, issues_slice, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains, false);
@@ -280,39 +308,48 @@ pub fn runBlocked(
 
         // Bare array matching br format
         try ctx.output.printJson(blocked_issues);
-    } else {
-        for (display_issues) |issue| {
-            // Find blocker IDs for this issue
-            var blocker_ids_list: std.ArrayList([]const u8) = .empty;
-            defer {
-                for (blocker_ids_list.items) |bid| allocator.free(bid);
-                blocker_ids_list.deinit(allocator);
-            }
-
-            for (blocked_infos) |info| {
-                if (std.mem.eql(u8, info.issue_id, issue.id)) {
-                    var iter = std.mem.splitScalar(u8, info.blocked_by, ',');
-                    while (iter.next()) |blocker_id| {
-                        try blocker_ids_list.append(allocator, try allocator.dupe(u8, blocker_id));
-                    }
-                    break;
-                }
-            }
-
-            try ctx.output.print("{s}  {s}\n", .{ issue.id, issue.title });
-
-            if (blocker_ids_list.items.len > 0) {
-                try ctx.output.print("  blocked by: ", .{});
-                for (blocker_ids_list.items, 0..) |blocker_id, j| {
-                    if (j > 0) try ctx.output.print(", ", .{});
-                    try ctx.output.print("{s}", .{blocker_id});
-                }
-                try ctx.output.print("\n", .{});
-            }
-        }
-
-        if (!global.quiet and display_issues.len == 0) {
+    } else if (!global.quiet) {
+        if (display_issues.len == 0) {
             try ctx.output.info("No blocked issues", .{});
+        } else {
+            try ctx.output.println("Blocked issues ({d}):", .{display_issues.len});
+            try ctx.output.print("\n", .{});
+
+            for (display_issues, 0..) |issue, idx| {
+                // Find blocker IDs for this issue
+                var blocker_ids_list: std.ArrayList([]const u8) = .empty;
+                defer {
+                    for (blocker_ids_list.items) |bid| allocator.free(bid);
+                    blocker_ids_list.deinit(allocator);
+                }
+
+                for (blocked_infos) |info| {
+                    if (std.mem.eql(u8, info.issue_id, issue.id)) {
+                        var iter = std.mem.splitScalar(u8, info.blocked_by, ',');
+                        while (iter.next()) |blocker_id| {
+                            try blocker_ids_list.append(allocator, try allocator.dupe(u8, blocker_id));
+                        }
+                        break;
+                    }
+                }
+
+                try ctx.output.print("{d}. [P{d}] [{s}] {s}: {s}\n", .{
+                    idx + 1,
+                    issue.priority.value,
+                    issue.issue_type.toString(),
+                    issue.id,
+                    issue.title,
+                });
+
+                if (blocker_ids_list.items.len > 0) {
+                    try ctx.output.print("   Blocked by {d} open dep(s): ", .{blocker_ids_list.items.len});
+                    for (blocker_ids_list.items, 0..) |blocker_id, j| {
+                        if (j > 0) try ctx.output.print(", ", .{});
+                        try ctx.output.print("{s}", .{blocker_id});
+                    }
+                    try ctx.output.print("\n", .{});
+                }
+            }
         }
     }
 }

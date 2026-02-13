@@ -31,8 +31,8 @@ const ShowIssueFull = struct {
     compaction_level: u32 = 0,
     original_size: u64 = 0,
     labels: ?[]const []const u8 = null,
-    dependencies: []const DepDetail = &.{},
-    comments: []const CommentDetail = &.{},
+    dependencies: ?[]const DepDetail = null,
+    comments: ?[]const CommentDetail = null,
 };
 
 const DepDetail = struct {
@@ -146,8 +146,8 @@ pub fn run(
             .compaction_level = issue.compaction_level,
             .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
             .labels = if (issue.labels.len > 0) issue.labels else null,
-            .dependencies = dep_details,
-            .comments = comment_details,
+            .dependencies = if (dep_details.len > 0) dep_details else null,
+            .comments = if (comment_details.len > 0) comment_details else null,
         };
 
         const arr = [_]ShowIssueFull{show_full};

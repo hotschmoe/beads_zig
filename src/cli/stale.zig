@@ -97,7 +97,7 @@ fn outputJson(out: *common.Output, issues: []const Issue, days: u32, allocator: 
 
 fn outputHuman(out: *common.Output, issues: []const Issue, days: u32, now: i64) !void {
     if (issues.len == 0) {
-        try out.print("No stale issues (updated within {d} days)\n", .{days});
+        try out.print("Stale issues (0 not updated in {d}+ days):\n", .{days});
         return;
     }
 

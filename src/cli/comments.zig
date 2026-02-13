@@ -123,6 +123,8 @@ fn runAdd(
     } else {
         try ctx.output.success("Comment added to {s}", .{id});
     }
+
+    ctx.autoFlush();
 }
 
 fn runList(

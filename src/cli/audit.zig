@@ -63,11 +63,34 @@ pub fn run(
     allocator: std.mem.Allocator,
 ) !void {
     switch (audit_args.subcommand) {
+        .help => try runHelp(global, allocator),
         .record => |record_args| try runRecord(record_args, global, allocator),
         .label => |label_args| try runLabel(label_args, global, allocator),
         .log => |log_args| try runLog(log_args, global, allocator),
         .summary => |summary_args| try runSummary(summary_args, global, allocator),
         .list => |list_args| try runList(list_args, global, allocator),
+    }
+}
+
+fn runHelp(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var output = common.initOutput(allocator, global);
+    if (global.isStructuredOutput()) {
+        try output.printJson(.{
+            .success = false,
+            .message = "audit requires a subcommand: record, label, log, summary, list",
+        });
+    } else if (!global.quiet) {
+        try output.println("Usage: bz audit <subcommand>", .{});
+        try output.print("\n", .{});
+        try output.print("Subcommands:\n", .{});
+        try output.print("  record <kind>       Record LLM/tool interaction\n", .{});
+        try output.print("  label <id> <label>  Label audit entry\n", .{});
+        try output.print("  log <issue-id>      View audit log for issue\n", .{});
+        try output.print("  summary             Summary of audit data\n", .{});
+        try output.print("  list                List all audit events\n", .{});
     }
 }
 
@@ -243,9 +266,6 @@ fn runLog(
     };
     defer ctx.deinit();
 
-    // TODO: implement limit support
-    _ = log_args.limit;
-
     const events = try ctx.event_store.getForIssue(log_args.issue_id);
     defer ctx.event_store.freeEvents(events);
 
@@ -271,24 +291,29 @@ fn runLog(
         }
     }.lessThan);
 
+    const display_events = if (log_args.limit) |lim|
+        audit_events.items[0..@min(audit_events.items.len, lim)]
+    else
+        audit_events.items;
+
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .events = audit_events.items,
+            .events = display_events,
             .total = audit_events.items.len,
         });
     } else if (global.quiet) {
-        for (audit_events.items) |event| {
+        for (display_events) |event| {
             try ctx.output.print("{d} {s} {s}\n", .{ event.id, event.issue_id, event.event_type });
         }
     } else {
-        if (audit_events.items.len == 0) {
+        if (display_events.len == 0) {
             try ctx.output.info("No events found for issue {s}", .{log_args.issue_id});
         } else {
             try ctx.output.println("Audit Log for {s} ({d} events):", .{ log_args.issue_id, audit_events.items.len });
             try ctx.output.print("\n", .{});
 
-            for (audit_events.items) |event| {
+            for (display_events) |event| {
                 try ctx.output.print("[{d}] ts:{d}  {s: <15}  {s}\n", .{
                     event.id,
                     event.created_at,
@@ -315,13 +340,12 @@ fn runSummary(
     };
     defer ctx.deinit();
 
-    // TODO: implement date filtering based on summary_args.days
-    _ = summary_args.days;
-
     const events = try ctx.event_store.getAll(null);
     defer ctx.event_store.freeEvents(events);
 
-    // Count by type
+    const cutoff: i64 = std.time.timestamp() - @as(i64, summary_args.days) * 86400;
+
+    // Count by type (only events within the time window)
     var llm_calls: usize = 0;
     var tool_calls: usize = 0;
     var issue_creates: usize = 0;
@@ -333,6 +357,8 @@ fn runSummary(
     defer actor_counts.deinit(allocator);
 
     for (events) |event| {
+        if (event.created_at < cutoff) continue;
+
         switch (event.event_type) {
             .llm_call => llm_calls += 1,
             .tool_call => tool_calls += 1,
@@ -366,7 +392,7 @@ fn runSummary(
 
     const summary = AuditResult.AuditSummary{
         .period_days = summary_args.days,
-        .total_events = events.len,
+        .total_events = llm_calls + tool_calls + issue_creates + issue_closes + other_events,
         .llm_calls = llm_calls,
         .tool_calls = tool_calls,
         .issue_creates = issue_creates,
@@ -502,6 +528,13 @@ test "run detects uninitialized workspace" {
     try std.testing.expectError(AuditError.WorkspaceNotInitialized, result);
 }
 
+test "run help for bare audit" {
+    const allocator = std.testing.allocator;
+    const audit_args = args.AuditArgs{ .subcommand = .help };
+    const global = args.GlobalOptions{ .silent = true };
+    try run(audit_args, global, allocator);
+}
+
 test "AuditSubcommand record parses correctly" {
     const allocator = std.testing.allocator;
     const cmd_args = [_][]const u8{ "audit", "record", "llm_call", "--model", "gpt-4", "--prompt", "hello" };
@@ -544,7 +577,7 @@ test "AuditSubcommand summary parses days" {
     }
 }
 
-test "AuditSubcommand list is default" {
+test "AuditSubcommand help is default" {
     const allocator = std.testing.allocator;
     const cmd_args = [_][]const u8{"audit"};
     var parser = args.ArgParser.init(allocator, &cmd_args);
@@ -554,7 +587,7 @@ test "AuditSubcommand list is default" {
     switch (result.command) {
         .audit => |a| {
             switch (a.subcommand) {
-                .list => {},
+                .help => {},
                 else => try std.testing.expect(false),
             }
         },

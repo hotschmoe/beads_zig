@@ -38,6 +38,15 @@ pub const DepResult = struct {
     message: ?[]const u8 = null,
 };
 
+const DepListEntry = struct {
+    issue_id: []const u8,
+    depends_on_id: []const u8,
+    dep_type: []const u8,
+    title: []const u8,
+    status: []const u8,
+    priority: models.Priority,
+};
+
 pub fn run(
     dep_args: args.DepArgs,
     global: args.GlobalOptions,
@@ -102,6 +111,8 @@ fn runAdd(
     } else if (!global.quiet) {
         try ctx.output.success("\xe2\x9c\x93 Added dependency: {s} -> {s} (blocks)", .{ add_args.child, add_args.parent });
     }
+
+    ctx.autoFlush();
 }
 
 fn runRemove(
@@ -125,6 +136,8 @@ fn runRemove(
     } else if (!global.quiet) {
         try ctx.output.success("Removed dependency: {s} no longer depends on {s}", .{ remove_args.child, remove_args.parent });
     }
+
+    ctx.autoFlush();
 }
 
 fn runList(
@@ -151,33 +164,50 @@ fn runList(
     defer if (show_up) ctx.dep_store.freeDependencies(dependents);
 
     if (global.isStructuredOutput()) {
-        var depends_on_ids: ?[][]const u8 = null;
-        var blocks_ids: ?[][]const u8 = null;
+        // Build rich dep entries with issue details
+        var entries: std.ArrayListUnmanaged(DepListEntry) = .{};
+        defer entries.deinit(allocator);
 
-        if (show_down and deps.len > 0) {
-            depends_on_ids = try allocator.alloc([]const u8, deps.len);
-            for (deps, 0..) |dep, i| {
-                depends_on_ids.?[i] = dep.depends_on_id;
-            }
-        }
-
-        if (show_up and dependents.len > 0) {
-            blocks_ids = try allocator.alloc([]const u8, dependents.len);
-            for (dependents, 0..) |dep, i| {
-                blocks_ids.?[i] = dep.issue_id;
-            }
-        }
-
+        // Keep fetched issues alive for the entries' borrowed slices
+        var fetched: std.ArrayListUnmanaged(?models.Issue) = .{};
         defer {
-            if (depends_on_ids) |ids| allocator.free(ids);
-            if (blocks_ids) |ids| allocator.free(ids);
+            for (fetched.items) |*fi| {
+                if (fi.*) |*f| f.deinit(allocator);
+            }
+            fetched.deinit(allocator);
         }
 
-        try ctx.output.printJson(DepResult{
-            .success = true,
-            .depends_on = depends_on_ids,
-            .blocks = blocks_ids,
-        });
+        if (show_down) {
+            for (deps) |dep| {
+                const di = ctx.issue_store.get(dep.depends_on_id) catch null;
+                try fetched.append(allocator, di);
+                try entries.append(allocator, .{
+                    .issue_id = list_args.id,
+                    .depends_on_id = dep.depends_on_id,
+                    .dep_type = dep.dep_type.toString(),
+                    .title = if (di) |d| d.title else "(not found)",
+                    .status = if (di) |d| d.status.toString() else "unknown",
+                    .priority = if (di) |d| d.priority else .{ .value = 2 },
+                });
+            }
+        }
+
+        if (show_up) {
+            for (dependents) |dep| {
+                const di = ctx.issue_store.get(dep.issue_id) catch null;
+                try fetched.append(allocator, di);
+                try entries.append(allocator, .{
+                    .issue_id = dep.issue_id,
+                    .depends_on_id = list_args.id,
+                    .dep_type = dep.dep_type.toString(),
+                    .title = if (di) |d| d.title else "(not found)",
+                    .status = if (di) |d| d.status.toString() else "unknown",
+                    .priority = if (di) |d| d.priority else .{ .value = 2 },
+                });
+            }
+        }
+
+        try ctx.output.printJson(entries.items);
     } else {
         const total_count = (if (show_down) deps.len else @as(usize, 0)) +
             (if (show_up) dependents.len else @as(usize, 0));

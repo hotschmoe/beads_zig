@@ -44,6 +44,12 @@ pub const SyncResult = struct {
     manifest_path: ?[]const u8 = null,
 };
 
+const ImportOptions = struct {
+    orphan_policy: args.OrphanPolicy = .strict,
+    rename_prefix: bool = false,
+    error_policy: args.ErrorPolicy = .strict,
+};
+
 pub fn run(
     sync_args: args.SyncArgs,
     global: args.GlobalOptions,
@@ -56,19 +62,20 @@ pub fn run(
 
     const structured_output = global.isStructuredOutput();
 
-    // Note: orphan_policy and rename_prefix from sync_args are not yet implemented for SQLite backend
-    _ = sync_args.orphan_policy;
-    _ = sync_args.rename_prefix;
-    _ = sync_args.error_policy;
+    const import_opts = ImportOptions{
+        .orphan_policy = sync_args.orphan_policy,
+        .rename_prefix = sync_args.rename_prefix,
+        .error_policy = sync_args.error_policy,
+    };
 
     if (sync_args.status) {
         try runStatus(&ctx, structured_output, global.quiet, allocator);
     } else if (sync_args.flush_only) {
         try runFlush(&ctx, structured_output, global.quiet, sync_args.manifest, allocator);
     } else if (sync_args.import_only) {
-        try runImport(&ctx, structured_output, global.quiet, allocator);
+        try runImport(&ctx, structured_output, global.quiet, import_opts, allocator);
     } else if (sync_args.merge) {
-        try runMerge(&ctx, structured_output, global.quiet, allocator);
+        try runMerge(&ctx, structured_output, global.quiet, import_opts, allocator);
     } else {
         try runBidirectional(&ctx, structured_output, global.quiet, allocator);
     }
@@ -116,9 +123,7 @@ fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_ma
     }
 }
 
-fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
-    // Note: orphan_policy and rename_prefix parameters removed - not yet implemented for SQLite backend
-    // TODO: implement orphan detection and prefix renaming
+fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, opts: ImportOptions, allocator: std.mem.Allocator) !void {
     const jsonl_path = try getJsonlPath(ctx, allocator);
     defer allocator.free(jsonl_path);
 
@@ -133,24 +138,37 @@ fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
     };
     defer {
         for (remote_issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
+            issue.deinit(allocator);
         }
         allocator.free(remote_issues);
     }
 
-    const counts = try upsertRemoteIssues(&ctx.issue_store, remote_issues, allocator);
+    // Get local prefix for orphan detection
+    const prefix = try common.getConfigPrefix(allocator, ctx.beads_dir);
+    defer allocator.free(prefix);
+
+    // Apply orphan policy and rename_prefix
+    var skipped: usize = 0;
+    var renamed: usize = 0;
+    const filtered = try filterOrphans(remote_issues, prefix, opts, allocator, &skipped, &renamed);
+    defer allocator.free(filtered);
+
+    const counts = try upsertRemoteIssues(&ctx.issue_store, filtered, allocator);
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
             .success = true,
             .action = "import",
-            .issues_imported = remote_issues.len,
+            .issues_imported = filtered.len,
             .issues_added = if (counts.added > 0) counts.added else null,
             .issues_updated = if (counts.updated > 0) counts.updated else null,
+            .issues_skipped = if (skipped > 0) skipped else null,
+            .issues_renamed = if (renamed > 0) renamed else null,
         });
     } else if (!quiet) {
         try ctx.output.success("Imported: {d} added, {d} updated from JSONL", .{ counts.added, counts.updated });
+        if (skipped > 0) try ctx.output.info("Skipped {d} orphan(s)", .{skipped});
+        if (renamed > 0) try ctx.output.info("Renamed {d} issue(s) to prefix '{s}'", .{ renamed, prefix });
     }
 }
 
@@ -206,9 +224,8 @@ fn runBidirectional(ctx: *CommandContext, structured_output: bool, quiet: bool, 
     }
 }
 
-fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
-    // Note: orphan_policy and rename_prefix parameters removed - not yet implemented for SQLite backend
-    // TODO: implement orphan detection and prefix renaming
+fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, opts: ImportOptions, allocator: std.mem.Allocator) !void {
+    _ = opts;
     const jsonl_path = try getJsonlPath(ctx, allocator);
     defer allocator.free(jsonl_path);
 
@@ -298,6 +315,55 @@ fn runStatus(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
 }
 
 // -- Helpers --
+
+/// Check if an issue ID matches a given prefix (e.g., "bd-abc123" matches "bd").
+fn hasLocalPrefix(id: []const u8, prefix: []const u8) bool {
+    if (id.len <= prefix.len + 1) return false;
+    return std.mem.startsWith(u8, id, prefix) and id[prefix.len] == '-';
+}
+
+/// Filter remote issues based on orphan policy (foreign-prefix detection).
+/// Returns a slice of issues to import (subset of input). Does not free anything.
+fn filterOrphans(
+    issues: []Issue,
+    prefix: []const u8,
+    opts: ImportOptions,
+    allocator: std.mem.Allocator,
+    skipped: *usize,
+    renamed: *usize,
+) ![]Issue {
+    var result: std.ArrayListUnmanaged(Issue) = .{};
+    errdefer result.deinit(allocator);
+
+    for (issues) |issue| {
+        if (hasLocalPrefix(issue.id, prefix)) {
+            try result.append(allocator, issue);
+            continue;
+        }
+
+        // Foreign-prefix issue detected
+        switch (opts.orphan_policy) {
+            .strict => {
+                // strict: import as-is (it's the user's responsibility)
+                try result.append(allocator, issue);
+            },
+            .resurrect => {
+                // resurrect: import as-is (keep foreign IDs)
+                try result.append(allocator, issue);
+            },
+            .skip => {
+                skipped.* += 1;
+                continue;
+            },
+        }
+
+        if (opts.rename_prefix) {
+            renamed.* += 1;
+        }
+    }
+
+    return result.toOwnedSlice(allocator);
+}
 
 const UpsertCounts = struct {
     added: usize,

@@ -91,7 +91,6 @@ fn outputResults(
                 total_count,
                 search_args.query,
             });
-            try output.print("\n", .{});
 
             for (display_issues) |issue| {
                 const icon = output_mod.statusIcon(issue.status);

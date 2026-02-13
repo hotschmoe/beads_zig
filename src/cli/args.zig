@@ -457,6 +457,8 @@ pub const HistoryArgs = struct {
 
 /// Audit subcommand variants.
 pub const AuditSubcommand = union(enum) {
+    /// Show usage help when no subcommand given.
+    help,
     /// Record an LLM/tool interaction for training data.
     record: struct {
         kind: []const u8, // "llm_call" or "tool_call"
@@ -573,6 +575,7 @@ pub const HelpArgs = struct {
 
 /// Config subcommand variants.
 pub const ConfigSubcommand = union(enum) {
+    help,
     get: struct {
         key: []const u8,
     },
@@ -580,7 +583,12 @@ pub const ConfigSubcommand = union(enum) {
         key: []const u8,
         value: []const u8,
     },
+    delete: struct {
+        key: []const u8,
+    },
     list: void,
+    path: void,
+    edit: void,
 };
 
 /// Config command arguments.
@@ -1608,8 +1616,8 @@ pub const ArgParser = struct {
     fn parseAuditArgs(self: *Self) ParseError!AuditArgs {
         // Check for subcommand
         const subcmd = self.next() orelse {
-            // Default: list with no limit
-            return .{ .subcommand = .{ .list = .{ .limit = null } } };
+            // No subcommand: show help (matching br)
+            return .{ .subcommand = .help };
         };
 
         // Handle --limit flag at top level (legacy support)
@@ -1767,7 +1775,7 @@ pub const ArgParser = struct {
     }
 
     fn parseConfigArgs(self: *Self) ParseError!ConfigArgs {
-        const subcmd = self.next() orelse return .{ .subcommand = .{ .list = {} } };
+        const subcmd = self.next() orelse return .{ .subcommand = .help };
 
         if (std.mem.eql(u8, subcmd, "get")) {
             return .{ .subcommand = .{ .get = .{ .key = self.next() orelse return error.MissingRequiredArgument } } };
@@ -1778,8 +1786,17 @@ pub const ArgParser = struct {
                 .value = self.next() orelse return error.MissingRequiredArgument,
             } } };
         }
+        if (std.mem.eql(u8, subcmd, "delete") or std.mem.eql(u8, subcmd, "rm")) {
+            return .{ .subcommand = .{ .delete = .{ .key = self.next() orelse return error.MissingRequiredArgument } } };
+        }
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
             return .{ .subcommand = .{ .list = {} } };
+        }
+        if (std.mem.eql(u8, subcmd, "path")) {
+            return .{ .subcommand = .path };
+        }
+        if (std.mem.eql(u8, subcmd, "edit")) {
+            return .{ .subcommand = .edit };
         }
         return error.UnknownSubcommand;
     }
@@ -2753,13 +2770,13 @@ test "parse completions command missing shell returns error" {
     try std.testing.expectError(error.MissingRequiredArgument, parser.parse());
 }
 
-test "parse config list (default)" {
+test "parse config help (default)" {
     const args = [_][]const u8{"config"};
     var parser = ArgParser.init(std.testing.allocator, &args);
     const result = try parser.parse();
 
     try std.testing.expect(result.command == .config);
-    try std.testing.expect(result.command.config.subcommand == .list);
+    try std.testing.expect(result.command.config.subcommand == .help);
 }
 
 test "parse config get" {

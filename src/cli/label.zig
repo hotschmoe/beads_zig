@@ -115,6 +115,8 @@ fn runAdd(
             try ctx.output.info("No new labels added (already present)", .{});
         }
     }
+
+    ctx.autoFlush();
 }
 
 fn runRemove(
@@ -186,6 +188,8 @@ fn runRemove(
             try ctx.output.info("No labels removed (not present)", .{});
         }
     }
+
+    ctx.autoFlush();
 }
 
 fn runList(
@@ -309,6 +313,8 @@ fn runRename(
             try ctx.output.info("No issues found with label '{s}'", .{old_name});
         }
     }
+
+    ctx.autoFlush();
 }
 
 // --- Tests ---

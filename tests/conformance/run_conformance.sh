@@ -23,6 +23,8 @@ RESULTS_DIR=""
 
 # br-specific flags to suppress auto-sync noise
 BR_FLAGS="--no-color --allow-stale --no-auto-flush --no-auto-import"
+# bz flags to match br test conditions
+BZ_FLAGS="--no-auto-flush"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -143,7 +145,7 @@ run_test() {
 
     log "Running test: $name"
     log "  BR cmd: (cd $BR_DIR && $BR $cmd_br $BR_FLAGS)"
-    log "  BZ cmd: (cd $BZ_DIR && $BZ $cmd_bz)"
+    log "  BZ cmd: (cd $BZ_DIR && $BZ $cmd_bz $BZ_FLAGS)"
 
     # Run br
     br_stdout=$(cd "$BR_DIR" && eval "$BR $cmd_br $BR_FLAGS" 2>"$RESULTS_DIR/br_stderr" || true)
@@ -151,7 +153,7 @@ run_test() {
     br_exit=0
 
     # Run bz
-    bz_stdout=$(cd "$BZ_DIR" && eval "$BZ $cmd_bz" 2>"$RESULTS_DIR/bz_stderr" || true)
+    bz_stdout=$(cd "$BZ_DIR" && eval "$BZ $cmd_bz $BZ_FLAGS" 2>"$RESULTS_DIR/bz_stderr" || true)
     bz_stderr=$(cat "$RESULTS_DIR/bz_stderr")
     bz_exit=0
 
@@ -201,7 +203,7 @@ capture_id_br() {
 capture_id_bz() {
     local cmd="$1"
     local output
-    output=$(cd "$BZ_DIR" && eval "$BZ $cmd" 2>/dev/null || true)
+    output=$(cd "$BZ_DIR" && eval "$BZ $cmd $BZ_FLAGS" 2>/dev/null || true)
     # bz outputs: "Created issue bd-XXX"
     echo "$output" | grep -oP 'bd-[a-z0-9]+' | head -1
 }
@@ -345,7 +347,7 @@ run_test "06_show" "show $BR_ID1" "show $BZ_ID1" "Output format differs (br uses
 
 # Count should return the same number
 br_count=$(cd "$BR_DIR" && $BR count $BR_FLAGS 2>/dev/null || true)
-bz_count=$(cd "$BZ_DIR" && $BZ count 2>/dev/null || true)
+bz_count=$(cd "$BZ_DIR" && $BZ count $BZ_FLAGS 2>/dev/null || true)
 
 br_count_num=$(echo "$br_count" | grep -oP '^\d+$' | head -1)
 bz_count_num=$(echo "$bz_count" | grep -oP '^\d+$' | head -1)
@@ -366,7 +368,7 @@ echo ""
 echo "--- Phase 4: Mutations ---"
 
 br_update_out=$(cd "$BR_DIR" && $BR update $BR_ID1 -p P2 $BR_FLAGS 2>/dev/null || true)
-bz_update_out=$(cd "$BZ_DIR" && $BZ update $BZ_ID1 --priority medium 2>/dev/null || true)
+bz_update_out=$(cd "$BZ_DIR" && $BZ update $BZ_ID1 --priority medium $BZ_FLAGS 2>/dev/null || true)
 
 # Both should indicate success
 if [[ -n "$br_update_out" || -n "$bz_update_out" ]]; then
@@ -385,7 +387,7 @@ fi
 # --- Test 10: close -----------------------------------------------------------
 
 br_close_out=$(cd "$BR_DIR" && $BR close $BR_ID2 $BR_FLAGS 2>/dev/null || true)
-bz_close_out=$(cd "$BZ_DIR" && $BZ close $BZ_ID2 2>/dev/null || true)
+bz_close_out=$(cd "$BZ_DIR" && $BZ close $BZ_ID2 $BZ_FLAGS 2>/dev/null || true)
 
 br_close_ok=$(echo "$br_close_out" | grep -ci "closed" || true)
 bz_close_ok=$(echo "$bz_close_out" | grep -ci "closed" || true)
@@ -405,7 +407,7 @@ run_test "11_list_after_close" "list" "list" "Output format differs"
 # br: label add <issue> --label <name>
 # bz: label add <issue> <name>
 br_label_out=$(cd "$BR_DIR" && $BR label add $BR_ID1 --label bugfix $BR_FLAGS 2>/dev/null || true)
-bz_label_out=$(cd "$BZ_DIR" && $BZ label add $BZ_ID1 bugfix 2>/dev/null || true)
+bz_label_out=$(cd "$BZ_DIR" && $BZ label add $BZ_ID1 bugfix $BZ_FLAGS 2>/dev/null || true)
 
 br_label_ok=$(echo "$br_label_out" | grep -ci "added\|label" || true)
 bz_label_ok=$(echo "$bz_label_out" | grep -ci "added\|label" || true)
@@ -421,7 +423,7 @@ fi
 # br: comments add <issue> "text"
 # bz: comments add <issue> "text"
 br_comment_out=$(cd "$BR_DIR" && $BR comments add $BR_ID1 "Test comment" $BR_FLAGS 2>/dev/null || true)
-bz_comment_out=$(cd "$BZ_DIR" && $BZ comments add $BZ_ID1 "Test comment" 2>/dev/null || true)
+bz_comment_out=$(cd "$BZ_DIR" && $BZ comments add $BZ_ID1 "Test comment" $BZ_FLAGS 2>/dev/null || true)
 
 br_comment_ok=$(echo "$br_comment_out" | grep -ci "comment\|added" || true)
 bz_comment_ok=$(echo "$bz_comment_out" | grep -ci "comment\|added" || true)
@@ -437,7 +439,7 @@ fi
 # br: dep add <issue> <depends_on>
 # bz: dep add <issue> <depends_on>
 br_dep_out=$(cd "$BR_DIR" && $BR dep add $BR_ID1 $BR_ID3 $BR_FLAGS 2>/dev/null || true)
-bz_dep_out=$(cd "$BZ_DIR" && $BZ dep add $BZ_ID1 $BZ_ID3 2>/dev/null || true)
+bz_dep_out=$(cd "$BZ_DIR" && $BZ dep add $BZ_ID1 $BZ_ID3 $BZ_FLAGS 2>/dev/null || true)
 
 br_dep_ok=$(echo "$br_dep_out" | grep -ci "added\|dependency\|depends" || true)
 bz_dep_ok=$(echo "$bz_dep_out" | grep -ci "added\|dependency\|depends" || true)
@@ -455,7 +457,7 @@ run_test "15_dep_list" "dep list $BR_ID1" "dep list $BZ_ID1" "Minor format diffe
 # --- Test 16: reopen ----------------------------------------------------------
 
 br_reopen_out=$(cd "$BR_DIR" && $BR reopen $BR_ID2 $BR_FLAGS 2>/dev/null || true)
-bz_reopen_out=$(cd "$BZ_DIR" && $BZ reopen $BZ_ID2 2>/dev/null || true)
+bz_reopen_out=$(cd "$BZ_DIR" && $BZ reopen $BZ_ID2 $BZ_FLAGS 2>/dev/null || true)
 
 br_reopen_ok=$(echo "$br_reopen_out" | grep -ci "reopen" || true)
 bz_reopen_ok=$(echo "$bz_reopen_out" | grep -ci "reopen" || true)
@@ -516,7 +518,7 @@ echo ""
 echo "--- Phase 7: Destructive Operations ---"
 
 br_del_out=$(cd "$BR_DIR" && $BR delete $BR_ID3 $BR_FLAGS 2>/dev/null || true)
-bz_del_out=$(cd "$BZ_DIR" && $BZ delete $BZ_ID3 2>/dev/null || true)
+bz_del_out=$(cd "$BZ_DIR" && $BZ delete $BZ_ID3 $BZ_FLAGS 2>/dev/null || true)
 
 br_del_ok=$(echo "$br_del_out" | grep -ci "delet\|tombstone\|removed" || true)
 bz_del_ok=$(echo "$bz_del_out" | grep -ci "delet\|tombstone\|removed" || true)
@@ -560,7 +562,7 @@ echo ""
 echo "--- Phase 9: Dependency Removal ---"
 
 br_deprem_out=$(cd "$BR_DIR" && $BR dep remove $BR_ID1 $BR_ID3 $BR_FLAGS 2>/dev/null || true)
-bz_deprem_out=$(cd "$BZ_DIR" && $BZ dep remove $BZ_ID1 $BZ_ID3 2>/dev/null || true)
+bz_deprem_out=$(cd "$BZ_DIR" && $BZ dep remove $BZ_ID1 $BZ_ID3 $BZ_FLAGS 2>/dev/null || true)
 
 br_deprem_ok=$(echo "$br_deprem_out" | grep -ci "removed\|dependency" || true)
 bz_deprem_ok=$(echo "$bz_deprem_out" | grep -ci "removed\|dependency" || true)
@@ -577,7 +579,7 @@ fi
 # --- Test 29: label remove ---------------------------------------------------
 
 br_labrem_out=$(cd "$BR_DIR" && $BR label remove $BR_ID1 --label bugfix $BR_FLAGS 2>/dev/null || true)
-bz_labrem_out=$(cd "$BZ_DIR" && $BZ label remove $BZ_ID1 bugfix 2>/dev/null || true)
+bz_labrem_out=$(cd "$BZ_DIR" && $BZ label remove $BZ_ID1 bugfix $BZ_FLAGS 2>/dev/null || true)
 
 br_labrem_ok=$(echo "$br_labrem_out" | grep -ci "removed\|label" || true)
 bz_labrem_ok=$(echo "$bz_labrem_out" | grep -ci "removed\|label" || true)
@@ -594,7 +596,7 @@ echo ""
 echo "--- Phase 10: Miscellaneous ---"
 
 br_where=$(cd "$BR_DIR" && $BR where $BR_FLAGS 2>/dev/null || true)
-bz_where=$(cd "$BZ_DIR" && $BZ where 2>/dev/null || true)
+bz_where=$(cd "$BZ_DIR" && $BZ where $BZ_FLAGS 2>/dev/null || true)
 
 # Both should point to .beads
 if echo "$br_where" | grep -q ".beads" && echo "$bz_where" | grep -q ".beads"; then

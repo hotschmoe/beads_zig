@@ -150,6 +150,8 @@ pub fn run(
             try ctx.output.print("  assignee: {s} -> {s}\n", .{ old_issue.assignee orelse "(none)", a });
         }
     }
+
+    ctx.autoFlush();
 }
 
 // --- Tests ---

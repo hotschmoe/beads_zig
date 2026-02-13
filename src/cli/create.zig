@@ -55,14 +55,9 @@ pub fn run(
     var output = common.initOutput(allocator, global);
     const structured_output = global.isStructuredOutput();
 
-    // Handle --file flag (not yet implemented)
-    if (create_args.file != null) {
-        if (structured_output) {
-            try common.outputErrorTyped(CreateResult, &output, structured_output, "markdown import not yet implemented");
-        } else {
-            try output.err("markdown import not yet implemented", .{});
-        }
-        return;
+    // Handle --file flag: bulk import from markdown
+    if (create_args.file) |file_path| {
+        return runFileImport(file_path, global, allocator);
     }
 
     // Validate title
@@ -225,6 +220,8 @@ pub fn run(
     } else {
         try ctx.output.success("\xe2\x9c\x93 Created {s}: {s}", .{ issue_id, create_args.title });
     }
+
+    ctx.autoFlush();
 }
 
 /// Run the quick capture command (create + print ID only).
@@ -246,6 +243,109 @@ pub fn runQuick(
     }
 
     try run(create_args, modified_global, allocator);
+}
+
+/// Import issues from a markdown file.
+/// Each `# Heading` becomes an issue title; body text until the next heading
+/// becomes the description.
+fn runFileImport(
+    file_path: []const u8,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var ctx = (try CommandContext.init(allocator, global)) orelse {
+        return CreateError.WorkspaceNotInitialized;
+    };
+    defer ctx.deinit();
+
+    const content = std.fs.cwd().readFileAlloc(allocator, file_path, 10 * 1024 * 1024) catch {
+        if (global.isStructuredOutput()) {
+            try common.outputErrorTyped(CreateResult, &ctx.output, true, "could not read file");
+        } else {
+            try ctx.output.err("could not read file: {s}", .{file_path});
+        }
+        return;
+    };
+    defer allocator.free(content);
+
+    const actor = global.actor orelse common.getDefaultActor();
+    const prefix = try common.getConfigPrefix(allocator, ctx.beads_dir);
+    defer allocator.free(prefix);
+    var generator = IdGenerator.init(prefix);
+    const now = std.time.timestamp();
+
+    var created_ids: std.ArrayListUnmanaged([]const u8) = .{};
+    defer {
+        for (created_ids.items) |id| allocator.free(id);
+        created_ids.deinit(allocator);
+    }
+
+    // Parse markdown: split into sections by `# ` headings
+    var current_title: ?[]const u8 = null;
+    var desc_start: usize = 0;
+    var desc_end: usize = 0;
+    var pos: usize = 0;
+
+    while (pos < content.len) {
+        const line_end = std.mem.indexOfScalar(u8, content[pos..], '\n') orelse content.len - pos;
+        const line = content[pos .. pos + line_end];
+
+        if (line.len >= 2 and line[0] == '#' and line[1] == ' ') {
+            // Flush previous section
+            if (current_title) |title| {
+                const desc = std.mem.trim(u8, content[desc_start..desc_end], " \t\n\r");
+                try createFromSection(&ctx, &generator, allocator, &created_ids, title, if (desc.len > 0) desc else null, actor, now);
+            }
+            current_title = std.mem.trim(u8, line[2..], " \t\r");
+            desc_start = pos + line_end + 1;
+            desc_end = desc_start;
+        } else if (current_title != null) {
+            desc_end = pos + line_end;
+        }
+
+        pos += line_end + 1;
+    }
+
+    // Flush last section
+    if (current_title) |title| {
+        const desc = std.mem.trim(u8, content[desc_start..desc_end], " \t\n\r");
+        try createFromSection(&ctx, &generator, allocator, &created_ids, title, if (desc.len > 0) desc else null, actor, now);
+    }
+
+    if (global.isStructuredOutput()) {
+        try ctx.output.printJson(.{ .imported = created_ids.items.len });
+    } else if (!global.quiet) {
+        try ctx.output.success("Imported {d} issue(s) from {s}", .{ created_ids.items.len, file_path });
+        for (created_ids.items) |id| {
+            try ctx.output.print("  {s}\n", .{id});
+        }
+    }
+
+    ctx.autoFlush();
+}
+
+fn createFromSection(
+    ctx: *CommandContext,
+    generator: *IdGenerator,
+    allocator: std.mem.Allocator,
+    created_ids: *std.ArrayListUnmanaged([]const u8),
+    title: []const u8,
+    description: ?[]const u8,
+    actor: ?[]const u8,
+    now: i64,
+) !void {
+    if (title.len == 0 or title.len > 500) return;
+
+    const issue_id = try common.generateUniqueId(allocator, generator, &ctx.issue_store);
+    errdefer allocator.free(issue_id);
+
+    var issue = Issue.init(issue_id, title, now);
+    issue.description = description;
+    issue.created_by = actor;
+
+    ctx.issue_store.insert(issue) catch return;
+    ctx.recordEvent(Event.issueCreated(issue_id, actor orelse "unknown", now));
+    try created_ids.append(allocator, issue_id);
 }
 
 /// Parse a date string in various formats to Unix timestamp.

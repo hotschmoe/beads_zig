@@ -103,6 +103,8 @@ pub fn run(
             try ctx.output.success("\xe2\x8f\xb1 Deferred {s}: {s} (until {s})", .{ defer_args.id, issue.title, formatted });
         }
     }
+
+    ctx.autoFlush();
 }
 
 pub fn runUndefer(
@@ -153,6 +155,8 @@ pub fn runUndefer(
     } else {
         try ctx.output.success("\xe2\x9c\x93 Undeferred {s}: {s} (now open)", .{ undefer_args.id, issue.title });
     }
+
+    ctx.autoFlush();
 }
 
 /// Parse an "until" date string into an epoch timestamp.

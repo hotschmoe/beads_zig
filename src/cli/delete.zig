@@ -194,7 +194,7 @@ pub fn run(
 
     // Perform the actual deletion
     const now = std.time.timestamp();
-    const actor = common.getDefaultActor() orelse "system";
+    const actor = global.actor orelse common.getDefaultActor() orelse "system";
     var deleted_count: usize = 0;
     var not_found_count: usize = 0;
 
@@ -263,6 +263,8 @@ pub fn run(
             try ctx.output.warn("{d} issue(s) not found", .{not_found_count});
         }
     }
+
+    ctx.autoFlush();
 }
 
 // --- Tests ---
