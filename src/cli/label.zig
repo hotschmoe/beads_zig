@@ -108,7 +108,9 @@ fn runAdd(
         }
     } else {
         if (added_labels.items.len > 0) {
-            try ctx.output.success("Added {d} label(s) to {s}", .{ added_labels.items.len, id });
+            for (added_labels.items) |label| {
+                try ctx.output.success("\xe2\x9c\x93 Added label {s} to {s}", .{ label, id });
+            }
         } else {
             try ctx.output.info("No new labels added (already present)", .{});
         }

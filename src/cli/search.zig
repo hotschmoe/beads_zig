@@ -79,7 +79,7 @@ fn outputResults(
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.toDisplayString(),
+                .priority = issue.priority,
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
                 .created_by = issue.created_by,

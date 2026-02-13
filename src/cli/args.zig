@@ -241,8 +241,8 @@ pub const ListArgs = struct {
     all: bool = false,
     overdue: bool = false,
     include_deferred: bool = false,
-    sort: SortField = .created_at,
-    sort_desc: bool = true,
+    sort: SortField = .priority,
+    sort_desc: bool = false,
     parent: ?[]const u8 = null,
     recursive: bool = false,
     format: OutputFormat = .default,
@@ -1391,6 +1391,14 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (self.consumeFlag("-g", "--group-by")) {
                 result.group_by = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--by-status")) {
+                result.group_by = "status";
+            } else if (self.consumeFlag(null, "--by-priority")) {
+                result.group_by = "priority";
+            } else if (self.consumeFlag(null, "--by-type")) {
+                result.group_by = "type";
+            } else if (self.consumeFlag(null, "--by-assignee")) {
+                result.group_by = "assignee";
             } else break;
         }
         return result;
@@ -2370,7 +2378,7 @@ test "parse list --sort flag" {
     const result = try parser.parse();
 
     try std.testing.expectEqual(SortField.priority, result.command.list.sort);
-    try std.testing.expect(result.command.list.sort_desc); // default
+    try std.testing.expect(!result.command.list.sort_desc); // default: ascending
 }
 
 test "parse list --sort with --asc" {

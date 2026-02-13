@@ -100,7 +100,7 @@ fn runAdd(
             .parent = add_args.parent,
         });
     } else if (!global.quiet) {
-        try ctx.output.success("Added dependency: {s} depends on {s}", .{ add_args.child, add_args.parent });
+        try ctx.output.success("\xe2\x9c\x93 Added dependency: {s} -> {s} (blocks)", .{ add_args.child, add_args.parent });
     }
 }
 

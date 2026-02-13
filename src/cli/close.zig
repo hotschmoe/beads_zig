@@ -85,7 +85,7 @@ pub fn run(
         ctx.recordEvent(event);
     } else |_| {}
 
-    try outputSuccess(&ctx.output, global, close_args.id, "closed", "Closed issue {s}");
+    try outputSuccess(&ctx.output, global, close_args.id, issue.title, "closed", "\xe2\x9c\x93 Closed {s}: {s} (done)");
 }
 
 pub fn runReopen(
@@ -130,13 +130,14 @@ pub fn runReopen(
     const actor = global.actor orelse "unknown";
     ctx.recordEvent(Event.issueReopened(reopen_args.id, actor, now));
 
-    try outputSuccess(&ctx.output, global, reopen_args.id, "reopened", "Reopened issue {s}");
+    try outputSuccess(&ctx.output, global, reopen_args.id, issue.title, "reopened", "\xe2\x9c\x93 Reopened {s}: {s}");
 }
 
 fn outputSuccess(
     output: *common.Output,
     global: args.GlobalOptions,
     id: []const u8,
+    title: []const u8,
     action: []const u8,
     comptime fmt: []const u8,
 ) !void {
@@ -147,7 +148,6 @@ fn outputSuccess(
             .action = action,
         });
     } else if (global.robot) {
-        // Robot format: ACTION<TAB>ID
         try output.raw(action);
         try output.raw("\t");
         try output.raw(id);
@@ -156,7 +156,7 @@ fn outputSuccess(
         try output.raw(id);
         try output.raw("\n");
     } else {
-        try output.success(fmt, .{id});
+        try output.success(fmt, .{ id, title });
     }
 }
 

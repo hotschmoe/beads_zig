@@ -71,10 +71,13 @@ pub fn run(
 }
 
 fn outputJson(out: *common.Output, issues: []const Issue, days: u32, allocator: std.mem.Allocator) !void {
+    _ = days;
+    const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
     const StaleIssue = struct {
         id: []const u8,
         title: []const u8,
-        updated_at: i64,
+        status: []const u8,
+        updated_at: Rfc3339Timestamp,
     };
 
     var compact_issues: std.ArrayListUnmanaged(StaleIssue) = .{};
@@ -84,15 +87,12 @@ fn outputJson(out: *common.Output, issues: []const Issue, days: u32, allocator: 
         try compact_issues.append(allocator, .{
             .id = issue.id,
             .title = issue.title,
-            .updated_at = issue.updated_at.value,
+            .status = issue.status.toString(),
+            .updated_at = issue.updated_at,
         });
     }
 
-    try out.printJson(.{
-        .stale_threshold_days = days,
-        .count = issues.len,
-        .issues = compact_issues.items,
-    });
+    try out.printJson(compact_issues.items);
 }
 
 fn outputHuman(out: *common.Output, issues: []const Issue, days: u32, now: i64) !void {

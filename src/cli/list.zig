@@ -138,30 +138,31 @@ pub fn run(
 
     if (global.isStructuredOutput()) {
         var full_issues = try allocator.alloc(common.IssueFull, issues.len);
-        defer {
-            for (full_issues) |fi| {
-                common.freeBlocksIds(allocator, fi.blocks);
-            }
-            allocator.free(full_issues);
-        }
+        defer allocator.free(full_issues);
 
         for (issues, 0..) |issue, i| {
+            const deps = try ctx.dep_store.getDependencies(issue.id);
+            defer ctx.dep_store.freeDependencies(deps);
+            const dependents = try ctx.dep_store.getDependents(issue.id);
+            defer ctx.dep_store.freeDependencies(dependents);
+
             full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.toDisplayString(),
+                .priority = issue.priority,
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
                 .created_by = issue.created_by,
                 .labels = issue.labels,
                 .created_at = issue.created_at,
                 .updated_at = issue.updated_at,
-                .source_repo = issue.source_repo,
+                .dependency_count = deps.len,
+                .dependent_count = dependents.len,
+                .source_repo = issue.source_repo orelse ".",
                 .compaction_level = issue.compaction_level,
-                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else null,
-                .blocks = try common.collectBlocksIds(allocator, &ctx.dep_store, issue.id),
+                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
             };
         }
 

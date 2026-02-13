@@ -56,29 +56,24 @@ pub fn run(
     defer ctx.dep_store.freeDependencies(dependents);
 
     if (structured_output) {
-        var blocks_ids = try allocator.alloc([]const u8, dependents.len);
-        defer allocator.free(blocks_ids);
-        for (dependents, 0..) |dep, i| {
-            blocks_ids[i] = dep.issue_id;
-        }
-
         // Bare array with single issue matching br format
         const full_issue = common.IssueFull{
             .id = issue.id,
             .title = issue.title,
             .description = issue.description,
             .status = issue.status.toString(),
-            .priority = issue.priority.toDisplayString(),
+            .priority = issue.priority,
             .issue_type = issue.issue_type.toString(),
             .assignee = issue.assignee,
             .created_by = issue.created_by,
             .labels = issue.labels,
             .created_at = issue.created_at,
             .updated_at = issue.updated_at,
-            .source_repo = issue.source_repo,
+            .dependency_count = deps.len,
+            .dependent_count = dependents.len,
+            .source_repo = issue.source_repo orelse ".",
             .compaction_level = issue.compaction_level,
-            .original_size = if (issue.original_size) |size| @as(?u64, @intCast(size)) else null,
-            .blocks = blocks_ids,
+            .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
         };
 
         const arr = [_]common.IssueFull{full_issue};

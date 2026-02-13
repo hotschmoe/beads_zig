@@ -42,7 +42,7 @@ pub fn run(
     }
 
     if (count_args.group_by != null) {
-        try outputGrouped(&ctx.output, counts, count_args.group_by.?, global);
+        try outputGrouped(&ctx.output, counts, count_args.group_by.?, global, allocator);
     } else {
         const total: usize = if (counts.len > 0) @intCast(counts[0].count) else 0;
         try outputTotal(&ctx.output, total, global);
@@ -70,30 +70,36 @@ fn outputGrouped(
     counts: []const GroupCount,
     field: []const u8,
     global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
 ) !void {
     if (global.isStructuredOutput()) {
-        try out.raw("{\"group_by\":\"");
-        try out.raw(field);
-        try out.raw("\",\"groups\":[");
+        const GroupEntry = struct {
+            group: []const u8,
+            count: u64,
+        };
 
-        for (counts, 0..) |entry, i| {
-            if (i > 0) try out.raw(",");
-            try out.raw("{\"");
-            try out.raw(entry.key);
-            try out.raw("\":");
-            try out.print("{d}", .{entry.count});
-            try out.raw("}");
-        }
-
-        try out.raw("]}\n");
-    } else {
-        try out.print("Issues by {s}:\n", .{field});
         var total: u64 = 0;
-        for (counts) |entry| {
-            try out.print("  {s}: {d}\n", .{ entry.key, entry.count });
+        var entries = try allocator.alloc(GroupEntry, counts.len);
+        defer allocator.free(entries);
+        for (counts, 0..) |entry, i| {
+            entries[i] = .{ .group = entry.key, .count = entry.count };
             total += entry.count;
         }
-        try out.print("\nTotal: {d}\n", .{total});
+
+        try out.printJson(.{
+            .total = total,
+            .groups = entries,
+        });
+    } else {
+        _ = field;
+        var total: u64 = 0;
+        for (counts) |entry| {
+            total += entry.count;
+        }
+        try out.print("Total: {d}\n", .{total});
+        for (counts) |entry| {
+            try out.print("{s}: {d}\n", .{ entry.key, entry.count });
+        }
     }
 }
 

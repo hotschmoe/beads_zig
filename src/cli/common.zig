@@ -21,23 +21,26 @@ pub const EventStore = storage.EventStore;
 
 const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
 
+const models = @import("../models/mod.zig");
+
 /// Full issue representation for JSON output matching br's bare-array format.
 pub const IssueFull = struct {
     id: []const u8,
     title: []const u8,
     description: ?[]const u8 = null,
     status: []const u8,
-    priority: []const u8,
+    priority: models.Priority,
     issue_type: []const u8,
     assignee: ?[]const u8 = null,
     created_by: ?[]const u8 = null,
     labels: []const []const u8 = &[_][]const u8{},
     created_at: Rfc3339Timestamp,
     updated_at: Rfc3339Timestamp,
-    source_repo: ?[]const u8 = null,
+    dependency_count: usize = 0,
+    dependent_count: usize = 0,
+    source_repo: []const u8 = ".",
     compaction_level: u32 = 0,
-    original_size: ?u64 = null,
-    blocks: []const []const u8 = &[_][]const u8{},
+    original_size: u64 = 0,
 };
 
 /// Collect IDs of issues that depend on the given issue (issues it blocks).

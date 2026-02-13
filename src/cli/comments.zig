@@ -19,6 +19,8 @@ pub const CommentsError = error{
     OutOfMemory,
 };
 
+const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
+
 pub const CommentsResult = struct {
     success: bool,
     id: ?[]const u8 = null,
@@ -33,6 +35,15 @@ pub const CommentsResult = struct {
         text: []const u8,
         created_at: i64,
     };
+};
+
+/// Comment JSON representation with RFC3339 timestamp for bare-array output.
+const CommentJson = struct {
+    id: i64,
+    issue_id: []const u8,
+    author: []const u8,
+    text: []const u8,
+    created_at: Rfc3339Timestamp,
 };
 
 pub fn run(
@@ -110,7 +121,7 @@ fn runAdd(
     } else if (global.quiet) {
         try ctx.output.print("{d}\n", .{comment_id});
     } else {
-        try ctx.output.success("Added comment to {s}", .{id});
+        try ctx.output.success("Comment added to {s}", .{id});
     }
 }
 
@@ -149,23 +160,20 @@ fn runList(
     }
 
     if (global.isStructuredOutput()) {
-        var comment_infos = try allocator.alloc(CommentsResult.CommentInfo, comments.len);
-        defer allocator.free(comment_infos);
+        var comment_jsons = try allocator.alloc(CommentJson, comments.len);
+        defer allocator.free(comment_jsons);
 
         for (comments, 0..) |c, i| {
-            comment_infos[i] = .{
+            comment_jsons[i] = .{
                 .id = c.id,
+                .issue_id = c.issue_id,
                 .author = c.author,
                 .text = c.text,
-                .created_at = c.created_at,
+                .created_at = .{ .value = c.created_at },
             };
         }
 
-        try ctx.output.printJson(CommentsResult{
-            .success = true,
-            .id = id,
-            .comments = comment_infos,
-        });
+        try ctx.output.printJson(comment_jsons);
     } else if (global.quiet) {
         for (comments) |c| {
             try ctx.output.print("{d}\n", .{c.id});
@@ -177,11 +185,30 @@ fn runList(
             try ctx.output.println("Comments on {s} ({d}):", .{ id, comments.len });
             for (comments) |c| {
                 try ctx.output.print("\n", .{});
-                try ctx.output.print("[ts:{d}] {s}:\n", .{ c.created_at, c.author });
+                const ts_str = formatTimestamp(c.created_at, allocator) catch "unknown";
+                defer if (!std.mem.eql(u8, ts_str, "unknown")) allocator.free(ts_str);
+                try ctx.output.print("[{s}] at {s} UTC\n", .{ c.author, ts_str });
                 try ctx.output.print("  {s}\n", .{c.text});
             }
         }
     }
+}
+
+fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    });
 }
 
 fn getDefaultActor() []const u8 {

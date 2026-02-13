@@ -45,7 +45,7 @@ pub const BlockedResult = struct {
         title: []const u8,
         description: ?[]const u8 = null,
         status: []const u8,
-        priority: []const u8,
+        priority: Priority,
         issue_type: []const u8,
         assignee: ?[]const u8 = null,
         labels: []const []const u8,
@@ -159,30 +159,31 @@ pub fn run(
 
     if (global.isStructuredOutput()) {
         var full_issues = try allocator.alloc(common.IssueFull, display_issues.len);
-        defer {
-            for (full_issues) |fi| {
-                common.freeBlocksIds(allocator, fi.blocks);
-            }
-            allocator.free(full_issues);
-        }
+        defer allocator.free(full_issues);
 
         for (display_issues, 0..) |issue, i| {
+            const issue_deps = try ctx.dep_store.getDependencies(issue.id);
+            defer ctx.dep_store.freeDependencies(issue_deps);
+            const issue_dependents = try ctx.dep_store.getDependents(issue.id);
+            defer ctx.dep_store.freeDependencies(issue_dependents);
+
             full_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.toDisplayString(),
+                .priority = issue.priority,
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
                 .created_by = issue.created_by,
                 .labels = issue.labels,
                 .created_at = issue.created_at,
                 .updated_at = issue.updated_at,
-                .source_repo = issue.source_repo,
+                .dependency_count = issue_deps.len,
+                .dependent_count = issue_dependents.len,
+                .source_repo = issue.source_repo orelse ".",
                 .compaction_level = issue.compaction_level,
-                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else null,
-                .blocks = try common.collectBlocksIds(allocator, &ctx.dep_store, issue.id),
+                .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
             };
         }
 
@@ -283,7 +284,7 @@ pub fn runBlocked(
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.toDisplayString(),
+                .priority = issue.priority,
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
                 .labels = issue.labels,

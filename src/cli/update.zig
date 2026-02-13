@@ -43,10 +43,13 @@ pub fn run(
     defer ctx.deinit();
 
     const structured_output = global.isStructuredOutput();
-    if (!try ctx.issue_store.exists(update_args.id)) {
+
+    // Fetch issue before update to show diff
+    var old_issue = (try ctx.issue_store.get(update_args.id)) orelse {
         try common.outputNotFoundError(UpdateResult, &ctx.output, structured_output, update_args.id, allocator);
         return UpdateError.IssueNotFound;
-    }
+    };
+    defer old_issue.deinit(allocator);
 
     var updates = IssueUpdate{};
 
@@ -130,7 +133,22 @@ pub fn run(
         try ctx.output.raw(update_args.id);
         try ctx.output.raw("\n");
     } else {
-        try ctx.output.success("Updated issue {s}", .{update_args.id});
+        try ctx.output.success("Updated {s}: {s}", .{ update_args.id, old_issue.title });
+        if (update_args.title) |t| {
+            try ctx.output.print("  title: {s} -> {s}\n", .{ old_issue.title, t });
+        }
+        if (update_args.status) |s| {
+            try ctx.output.print("  status: {s} -> {s}\n", .{ old_issue.status.toString(), s });
+        }
+        if (update_args.priority) |p| {
+            try ctx.output.print("  priority: {s} -> {s}\n", .{ old_issue.priority.toDisplayString(), p });
+        }
+        if (update_args.issue_type) |t| {
+            try ctx.output.print("  type: {s} -> {s}\n", .{ old_issue.issue_type.toString(), t });
+        }
+        if (update_args.assignee) |a| {
+            try ctx.output.print("  assignee: {s} -> {s}\n", .{ old_issue.assignee orelse "(none)", a });
+        }
     }
 }
 

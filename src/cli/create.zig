@@ -138,14 +138,10 @@ pub fn run(
         }
     }
 
-    // Handle --defer flag
+    // Handle --defer flag - only set defer_until, don't change status
     if (create_args.defer_until) |defer_str| {
         if (parseDateString(defer_str)) |defer_ts| {
             issue.defer_until = .{ .value = defer_ts };
-            // If no explicit status set, auto-set to deferred
-            if (create_args.status == null) {
-                issue.status = .deferred;
-            }
         }
     }
 
@@ -208,16 +204,41 @@ pub fn run(
 
     // Output result
     if (structured_output) {
-        try ctx.output.printJson(CreateResult{
-            .success = true,
-            .id = issue_id,
-            .title = create_args.title,
-        });
+        // Fetch the created issue to output full IssueFull
+        if (try ctx.issue_store.get(issue_id)) |created| {
+            defer {
+                var ci = created;
+                ci.deinit(allocator);
+            }
+            const full_issue = common.IssueFull{
+                .id = created.id,
+                .title = created.title,
+                .description = created.description,
+                .status = created.status.toString(),
+                .priority = created.priority,
+                .issue_type = created.issue_type.toString(),
+                .assignee = created.assignee,
+                .created_by = created.created_by,
+                .labels = created.labels,
+                .created_at = created.created_at,
+                .updated_at = created.updated_at,
+                .source_repo = created.source_repo orelse ".",
+                .compaction_level = created.compaction_level,
+                .original_size = if (created.original_size) |size| @as(u64, @intCast(size)) else 0,
+            };
+            try ctx.output.printJson(full_issue);
+        } else {
+            try ctx.output.printJson(CreateResult{
+                .success = true,
+                .id = issue_id,
+                .title = create_args.title,
+            });
+        }
     } else if (global.quiet or create_args.silent) {
         try ctx.output.raw(issue_id);
         try ctx.output.raw("\n");
     } else {
-        try ctx.output.success("Created {s}: {s}", .{ issue_id, create_args.title });
+        try ctx.output.success("\xe2\x9c\x93 Created {s}: {s}", .{ issue_id, create_args.title });
     }
 }
 

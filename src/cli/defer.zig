@@ -50,8 +50,8 @@ pub fn run(
     };
     defer issue.deinit(allocator);
 
-    // Check if already deferred
-    if (issue.status.eql(.deferred)) {
+    // Check if already deferred (has defer_until set)
+    if (issue.defer_until.value != null) {
         if (structured_output) {
             try ctx.output.printJson(DeferResult{
                 .success = false,
@@ -64,8 +64,9 @@ pub fn run(
         return DeferError.AlreadyDeferred;
     }
 
-    // Parse until date if provided
-    var defer_until: ?i64 = null;
+    // Parse until date if provided; indefinite = far-future sentinel
+    const INDEFINITE: i64 = 253402300799; // 9999-12-31T23:59:59Z
+    var defer_until: i64 = INDEFINITE;
     if (defer_args.until) |until_str| {
         defer_until = parseUntilDate(until_str, allocator) catch |err| {
             if (structured_output) {
@@ -80,10 +81,9 @@ pub fn run(
         };
     }
 
-    // Update the issue via SQLite
+    // Only set defer_until, do NOT change status (stays as-is, usually open)
     const now = std.time.timestamp();
     try ctx.issue_store.update(defer_args.id, IssueUpdate{
-        .status = .deferred,
         .defer_until = defer_until,
     }, now);
 
@@ -95,12 +95,12 @@ pub fn run(
             .defer_until = defer_until,
         });
     } else {
-        if (defer_until) |until| {
-            var buf: [timestamp.RFC3339_BUFFER_SIZE]u8 = undefined;
-            const formatted = timestamp.formatRfc3339(until, &buf) catch "unknown";
-            try ctx.output.success("Deferred issue {s} until {s}", .{ defer_args.id, formatted });
+        if (defer_until == INDEFINITE) {
+            try ctx.output.success("\xe2\x8f\xb1 Deferred {s}: {s} (indefinitely)", .{ defer_args.id, issue.title });
         } else {
-            try ctx.output.success("Deferred issue {s} indefinitely", .{defer_args.id});
+            var buf: [timestamp.RFC3339_BUFFER_SIZE]u8 = undefined;
+            const formatted = timestamp.formatRfc3339(defer_until, &buf) catch "unknown";
+            try ctx.output.success("\xe2\x8f\xb1 Deferred {s}: {s} (until {s})", .{ defer_args.id, issue.title, formatted });
         }
     }
 }
@@ -124,8 +124,8 @@ pub fn runUndefer(
     };
     defer issue.deinit(allocator);
 
-    // Check if not deferred
-    if (!issue.status.eql(.deferred)) {
+    // Check if not deferred (no defer_until set)
+    if (issue.defer_until.value == null) {
         if (structured_output) {
             try ctx.output.printJson(DeferResult{
                 .success = false,
@@ -138,10 +138,9 @@ pub fn runUndefer(
         return;
     }
 
-    // Update the issue - set status back to open and clear defer_until
+    // Only clear defer_until, don't change status
     const now = std.time.timestamp();
     try ctx.issue_store.update(undefer_args.id, IssueUpdate{
-        .status = .open,
         .defer_until = 0,
     }, now);
 
@@ -152,7 +151,7 @@ pub fn runUndefer(
             .id = undefer_args.id,
         });
     } else {
-        try ctx.output.success("Undeferred issue {s}", .{undefer_args.id});
+        try ctx.output.success("\xe2\x9c\x93 Undeferred {s}: {s} (now open)", .{ undefer_args.id, issue.title });
     }
 }
 

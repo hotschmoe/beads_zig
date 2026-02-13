@@ -258,7 +258,10 @@ pub const Output = struct {
     /// If toon mode is enabled, converts JSON to TOON format for reduced token usage.
     /// If stats mode is also enabled, displays token savings information.
     pub fn printJson(self: *Self, value: anytype) !void {
-        const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, value, .{});
+        const json_bytes = try std.json.Stringify.valueAlloc(self.allocator, value, .{
+            .whitespace = .indent_2,
+            .emit_null_optional_fields = false,
+        });
         defer self.allocator.free(json_bytes);
 
         if (self.toon) {
@@ -323,10 +326,10 @@ pub const Output = struct {
         const icon = statusIcon(issue.status);
         const bullet = priorityBullet(issue.priority);
         const status_upper = statusUpper(issue.status);
-        const owner_str = issue.owner orelse issue.assignee orelse "(none)";
+        const owner_str = issue.owner orelse issue.assignee orelse issue.created_by orelse "(none)";
 
         // Line 1: {icon} {id} . {title}   [{bullet} P{n} . {STATUS}]
-        try self.writeFormatted("{s} {s} . {s}   [{s} {s} . {s}]\n", .{
+        try self.writeFormatted("{s} {s} \xc2\xb7 {s}   [{s} {s} \xc2\xb7 {s}]\n", .{
             icon,
             issue.id,
             issue.title,
@@ -336,15 +339,15 @@ pub const Output = struct {
         });
 
         // Line 2: Owner: {owner} . Type: {type}
-        try self.writeFormatted("Owner: {s} . Type: {s}\n", .{
+        try self.writeFormatted("Owner: {s} \xc2\xb7 Type: {s}\n", .{
             owner_str,
             issue.issue_type.toString(),
         });
 
         // Line 3: Created: {date} . Updated: {date}
-        const created_str = formatTimestampBuf(issue.created_at.value);
-        const updated_str = formatTimestampBuf(issue.updated_at.value);
-        try self.writeFormatted("Created: {s} . Updated: {s}\n", .{
+        const created_str = formatDateOnlyBuf(issue.created_at.value);
+        const updated_str = formatDateOnlyBuf(issue.updated_at.value);
+        try self.writeFormatted("Created: {s} \xc2\xb7 Updated: {s}\n", .{
             created_str,
             updated_str,
         });
@@ -392,10 +395,10 @@ pub const Output = struct {
         const status_color = getStatusColor(issue.status);
         const priority_color = getPriorityColor(issue.priority);
         const status_upper = statusUpper(issue.status);
-        const owner_str = issue.owner orelse issue.assignee orelse "(none)";
+        const owner_str = issue.owner orelse issue.assignee orelse issue.created_by orelse "(none)";
 
         // Line 1: {icon} {id} . {title}   [{bullet} P{n} . {STATUS}]
-        try self.writeFormatted("{s} {s}{s}{s} . {s}   [{s}{s} {s}{s} . {s}{s}{s}]\n", .{
+        try self.writeFormatted("{s} {s}{s}{s} \xc2\xb7 {s}   [{s}{s} {s}{s} \xc2\xb7 {s}{s}{s}]\n", .{
             icon,
             Color.bold,
             issue.id,
@@ -411,7 +414,7 @@ pub const Output = struct {
         });
 
         // Line 2: Owner: {owner} . Type: {type}
-        try self.writeFormatted("Owner: {s}{s}{s} . Type: {s}\n", .{
+        try self.writeFormatted("Owner: {s}{s}{s} \xc2\xb7 Type: {s}\n", .{
             Color.cyan,
             owner_str,
             Color.reset,
@@ -419,9 +422,9 @@ pub const Output = struct {
         });
 
         // Line 3: Created: {date} . Updated: {date}
-        const created_str = formatTimestampBuf(issue.created_at.value);
-        const updated_str = formatTimestampBuf(issue.updated_at.value);
-        try self.writeFormatted("Created: {s}{s}{s} . Updated: {s}{s}{s}\n", .{
+        const created_str = formatDateOnlyBuf(issue.created_at.value);
+        const updated_str = formatDateOnlyBuf(issue.updated_at.value);
+        try self.writeFormatted("Created: {s}{s}{s} \xc2\xb7 Updated: {s}{s}{s}\n", .{
             Color.dim,
             created_str,
             Color.reset,
@@ -795,8 +798,10 @@ pub fn statusIcon(status: Status) []const u8 {
 /// Get priority bullet matching br.
 pub fn priorityBullet(priority: Priority) []const u8 {
     return switch (priority.value) {
-        0, 1, 2 => "*",
-        3 => ".",
+        0 => "\xe2\x97\x8f", // U+25CF BLACK CIRCLE (critical)
+        1 => "\xe2\x97\x8f", // U+25CF BLACK CIRCLE (high)
+        2 => "\xe2\x97\x8b", // U+25CB WHITE CIRCLE (medium)
+        3 => "\xe2\x97\x8c", // U+25CC DOTTED CIRCLE (low)
         4 => " ",
         else => " ",
     };
@@ -814,6 +819,24 @@ fn statusUpper(status: Status) []const u8 {
         .pinned => "PINNED",
         .custom => "CUSTOM",
     };
+}
+
+/// Format a Unix timestamp into a stack buffer as "YYYY-MM-DD" (date only).
+fn formatDateOnlyBuf(unix_ts: i64) []const u8 {
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    const S = struct {
+        threadlocal var buf: [10]u8 = undefined;
+    };
+    const result = std.fmt.bufPrint(&S.buf, "{d:0>4}-{d:0>2}-{d:0>2}", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+    }) catch "0000-00-00";
+    return result;
 }
 
 /// Format a Unix timestamp into a stack buffer as "YYYY-MM-DD HH:MM:SS".
@@ -1033,7 +1056,7 @@ test "Output printIssueListPlain writes formatted lines" {
     const icon = statusIcon(issue.status);
     try std.testing.expectEqualStrings("\xE2\x97\x8B", icon);
     const bullet = priorityBullet(issue.priority);
-    try std.testing.expectEqualStrings("*", bullet);
+    try std.testing.expectEqualStrings("\xe2\x97\x8b", bullet);
     try std.testing.expectEqualStrings("P2", issue.priority.toDisplayString());
 }
 
