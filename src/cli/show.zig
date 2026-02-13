@@ -108,23 +108,14 @@ pub fn run(
 
         for (deps, 0..) |dep, i| {
             dep_issues[i] = ctx.issue_store.get(dep.depends_on_id) catch null;
-            if (dep_issues[i]) |di| {
-                dep_details[i] = .{
-                    .id = dep.depends_on_id,
-                    .title = di.title,
-                    .status = di.status.toString(),
-                    .priority = di.priority,
-                    .dependency_type = dep.dep_type.toString(),
-                };
-            } else {
-                dep_details[i] = .{
-                    .id = dep.depends_on_id,
-                    .title = "(not found)",
-                    .status = "unknown",
-                    .priority = .{ .value = 2 },
-                    .dependency_type = dep.dep_type.toString(),
-                };
-            }
+            const di = dep_issues[i];
+            dep_details[i] = .{
+                .id = dep.depends_on_id,
+                .title = if (di) |d| d.title else "(not found)",
+                .status = if (di) |d| d.status.toString() else "unknown",
+                .priority = if (di) |d| d.priority else .{ .value = 2 },
+                .dependency_type = dep.dep_type.toString(),
+            };
         }
 
         // Build comment detail array

@@ -59,7 +59,6 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    // Count totals
     var total: usize = 0;
     var open: usize = 0;
     var closed: usize = 0;

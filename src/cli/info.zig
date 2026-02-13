@@ -67,13 +67,6 @@ fn getFileSize(path: []const u8) u64 {
     return stat.size;
 }
 
-fn formatBytes(bytes: u64) []const u8 {
-    if (bytes == 0) return "0 B";
-    if (bytes < 1024) return "<1 KB";
-    if (bytes < 1024 * 1024) return "<1 MB";
-    return ">1 MB";
-}
-
 // --- Tests ---
 
 test "InfoError enum exists" {
@@ -99,14 +92,6 @@ test "run detects uninitialized workspace" {
 
     const result = run(global, allocator);
     try std.testing.expectError(InfoError.WorkspaceNotInitialized, result);
-}
-
-test "formatBytes handles zero" {
-    try std.testing.expectEqualStrings("0 B", formatBytes(0));
-}
-
-test "formatBytes handles small values" {
-    try std.testing.expectEqualStrings("<1 KB", formatBytes(500));
 }
 
 test "getFileSize returns 0 for missing file" {

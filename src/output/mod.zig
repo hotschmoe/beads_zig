@@ -796,11 +796,8 @@ pub fn statusIcon(status: Status) []const u8 {
 }
 
 /// Get priority bullet matching br.
-pub fn priorityBullet(priority: Priority) []const u8 {
-    return switch (priority.value) {
-        0...4 => "\xe2\x97\x8f", // U+25CF BLACK CIRCLE (all priorities)
-        else => "\xe2\x97\x8f",
-    };
+pub fn priorityBullet(_: Priority) []const u8 {
+    return "\xe2\x97\x8f"; // U+25CF BLACK CIRCLE (uniform for all priorities)
 }
 
 /// Get uppercase status name for show display.

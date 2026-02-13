@@ -67,31 +67,32 @@ pub fn issueToFull(issue: models.Issue, dep_count: usize, dependent_count: usize
 /// Format a Unix timestamp as "YYYY-MM-DD HH:MM:SS".
 /// Caller owns returned string and must free it.
 pub fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
-    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
-    const day_seconds = epoch_seconds.getDaySeconds();
-    const epoch_day = epoch_seconds.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-
-    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
-        year_day.year,
-        @as(u32, month_day.month.numeric()),
-        @as(u32, month_day.day_index) + 1,
-        day_seconds.getHoursIntoDay(),
-        day_seconds.getMinutesIntoHour(),
-        day_seconds.getSecondsIntoMinute(),
-    });
+    return formatTimestampFmt(unix_ts, allocator, true);
 }
 
 /// Format a Unix timestamp as "YYYY-MM-DD HH:MM" (no seconds, matching br).
 /// Caller owns returned string and must free it.
 pub fn formatTimestampShort(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
+    return formatTimestampFmt(unix_ts, allocator, false);
+}
+
+fn formatTimestampFmt(unix_ts: i64, allocator: std.mem.Allocator, include_seconds: bool) ![]const u8 {
     const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
     const day_seconds = epoch_seconds.getDaySeconds();
     const epoch_day = epoch_seconds.getEpochDay();
     const year_day = epoch_day.calculateYearDay();
     const month_day = year_day.calculateMonthDay();
 
+    if (include_seconds) {
+        return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
+            year_day.year,
+            @as(u32, month_day.month.numeric()),
+            @as(u32, month_day.day_index) + 1,
+            day_seconds.getHoursIntoDay(),
+            day_seconds.getMinutesIntoHour(),
+            day_seconds.getSecondsIntoMinute(),
+        });
+    }
     return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}", .{
         year_day.year,
         @as(u32, month_day.month.numeric()),
