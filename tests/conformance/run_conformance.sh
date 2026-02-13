@@ -92,8 +92,16 @@ normalize() {
     output=$(echo "$output" | sed 's/[<>]\?[0-9]\+ [KMG]\?B/SIZE/g')
     output=$(echo "$output" | sed 's/<[0-9]\+ [KMG]\?B/SIZE/g')
 
-    # Collapse multiple spaces
-    output=$(echo "$output" | sed 's/  */ /g')
+    # Normalize binary names in context: 'br list' / 'bz list' / 'bd list' etc.
+    output=$(echo "$output" | sed "s/'bz /'TOOL /g" | sed "s/'br /'TOOL /g" | sed "s/'bd /'TOOL /g")
+    # Normalize "bz runs" / "br runs" etc.
+    output=$(echo "$output" | sed "s/^bz /TOOL /g" | sed "s/^br /TOOL /g")
+
+    # Strip non-ASCII characters (emojis, Unicode decorations)
+    output=$(echo "$output" | LC_ALL=C sed 's/[\x80-\xff]//g')
+
+    # Collapse multiple spaces and re-trim after emoji removal
+    output=$(echo "$output" | sed 's/  */ /g' | sed 's/^ //' | sed 's/ $//')
 
     # Strip empty lines
     output=$(echo "$output" | grep -v '^\s*$' || true)

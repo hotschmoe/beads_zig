@@ -84,6 +84,10 @@ pub fn run(
         allocator.free(all_issues);
     }
 
+    var in_progress: usize = 0;
+    var blocked: usize = 0;
+    var ready: usize = 0;
+
     for (all_issues) |issue| {
         if (issue.status.eql(.tombstone)) continue;
 
@@ -94,8 +98,8 @@ pub fn run(
         const status_entry = try status_counts.getOrPutValue(allocator, status_str, 0);
         status_entry.value_ptr.* += 1;
 
-        if (issue.status.eql(.open) or issue.status.eql(.in_progress) or issue.status.eql(.blocked)) {
-            open += 1;
+        if (issue.status.eql(.in_progress)) {
+            in_progress += 1;
         } else if (issue.status.eql(.closed)) {
             closed += 1;
         }
@@ -109,6 +113,38 @@ pub fn run(
         const type_str = issue.issue_type.toString();
         const type_entry = try type_counts.getOrPutValue(allocator, type_str, 0);
         type_entry.value_ptr.* += 1;
+    }
+
+    // Compute blocked/ready: check dependencies for non-closed issues
+    // br defines: Open = total - closed (all non-closed non-tombstone issues)
+    // Blocked = subset of open with at least one open dependency
+    // Ready = subset of open with no open blockers
+    open = total - closed;
+
+    for (all_issues) |issue| {
+        if (issue.status.eql(.tombstone) or issue.status.eql(.closed) or issue.status.eql(.in_progress)) continue;
+
+        const deps = try ctx.dep_store.getDependencies(issue.id);
+        defer ctx.dep_store.freeDependencies(deps);
+
+        var has_open_blocker = false;
+        for (deps) |dep| {
+            const blocker = ctx.issue_store.get(dep.depends_on_id) catch null;
+            if (blocker) |b| {
+                var bi = b;
+                defer bi.deinit(allocator);
+                if (!bi.status.eql(.closed) and !bi.status.eql(.tombstone)) {
+                    has_open_blocker = true;
+                    break;
+                }
+            }
+        }
+
+        if (has_open_blocker) {
+            blocked += 1;
+        } else {
+            ready += 1;
+        }
     }
 
     // Convert to arrays for output
@@ -159,31 +195,16 @@ pub fn run(
             .activity = activity_stats,
         });
     } else if (!global.quiet) {
-        try ctx.output.println("Issue Statistics", .{});
+        try ctx.output.println("Issue Database Status", .{});
         try ctx.output.print("\n", .{});
-        try ctx.output.print("Total: {d} issues ({d} open, {d} closed)\n", .{ total, open, closed });
-        try ctx.output.print("\n", .{});
-
-        if (status_list.items.len > 0) {
-            try ctx.output.print("By Status:\n", .{});
-            for (status_list.items) |entry| {
-                try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
-            }
-        }
-
-        if (priority_list.items.len > 0) {
-            try ctx.output.print("\nBy Priority:\n", .{});
-            for (priority_list.items) |entry| {
-                try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
-            }
-        }
-
-        if (type_list.items.len > 0) {
-            try ctx.output.print("\nBy Type:\n", .{});
-            for (type_list.items) |entry| {
-                try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
-            }
-        }
+        try ctx.output.print("Summary:\n", .{});
+        try ctx.output.print("  Total Issues: {d}\n", .{total});
+        try ctx.output.print("  Open: {d}\n", .{open});
+        try ctx.output.print("  In Progress: {d}\n", .{in_progress});
+        try ctx.output.print("  Blocked: {d}\n", .{blocked});
+        try ctx.output.print("  Closed: {d}\n", .{closed});
+        try ctx.output.print("  Ready to Work: {d}\n", .{ready});
+        try ctx.output.print("\nFor more details, use 'bz list' to see individual issues.\n", .{});
 
         if (activity_stats) |activity| {
             try ctx.output.print("\nActivity (last {d} hours):\n", .{activity.period_hours});

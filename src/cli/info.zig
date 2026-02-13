@@ -37,20 +37,26 @@ pub fn run(
 
     const issue_count = try ctx.issue_store.countTotal();
 
+    // Resolve db_path to absolute for display (matching br behavior)
+    var real_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs_db_path = std.fs.cwd().realpath(ctx.db_path, &real_path_buf) catch ctx.db_path;
+
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(InfoResult{
             .success = true,
             .beads_dir = beads_dir,
-            .db_path = ctx.db_path,
+            .db_path = abs_db_path,
             .issue_count = issue_count,
             .db_size = db_size,
         });
     } else if (!global.quiet) {
-        try ctx.output.println("beads_zig workspace", .{});
+        try ctx.output.println("Beads Database Information", .{});
         try ctx.output.print("\n", .{});
-        try ctx.output.print("Directory:     {s}\n", .{beads_dir});
-        try ctx.output.print("Database:      {s} ({s})\n", .{ ctx.db_path, formatBytes(db_size) });
-        try ctx.output.print("Total issues:  {d}\n", .{issue_count});
+        try ctx.output.print("Database: {s}\n", .{abs_db_path});
+        try ctx.output.print("Mode: direct\n", .{});
+        try ctx.output.print("Daemon: not connected (no-daemon)\n", .{});
+        try ctx.output.print("bz runs in direct mode only\n", .{});
+        try ctx.output.print("Issue count: {d}\n", .{issue_count});
     }
 }
 

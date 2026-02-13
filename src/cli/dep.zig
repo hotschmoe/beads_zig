@@ -179,29 +179,34 @@ fn runList(
             .blocks = blocks_ids,
         });
     } else {
+        const total_count = (if (show_down) deps.len else @as(usize, 0)) +
+            (if (show_up) dependents.len else @as(usize, 0));
+
+        try ctx.output.println("Dependencies of {s} ({d}):", .{ list_args.id, total_count });
+
         if (show_down) {
-            if (deps.len > 0) {
-                try ctx.output.println("Depends on:", .{});
-                for (deps) |dep| {
-                    if (dep.metadata) |meta| {
-                        try ctx.output.print("  - {s} ({s}) [{s}]\n", .{ dep.depends_on_id, dep.dep_type.toString(), meta });
-                    } else {
-                        try ctx.output.print("  - {s} ({s})\n", .{ dep.depends_on_id, dep.dep_type.toString() });
-                    }
+            for (deps) |dep| {
+                const dep_issue = ctx.issue_store.get(dep.depends_on_id) catch null;
+                if (dep_issue) |di| {
+                    var d = di;
+                    defer d.deinit(allocator);
+                    try ctx.output.print("  -> {s} ({s}): {s}\n", .{ dep.depends_on_id, dep.dep_type.toString(), d.title });
+                } else {
+                    try ctx.output.print("  -> {s} ({s})\n", .{ dep.depends_on_id, dep.dep_type.toString() });
                 }
-            } else {
-                try ctx.output.println("Depends on: (none)", .{});
             }
         }
 
         if (show_up) {
-            if (dependents.len > 0) {
-                try ctx.output.println("Blocks:", .{});
-                for (dependents) |dep| {
-                    try ctx.output.print("  - {s}\n", .{dep.issue_id});
+            for (dependents) |dep| {
+                const dep_issue = ctx.issue_store.get(dep.issue_id) catch null;
+                if (dep_issue) |di| {
+                    var d = di;
+                    defer d.deinit(allocator);
+                    try ctx.output.print("  -> {s} ({s}): {s}\n", .{ dep.issue_id, dep.dep_type.toString(), d.title });
+                } else {
+                    try ctx.output.print("  -> {s} ({s})\n", .{ dep.issue_id, dep.dep_type.toString() });
                 }
-            } else {
-                try ctx.output.println("Blocks: (none)", .{});
             }
         }
     }

@@ -13,6 +13,43 @@ const test_util = @import("../test_util.zig");
 const Issue = models.Issue;
 const Comment = models.Comment;
 const CommandContext = common.CommandContext;
+const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
+
+/// Extended issue JSON for show --json, includes dependencies and comments arrays.
+/// Field order matches br's show JSON output.
+const ShowIssueFull = struct {
+    id: []const u8,
+    title: []const u8,
+    description: ?[]const u8 = null,
+    status: []const u8,
+    priority: models.Priority,
+    issue_type: []const u8,
+    created_at: Rfc3339Timestamp,
+    created_by: ?[]const u8 = null,
+    updated_at: Rfc3339Timestamp,
+    source_repo: []const u8 = ".",
+    compaction_level: u32 = 0,
+    original_size: u64 = 0,
+    labels: ?[]const []const u8 = null,
+    dependencies: []const DepDetail = &.{},
+    comments: []const CommentDetail = &.{},
+};
+
+const DepDetail = struct {
+    id: []const u8,
+    title: []const u8,
+    status: []const u8,
+    priority: models.Priority,
+    dependency_type: []const u8,
+};
+
+const CommentDetail = struct {
+    id: i64,
+    issue_id: []const u8,
+    author: []const u8,
+    text: []const u8,
+    created_at: Rfc3339Timestamp,
+};
 
 pub const ShowError = error{
     WorkspaceNotInitialized,
@@ -56,9 +93,73 @@ pub fn run(
     defer ctx.dep_store.freeDependencies(dependents);
 
     if (structured_output) {
-        const full_issue = common.issueToFull(issue, deps.len, dependents.len);
+        // Build dependency detail array
+        // Keep dep issues alive until after JSON serialization
+        var dep_issues = try allocator.alloc(?Issue, deps.len);
+        defer {
+            for (dep_issues) |*di_opt| {
+                if (di_opt.*) |*di| di.deinit(allocator);
+            }
+            allocator.free(dep_issues);
+        }
 
-        const arr = [_]common.IssueFull{full_issue};
+        var dep_details = try allocator.alloc(DepDetail, deps.len);
+        defer allocator.free(dep_details);
+
+        for (deps, 0..) |dep, i| {
+            dep_issues[i] = ctx.issue_store.get(dep.depends_on_id) catch null;
+            if (dep_issues[i]) |di| {
+                dep_details[i] = .{
+                    .id = dep.depends_on_id,
+                    .title = di.title,
+                    .status = di.status.toString(),
+                    .priority = di.priority,
+                    .dependency_type = dep.dep_type.toString(),
+                };
+            } else {
+                dep_details[i] = .{
+                    .id = dep.depends_on_id,
+                    .title = "(not found)",
+                    .status = "unknown",
+                    .priority = .{ .value = 2 },
+                    .dependency_type = dep.dep_type.toString(),
+                };
+            }
+        }
+
+        // Build comment detail array
+        var comment_details = try allocator.alloc(CommentDetail, issue.comments.len);
+        defer allocator.free(comment_details);
+
+        for (issue.comments, 0..) |c, i| {
+            comment_details[i] = .{
+                .id = c.id,
+                .issue_id = c.issue_id,
+                .author = c.author,
+                .text = c.text,
+                .created_at = .{ .value = c.created_at },
+            };
+        }
+
+        const show_full = ShowIssueFull{
+            .id = issue.id,
+            .title = issue.title,
+            .description = issue.description,
+            .status = issue.status.toString(),
+            .priority = issue.priority,
+            .issue_type = issue.issue_type.toString(),
+            .created_at = issue.created_at,
+            .created_by = issue.created_by,
+            .updated_at = issue.updated_at,
+            .source_repo = issue.source_repo orelse ".",
+            .compaction_level = issue.compaction_level,
+            .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
+            .labels = if (issue.labels.len > 0) issue.labels else null,
+            .dependencies = dep_details,
+            .comments = comment_details,
+        };
+
+        const arr = [_]ShowIssueFull{show_full};
         try ctx.output.printJson(&arr);
     } else {
         try ctx.output.printIssue(issue);

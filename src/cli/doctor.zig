@@ -91,11 +91,11 @@ pub fn run(
 
         for (checks.items) |check| {
             const icon = if (std.mem.eql(u8, check.status, "pass"))
-                "[OK]  "
+                "OK "
             else if (std.mem.eql(u8, check.status, "fail"))
-                "[FAIL]"
+                "FAIL "
             else
-                "[WARN]";
+                "WARN ";
 
             try ctx.output.print("{s} {s}\n", .{ icon, check.name });
             if (check.message) |msg| {

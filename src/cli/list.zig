@@ -140,13 +140,31 @@ pub fn run(
         var full_issues = try allocator.alloc(common.IssueFull, issues.len);
         defer allocator.free(full_issues);
 
+        // Track labels loaded for JSON output so we can free them after serialization
+        var loaded_labels = try allocator.alloc(?[]const []const u8, issues.len);
+        defer {
+            for (loaded_labels) |lbl_opt| {
+                if (lbl_opt) |lbls| {
+                    for (lbls) |l| allocator.free(l);
+                    allocator.free(lbls);
+                }
+            }
+            allocator.free(loaded_labels);
+        }
+
         for (issues, 0..) |issue, i| {
             const deps = try ctx.dep_store.getDependencies(issue.id);
             defer ctx.dep_store.freeDependencies(deps);
             const dependents = try ctx.dep_store.getDependents(issue.id);
             defer ctx.dep_store.freeDependencies(dependents);
 
-            full_issues[i] = common.issueToFull(issue, deps.len, dependents.len);
+            // Load labels for JSON output (list() doesn't include them)
+            const labels = try ctx.issue_store.getLabels(issue.id);
+            loaded_labels[i] = labels;
+
+            var issue_with_labels = issue;
+            issue_with_labels.labels = labels;
+            full_issues[i] = common.issueToFull(issue_with_labels, deps.len, dependents.len);
         }
 
         // Output bare array matching br format

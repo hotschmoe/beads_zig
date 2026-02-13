@@ -234,7 +234,7 @@ fn runList(
         if (label_list.len == 0) {
             try ctx.output.info("No labels on {s}", .{id});
         } else {
-            try ctx.output.println("Labels on {s} ({d}):", .{ id, label_list.len });
+            try ctx.output.println("Labels for {s}:", .{id});
             for (label_list) |label| {
                 try ctx.output.print("  {s}\n", .{label});
             }

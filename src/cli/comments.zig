@@ -182,10 +182,10 @@ fn runList(
         if (comments.len == 0) {
             try ctx.output.info("No comments on {s}", .{id});
         } else {
-            try ctx.output.println("Comments on {s} ({d}):", .{ id, comments.len });
+            try ctx.output.println("Comments for {s}:", .{id});
             for (comments) |c| {
                 try ctx.output.print("\n", .{});
-                const ts_str = common.formatTimestamp(c.created_at, allocator) catch "unknown";
+                const ts_str = common.formatTimestampShort(c.created_at, allocator) catch "unknown";
                 defer if (!std.mem.eql(u8, ts_str, "unknown")) allocator.free(ts_str);
                 try ctx.output.print("[{s}] at {s} UTC\n", .{ c.author, ts_str });
                 try ctx.output.print("  {s}\n", .{c.text});

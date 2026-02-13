@@ -435,6 +435,12 @@ pub const IssueStore = struct {
         const order_dir = if (filters.order_desc) "DESC" else "ASC";
         try writer.print(" ORDER BY {s} {s}", .{ order_col, order_dir });
 
+        // Add tiebreaker for priority sort: use id ASC to match br behavior
+        if (filters.order_by == .priority) {
+            const id_col = if (filters.label != null) "i.id" else "id";
+            try writer.print(", {s} ASC", .{id_col});
+        }
+
         if (filters.limit) |lim| {
             try writer.print(" LIMIT {d}", .{lim});
         }
@@ -488,7 +494,7 @@ pub const IssueStore = struct {
             .priority => "SELECT CAST(priority AS TEXT) as grp, COUNT(*) as cnt FROM issues WHERE status != 'tombstone' GROUP BY priority",
             .issue_type => "SELECT issue_type as grp, COUNT(*) as cnt FROM issues WHERE status != 'tombstone' GROUP BY issue_type",
             .assignee => "SELECT COALESCE(assignee, '(unassigned)') as grp, COUNT(*) as cnt FROM issues WHERE status != 'tombstone' GROUP BY assignee",
-        } else "SELECT 'total' as grp, COUNT(*) as cnt FROM issues WHERE status != 'tombstone'";
+        } else "SELECT 'total' as grp, COUNT(*) as cnt FROM issues";
 
         var stmt = try self.db.prepare(sql);
         defer stmt.deinit();
@@ -528,9 +534,9 @@ pub const IssueStore = struct {
         return try stmt.step();
     }
 
-    /// Count total issues (excluding tombstones).
+    /// Count total issues (including tombstones, matching br behavior).
     pub fn countTotal(self: *Self) !usize {
-        var stmt = try self.db.prepare("SELECT COUNT(*) FROM issues WHERE status != 'tombstone'");
+        var stmt = try self.db.prepare("SELECT COUNT(*) FROM issues");
         defer stmt.deinit();
         if (try stmt.step()) {
             return @intCast(stmt.columnInt(0));

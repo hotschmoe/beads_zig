@@ -24,6 +24,7 @@ const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
 const models = @import("../models/mod.zig");
 
 /// Full issue representation for JSON output matching br's bare-array format.
+/// Field order matches br's JSON output (Zig serializes in declaration order).
 pub const IssueFull = struct {
     id: []const u8,
     title: []const u8,
@@ -31,16 +32,15 @@ pub const IssueFull = struct {
     status: []const u8,
     priority: models.Priority,
     issue_type: []const u8,
-    assignee: ?[]const u8 = null,
-    created_by: ?[]const u8 = null,
-    labels: []const []const u8 = &[_][]const u8{},
     created_at: Rfc3339Timestamp,
+    created_by: ?[]const u8 = null,
     updated_at: Rfc3339Timestamp,
-    dependency_count: usize = 0,
-    dependent_count: usize = 0,
     source_repo: []const u8 = ".",
     compaction_level: u32 = 0,
     original_size: u64 = 0,
+    labels: ?[]const []const u8 = null,
+    dependency_count: usize = 0,
+    dependent_count: usize = 0,
 };
 
 /// Build an IssueFull from an Issue and dependency counts.
@@ -52,16 +52,15 @@ pub fn issueToFull(issue: models.Issue, dep_count: usize, dependent_count: usize
         .status = issue.status.toString(),
         .priority = issue.priority,
         .issue_type = issue.issue_type.toString(),
-        .assignee = issue.assignee,
-        .created_by = issue.created_by,
-        .labels = issue.labels,
         .created_at = issue.created_at,
+        .created_by = issue.created_by,
         .updated_at = issue.updated_at,
-        .dependency_count = dep_count,
-        .dependent_count = dependent_count,
         .source_repo = issue.source_repo orelse ".",
         .compaction_level = issue.compaction_level,
         .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
+        .labels = if (issue.labels.len > 0) issue.labels else null,
+        .dependency_count = dep_count,
+        .dependent_count = dependent_count,
     };
 }
 
@@ -81,6 +80,24 @@ pub fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
         day_seconds.getHoursIntoDay(),
         day_seconds.getMinutesIntoHour(),
         day_seconds.getSecondsIntoMinute(),
+    });
+}
+
+/// Format a Unix timestamp as "YYYY-MM-DD HH:MM" (no seconds, matching br).
+/// Caller owns returned string and must free it.
+pub fn formatTimestampShort(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+
+    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
     });
 }
 

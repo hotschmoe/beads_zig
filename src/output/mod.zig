@@ -798,12 +798,8 @@ pub fn statusIcon(status: Status) []const u8 {
 /// Get priority bullet matching br.
 pub fn priorityBullet(priority: Priority) []const u8 {
     return switch (priority.value) {
-        0 => "\xe2\x97\x8f", // U+25CF BLACK CIRCLE (critical)
-        1 => "\xe2\x97\x8f", // U+25CF BLACK CIRCLE (high)
-        2 => "\xe2\x97\x8b", // U+25CB WHITE CIRCLE (medium)
-        3 => "\xe2\x97\x8c", // U+25CC DOTTED CIRCLE (low)
-        4 => " ",
-        else => " ",
+        0...4 => "\xe2\x97\x8f", // U+25CF BLACK CIRCLE (all priorities)
+        else => "\xe2\x97\x8f",
     };
 }
 
@@ -1056,7 +1052,7 @@ test "Output printIssueListPlain writes formatted lines" {
     const icon = statusIcon(issue.status);
     try std.testing.expectEqualStrings("\xE2\x97\x8B", icon);
     const bullet = priorityBullet(issue.priority);
-    try std.testing.expectEqualStrings("\xe2\x97\x8b", bullet);
+    try std.testing.expectEqualStrings("\xe2\x97\x8f", bullet);
     try std.testing.expectEqualStrings("P2", issue.priority.toDisplayString());
 }
 
