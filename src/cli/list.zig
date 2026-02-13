@@ -76,17 +76,9 @@ pub fn run(
         filters.issue_type = IssueType.fromString(t);
     }
 
-    if (list_args.assignee) |a| {
-        filters.assignee = a;
-    }
-
-    if (list_args.label) |l| {
-        filters.label = l;
-    }
-
-    if (list_args.limit) |n| {
-        filters.limit = n;
-    }
+    filters.assignee = list_args.assignee;
+    filters.label = list_args.label;
+    filters.limit = list_args.limit;
 
     filters.order_by = switch (list_args.sort) {
         .created_at => .created_at,

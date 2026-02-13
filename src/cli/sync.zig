@@ -75,7 +75,7 @@ pub fn run(
     } else if (sync_args.import_only) {
         try runImport(&ctx, structured_output, global.quiet, import_opts, allocator);
     } else if (sync_args.merge) {
-        try runMerge(&ctx, structured_output, global.quiet, import_opts, allocator);
+        try runMerge(&ctx, structured_output, global.quiet, allocator);
     } else {
         try runBidirectional(&ctx, structured_output, global.quiet, allocator);
     }
@@ -224,8 +224,7 @@ fn runBidirectional(ctx: *CommandContext, structured_output: bool, quiet: bool, 
     }
 }
 
-fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, opts: ImportOptions, allocator: std.mem.Allocator) !void {
-    _ = opts;
+fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
     const jsonl_path = try getJsonlPath(ctx, allocator);
     defer allocator.free(jsonl_path);
 
@@ -244,8 +243,7 @@ fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, opts: Im
     };
     defer {
         for (remote_issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
+            issue.deinit(allocator);
         }
         allocator.free(remote_issues);
     }
@@ -341,22 +339,14 @@ fn filterOrphans(
             continue;
         }
 
-        // Foreign-prefix issue detected
-        switch (opts.orphan_policy) {
-            .strict => {
-                // strict: import as-is (it's the user's responsibility)
-                try result.append(allocator, issue);
-            },
-            .resurrect => {
-                // resurrect: import as-is (keep foreign IDs)
-                try result.append(allocator, issue);
-            },
-            .skip => {
-                skipped.* += 1;
-                continue;
-            },
+        // Foreign-prefix issue: skip or import based on policy
+        if (opts.orphan_policy == .skip) {
+            skipped.* += 1;
+            continue;
         }
 
+        // strict and resurrect both import as-is
+        try result.append(allocator, issue);
         if (opts.rename_prefix) {
             renamed.* += 1;
         }

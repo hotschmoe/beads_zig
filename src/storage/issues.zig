@@ -1165,13 +1165,7 @@ test "IssueStore.list returns issues" {
     try store.insert(Issue.init("bd-list3", "Issue 3", 1706560000));
 
     const issues = try store.list(.{});
-    defer {
-        for (issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(issues);
-    }
+    defer store.freeIssues(issues);
 
     try std.testing.expectEqual(@as(usize, 3), issues.len);
 }
@@ -1190,13 +1184,7 @@ test "IssueStore.list excludes tombstones by default" {
     try store.delete("bd-deleted", 1706560000);
 
     const issues = try store.list(.{});
-    defer {
-        for (issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(issues);
-    }
+    defer store.freeIssues(issues);
 
     try std.testing.expectEqual(@as(usize, 1), issues.len);
     try std.testing.expectEqualStrings("bd-active", issues[0].id);
@@ -1220,13 +1208,7 @@ test "IssueStore.list with status filter" {
     try store.insert(issue2);
 
     const issues = try store.list(.{ .status = .open });
-    defer {
-        for (issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(issues);
-    }
+    defer store.freeIssues(issues);
 
     try std.testing.expectEqual(@as(usize, 1), issues.len);
     try std.testing.expectEqualStrings("bd-open", issues[0].id);
@@ -1250,13 +1232,7 @@ test "IssueStore.list with priority filter" {
     try store.insert(issue2);
 
     const issues = try store.list(.{ .priority = Priority.HIGH });
-    defer {
-        for (issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(issues);
-    }
+    defer store.freeIssues(issues);
 
     try std.testing.expectEqual(@as(usize, 1), issues.len);
     try std.testing.expectEqualStrings("bd-high", issues[0].id);
@@ -1277,13 +1253,7 @@ test "IssueStore.list with limit and offset" {
     try store.insert(Issue.init("bd-4", "Issue 4", 1706570000));
 
     const issues = try store.list(.{ .limit = 2, .offset = 1 });
-    defer {
-        for (issues) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(issues);
-    }
+    defer store.freeIssues(issues);
 
     try std.testing.expectEqual(@as(usize, 2), issues.len);
 }
@@ -1302,24 +1272,12 @@ test "IssueStore.list ordering" {
 
     // Default: created_at DESC
     const desc = try store.list(.{});
-    defer {
-        for (desc) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(desc);
-    }
+    defer store.freeIssues(desc);
     try std.testing.expectEqualStrings("bd-new", desc[0].id);
 
     // created_at ASC
     const asc = try store.list(.{ .order_desc = false });
-    defer {
-        for (asc) |*issue| {
-            var i = issue.*;
-            i.deinit(allocator);
-        }
-        allocator.free(asc);
-    }
+    defer store.freeIssues(asc);
     try std.testing.expectEqualStrings("bd-old", asc[0].id);
 }
 

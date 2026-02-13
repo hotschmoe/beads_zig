@@ -35,30 +35,23 @@ pub const Rfc3339Timestamp = struct {
         const year_day = epoch_day.calculateYearDay();
         const month_day = year_day.calculateMonthDay();
 
-        if (self.nanos > 0) {
-            var buf: [35]u8 = undefined;
-            const formatted = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>9}Z", .{
-                year_day.year,
-                @as(u32, month_day.month.numeric()),
-                @as(u32, month_day.day_index) + 1,
-                day_seconds.getHoursIntoDay(),
-                day_seconds.getMinutesIntoHour(),
-                day_seconds.getSecondsIntoMinute(),
-                self.nanos,
+        const year = year_day.year;
+        const mon = @as(u32, month_day.month.numeric());
+        const day = @as(u32, month_day.day_index) + 1;
+        const hour = day_seconds.getHoursIntoDay();
+        const min = day_seconds.getMinutesIntoHour();
+        const sec = day_seconds.getSecondsIntoMinute();
+
+        var buf: [35]u8 = undefined;
+        const formatted = if (self.nanos > 0)
+            std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>9}Z", .{
+                year, mon, day, hour, min, sec, self.nanos,
+            }) catch unreachable
+        else
+            std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+                year, mon, day, hour, min, sec,
             }) catch unreachable;
-            try jws.write(formatted);
-        } else {
-            var buf: [25]u8 = undefined;
-            const formatted = std.fmt.bufPrint(&buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
-                year_day.year,
-                @as(u32, month_day.month.numeric()),
-                @as(u32, month_day.day_index) + 1,
-                day_seconds.getHoursIntoDay(),
-                day_seconds.getMinutesIntoHour(),
-                day_seconds.getSecondsIntoMinute(),
-            }) catch unreachable;
-            try jws.write(formatted);
-        }
+        try jws.write(formatted);
     }
 
     pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Self {

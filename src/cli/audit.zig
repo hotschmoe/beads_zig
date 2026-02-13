@@ -463,39 +463,29 @@ fn runList(
         }
     }.lessThan);
 
-    // Apply limit
-    const display_count = @min(events.items.len, limit);
-    const display_events = events.items[0..display_count];
-
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .events = display_events,
+            .events = events.items,
             .total = events.items.len,
         });
     } else if (global.quiet) {
-        for (display_events) |event| {
+        for (events.items) |event| {
             try ctx.output.print("{s} {s}\n", .{ event.issue_id, event.event_type });
         }
     } else {
-        if (display_events.len == 0) {
+        if (events.items.len == 0) {
             try ctx.output.info("No events found", .{});
         } else {
             try ctx.output.println("Audit Log ({d} events):", .{events.items.len});
             try ctx.output.print("\n", .{});
 
-            for (display_events) |event| {
+            for (events.items) |event| {
                 try ctx.output.print("[ts:{d}]  {s: <12}  {s: <15}  {s}\n", .{
                     event.created_at,
                     event.issue_id,
                     event.actor,
                     event.event_type,
-                });
-            }
-
-            if (events.items.len > display_count) {
-                try ctx.output.print("\n...and {d} more (use --limit to show more)\n", .{
-                    events.items.len - display_count,
                 });
             }
         }

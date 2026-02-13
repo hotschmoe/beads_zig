@@ -486,13 +486,7 @@ test "run creates issue successfully" {
 
     var issue_store = storage.IssueStore.init(&db, allocator);
     const issues = try issue_store.list(.{});
-    defer {
-        for (issues) |*iss| {
-            var i = @constCast(iss);
-            i.deinit(allocator);
-        }
-        allocator.free(issues);
-    }
+    defer issue_store.freeIssues(issues);
 
     try std.testing.expect(issues.len > 0);
     var found = false;
