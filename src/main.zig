@@ -160,9 +160,59 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
             };
         },
         .help => |_| {
-            // Help is handled via --help flag in br; stub for now
-            const stderr = std.fs.File.stderr();
-            stderr.writeAll("Usage: bz <command> [options]\nRun 'bz <command> --help' for command-specific help.\n") catch {};
+            const stdout = std.fs.File.stdout();
+            stdout.writeAll(
+                \\Agent-first issue tracker (SQLite + JSONL)
+                \\
+                \\Usage: bz [OPTIONS] <COMMAND>
+                \\
+                \\Commands:
+                \\  init         Initialize a beads workspace
+                \\  create       Create a new issue
+                \\  q            Quick capture (create issue, print ID only)
+                \\  list         List issues
+                \\  show         Show issue details
+                \\  update       Update an issue
+                \\  close        Close an issue
+                \\  reopen       Reopen an issue
+                \\  delete       Delete an issue (creates tombstone)
+                \\  ready        List ready issues (unblocked, not deferred)
+                \\  blocked      List blocked issues
+                \\  search       Search issues
+                \\  dep          Manage dependencies
+                \\  label        Manage labels
+                \\  comments     Manage comments
+                \\  stats        Show project statistics
+                \\  count        Count issues with optional grouping
+                \\  stale        List stale issues
+                \\  lint         Check issues for consistency
+                \\  defer        Defer issues (schedule for later)
+                \\  undefer      Undefer issues (make ready again)
+                \\  config       Configuration management
+                \\  sync         Sync database with JSONL file (export or import)
+                \\  doctor       Run read-only diagnostics
+                \\  info         Show diagnostic metadata about the workspace
+                \\  schema       Emit JSON Schemas for bz output types
+                \\  where        Show the active .beads directory
+                \\  version      Show version information
+                \\  completions  Generate shell completions
+                \\  audit        View audit log
+                \\  history      Show issue history
+                \\  orphans      List orphan issues
+                \\  changelog    Generate changelog from closed issues
+                \\  help         Print this message or the help of the given subcommand(s)
+                \\
+                \\Options:
+                \\      --json       Output as JSON
+                \\      --toon       Output in TOON format
+                \\  -q, --quiet      Quiet mode (no output except errors)
+                \\  -v, --verbose    Increase logging verbosity
+                \\      --no-color   Disable colored output
+                \\      --data       Override .beads/ directory
+                \\  -h, --help       Print help
+                \\  -V, --version    Print version
+                \\
+            ) catch {};
         },
         .version => {
             _ = cli.runVersion(result.global, allocator) catch |err| switch (err) {
