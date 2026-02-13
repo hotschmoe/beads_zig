@@ -493,7 +493,7 @@ run_test "19_info" "info" "info" "Info output format differs (br shows more deta
 
 # --- Test 20: doctor ----------------------------------------------------------
 
-run_test "20_doctor" "doctor" "doctor" "Doctor output format differs (br uses OK prefix, bz uses [OK] prefix)"
+run_test "20_doctor" "doctor" "doctor"
 
 # --- Test 21: JSON mode: list -------------------------------------------------
 
