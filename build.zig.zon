@@ -42,7 +42,7 @@
         },
         .zqlite = .{
             .url = "https://github.com/hotschmoe/zqlite/archive/refs/heads/master.tar.gz",
-            .hash = "zqlite-0.1.0-qtf-W1dElwAm9s9Y6hJSxyXWD0t4Iegy-mP66FxYUVdF",
+            .hash = "zqlite-0.1.1-qtf-W6BGlwD4r9vZ3JKVoGpuVQstX-vAPy5V_CyLEQzB",
         },
     },
     .paths = .{
