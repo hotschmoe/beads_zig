@@ -51,26 +51,36 @@ bz close bd-abc123                   # Close when done
 
 ### Quick Install (Recommended)
 
-Auto-detects your platform and downloads the right binary:
+**Linux / macOS:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.sh | bash
 ```
 
-Options:
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.ps1 | iex
+```
+
+Both installers auto-detect your platform, download the right binary, verify checksums,
+and configure PATH. Options:
 
 ```bash
-# Auto-configure PATH (recommended for new users)
-curl -fsSL .../install.sh | bash -s -- --easy-mode
-
-# System-wide install (/usr/local/bin)
-curl -fsSL .../install.sh | sudo bash -s -- --system
-
-# Specific version
+# Linux/macOS options
+curl -fsSL .../install.sh | bash -s -- --easy-mode     # Auto-configure PATH
+curl -fsSL .../install.sh | sudo bash -s -- --system   # Install to /usr/local/bin
 curl -fsSL .../install.sh | bash -s -- --version v0.1.7
-
-# Verify after install
 curl -fsSL .../install.sh | bash -s -- --verify
+curl -fsSL .../install.sh | bash -s -- --uninstall
+```
+
+```powershell
+# Windows options (save script first, then run with params)
+.\install.ps1 -Version v0.1.7
+.\install.ps1 -Verify
+.\install.ps1 -NoPath           # Skip PATH configuration
+.\install.ps1 -Uninstall
 ```
 
 ### Download Pre-built Binary
@@ -107,9 +117,11 @@ sudo mv bz /usr/local/bin/
 
 **Windows (x86_64)**:
 ```powershell
+# Recommended: use the installer (see Quick Install above)
+# Manual download:
 Invoke-WebRequest -Uri "https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-windows-x86_64.exe" -OutFile "bz.exe"
 # Move to a directory in your PATH, e.g.:
-Move-Item bz.exe C:\Windows\System32\
+Move-Item bz.exe "$env:LOCALAPPDATA\bz\"
 ```
 
 ### Build from Source
@@ -243,29 +255,47 @@ New releases are automatically built for all platforms when changes are merged t
 The upgrade replaces the running binary in-place (atomic rename). On permission errors,
 try running with `sudo` or move `bz` to a user-writable directory like `~/.local/bin/`.
 
-If you installed via `install.sh`, you can also re-run the installer to update:
+You can also re-run the installer to update:
 
 ```bash
+# Linux/macOS
 curl -fsSL https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.sh | bash
+
+# Windows
+irm https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.ps1 | iex
 ```
 
 ## Uninstalling
 
-### If installed via install.sh
+### Via installer
 
 ```bash
+# Linux/macOS
 curl -fsSL https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.sh | bash -s -- --uninstall
 ```
 
-This removes the `bz` binary and cleans up any PATH modifications made by `--easy-mode`.
+```powershell
+# Windows
+.\install.ps1 -Uninstall
+# Or if you didn't save the script:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.ps1))) -Uninstall
+```
+
+This removes the `bz` binary and cleans up PATH modifications.
 
 ### If installed manually
 
 Remove the binary from wherever you placed it:
 
 ```bash
+# Linux/macOS
 sudo rm /usr/local/bin/bz          # System install
 rm ~/.local/bin/bz                  # User install
+```
+
+```powershell
+# Windows
+Remove-Item "$env:LOCALAPPDATA\bz\bz.exe"
 ```
 
 ### Cleaning up project data
