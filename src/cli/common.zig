@@ -328,8 +328,7 @@ pub fn initOutput(allocator: std.mem.Allocator, global: args.GlobalOptions) Outp
 
 /// Get the default actor name from environment.
 pub fn getDefaultActor() ?[]const u8 {
-    const builtin = @import("builtin");
-    if (builtin.os.tag == .windows) return null;
+    if (comptime @import("builtin").os.tag == .windows) return null;
     return std.posix.getenv("USER") orelse std.posix.getenv("USERNAME");
 }
 

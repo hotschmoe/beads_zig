@@ -295,6 +295,14 @@ fn runEdit(
     var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
     const abs_path = std.fs.cwd().realpath(config_path, &abs_buf) catch config_path;
 
+    if (comptime @import("builtin").os.tag == .windows) {
+        if (!global.quiet) {
+            try ctx.output.print("{s}\n", .{abs_path});
+            try ctx.output.info("Use 'notepad {s}' to edit config", .{abs_path});
+        }
+        return;
+    }
+
     const editor = std.posix.getenv("EDITOR") orelse std.posix.getenv("VISUAL") orelse {
         if (!global.quiet) {
             try ctx.output.print("{s}\n", .{abs_path});
