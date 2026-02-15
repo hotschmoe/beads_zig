@@ -1,26 +1,32 @@
-# beads_zig
+# bz -- Local-First Issue Tracker
 
-A local-first issue tracker for git repositories -- an aligned Zig port of [beads_rust](https://github.com/Dicklesworthstone/beads_rust).
+A command-line issue tracker that lives in your git repository. No accounts, no internet, no setup beyond `bz init`.
 
-> **Status**: Aligned Zig port of `br`. All 38 CLI commands implemented with shared SQLite schema. Core CRUD workflow has output parity; some auxiliary commands (stats, info, schema, lint, audit, history) have divergent output formats. See [Parity Status](#parity-status) for details.
-
-## Overview
-
-beads_zig (`bz`) is a command-line issue tracker that lives in your git repository. No accounts, no internet required. Your issues stay with your code.
-
-`bz` is an aligned Zig port of `br` (beads_rust) -- same CLI commands, same SQLite schema, same JSONL sync format. Core issue workflows (create/list/show/update/close/reopen/delete) produce matching output; some auxiliary commands have implementation differences.
-
+```bash
+bz init                              # Initialize in your repo
+bz create "Fix login timeout" -p 1   # Create high-priority issue
+bz ready                             # See what's actionable
+bz close bd-abc123                   # Close when done
 ```
-.beads/
-  beads.db        # SQLite database (primary storage, gitignored)
-  issues.jsonl    # Git-tracked JSONL export (for sync/collaboration)
-  config.yaml     # Project configuration
-```
+
+## Why bz?
+
+| Feature | bz | GitHub Issues | Jira | TODO comments |
+|---------|-----|---------------|------|---------------|
+| Works offline | **Yes** | No | No | Yes |
+| Lives in repo | **Yes** | No | No | Yes |
+| Tracks dependencies | **Yes** | Limited | Yes | No |
+| Zero cost | **Yes** | Free tier | No | Yes |
+| No account required | **Yes** | No | No | Yes |
+| Machine-readable | **Yes** (`--json`) | API only | API only | No |
+| Git-friendly sync | **Yes** (JSONL) | N/A | N/A | N/A |
+| Non-invasive | **Yes** | N/A | N/A | Yes |
+| AI agent integration | **Yes** | Limited | Limited | No |
+| Single static binary | **Yes** | N/A | N/A | N/A |
 
 ## Features
 
-- **br-aligned**: Zig port of beads_rust -- same 38 commands, shared SQLite schema
-- **SQLite storage**: Via zqlite package dependency, WAL mode, FTS5 full-text search
+- **SQLite storage**: WAL mode, FTS5 full-text search, 11 tables, 29+ indexes
 - **Local-first**: All data lives in `.beads/` within your repo
 - **Offline**: Works without internet connectivity
 - **Git-friendly**: JSONL sync export for clean version control diffs
@@ -28,6 +34,8 @@ beads_zig (`bz`) is a command-line issue tracker that lives in your git reposito
 - **Non-invasive**: Never modifies source code or runs git commands automatically
 - **Agent-first**: Machine-readable JSON/TOON output for AI tooling integration
 - **Concurrent-safe**: SQLite WAL mode handles parallel reads and writes
+- **Self-updating**: Built-in `bz upgrade` pulls latest release from GitHub
+- **br-compatible**: Same 38 commands and SQLite schema as [beads_rust](https://github.com/Dicklesworthstone/beads_rust)
 
 ### Issue Management
 
@@ -39,13 +47,31 @@ beads_zig (`bz`) is a command-line issue tracker that lives in your git reposito
 - Deferral with date-based scheduling
 - Full audit trail (history command)
 
-## Dependencies
-
-- **[rich_zig](https://github.com/hotschmoe-zig/rich_zig)** - Terminal formatting (colors, TTY detection)
-- **[toon_zig](https://github.com/hotschmoe-zig/toon_zig)** - LLM-optimized output format
-- **[zqlite](https://github.com/hotschmoe/zqlite)** - SQLite package (bundles amalgamation + FTS5/JSON1 flags)
-
 ## Installation
+
+### Quick Install (Recommended)
+
+Auto-detects your platform and downloads the right binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.sh | bash
+```
+
+Options:
+
+```bash
+# Auto-configure PATH (recommended for new users)
+curl -fsSL .../install.sh | bash -s -- --easy-mode
+
+# System-wide install (/usr/local/bin)
+curl -fsSL .../install.sh | sudo bash -s -- --system
+
+# Specific version
+curl -fsSL .../install.sh | bash -s -- --version v0.1.7
+
+# Verify after install
+curl -fsSL .../install.sh | bash -s -- --verify
+```
 
 ### Download Pre-built Binary
 
@@ -53,36 +79,34 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 **Linux (x86_64)**:
 ```bash
-curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-linux-x86_64 -o bz
+curl -fsSL https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-linux-x86_64 -o bz
 chmod +x bz
 sudo mv bz /usr/local/bin/
 ```
 
 **Linux (ARM64)**:
 ```bash
-curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-linux-aarch64 -o bz
+curl -fsSL https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-linux-aarch64 -o bz
 chmod +x bz
 sudo mv bz /usr/local/bin/
 ```
 
 **macOS (Apple Silicon)**:
 ```bash
-curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-macos-aarch64 -o bz
+curl -fsSL https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-macos-aarch64 -o bz
 chmod +x bz
 sudo mv bz /usr/local/bin/
 ```
 
 **macOS (Intel)**:
 ```bash
-curl -L https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-macos-x86_64 -o bz
+curl -fsSL https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-macos-x86_64 -o bz
 chmod +x bz
 sudo mv bz /usr/local/bin/
 ```
 
 **Windows (x86_64)**:
 ```powershell
-# Download bz.exe from releases page and add to PATH
-# Or using PowerShell:
 Invoke-WebRequest -Uri "https://github.com/hotschmoe/beads_zig/releases/latest/download/bz-windows-x86_64.exe" -OutFile "bz.exe"
 # Move to a directory in your PATH, e.g.:
 Move-Item bz.exe C:\Windows\System32\
@@ -90,23 +114,20 @@ Move-Item bz.exe C:\Windows\System32\
 
 ### Build from Source
 
-Requires Zig 0.15.2 or later. See [Building](#building) below.
-
-## Building
-
 Requires Zig 0.15.2 or later. SQLite is provided automatically via the zqlite package dependency -- no vendor setup or system install needed.
 
 ```bash
-# Build (SQLite bundled via zqlite dependency)
+git clone https://github.com/hotschmoe/beads_zig.git
+cd beads_zig
 zig build
+sudo cp zig-out/bin/bz /usr/local/bin/
+```
 
-# Run
-zig build run
-
-# Run with arguments
+```bash
+# Run directly without installing
 zig build run -- <args>
 
-# Run tests (625 tests)
+# Run tests (633 tests)
 zig build test
 
 # Cross-compile (SQLite bundled via Zig's C cross-compiler)
@@ -156,7 +177,7 @@ bz comments add <id> "Investigation notes..."
 bz comments list <id>
 
 # Defer until later
-bz defer <id> --until 2024-02-15
+bz defer <id> --until 2026-03-15
 bz defer <id> --until +7d    # Relative date
 
 # Search
@@ -194,11 +215,75 @@ bz show <id> --toon    # LLM-optimized format
 
 **System**: `version`, `schema`, `completions`, `help`
 
+## Updating
+
+bz has a built-in self-update command that downloads the latest release from GitHub:
+
+```bash
+# Check if an update is available
+bz upgrade --check
+
+# Upgrade to latest version
+bz upgrade
+
+# Upgrade to a specific version
+bz upgrade --version 0.2.0
+
+# Preview what would happen without installing
+bz upgrade --dry-run
+
+# Force reinstall current version
+bz upgrade --force
+
+# Skip checksum verification (not recommended)
+bz upgrade --no-verify
+```
+
+New releases are automatically built for all platforms when changes are merged to master.
+The upgrade replaces the running binary in-place (atomic rename). On permission errors,
+try running with `sudo` or move `bz` to a user-writable directory like `~/.local/bin/`.
+
+If you installed via `install.sh`, you can also re-run the installer to update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.sh | bash
+```
+
+## Uninstalling
+
+### If installed via install.sh
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hotschmoe/beads_zig/master/install.sh | bash -s -- --uninstall
+```
+
+This removes the `bz` binary and cleans up any PATH modifications made by `--easy-mode`.
+
+### If installed manually
+
+Remove the binary from wherever you placed it:
+
+```bash
+sudo rm /usr/local/bin/bz          # System install
+rm ~/.local/bin/bz                  # User install
+```
+
+### Cleaning up project data
+
+bz stores all data in `.beads/` within each project where you ran `bz init`.
+To remove bz from a project:
+
+```bash
+rm -rf .beads/
+```
+
+No global state, config files, or background processes to clean up.
+
 ## Parity Status
 
-bz aims to match br's CLI interface and output. Current state (2026-02-13):
+bz aims to match br's CLI interface and output. Current state:
 
-**625/625 unit tests pass, 28/30 conformance tests pass.**
+**633/633 unit tests pass, 30/30 conformance tests pass.**
 
 ### Full parity (output matches br)
 
@@ -214,11 +299,10 @@ comments (add/list), defer, undefer, doctor (text), ready (JSON), blocked (JSON)
 | `info` | Missing daemon detail indentation; JSON missing fields (mode, jsonl_path) |
 | `version` | Multi-line format (bz/zig/platform) vs br's single-line format |
 | `where` | Shows 1 line (path) vs br's 3 lines (path, prefix, database) |
-| `ready` | Uses list format vs br's numbered format with emoji header |
-| `blocked` | Plain text vs br's emoji header format |
+| `ready` | Uses list format vs br's numbered format |
+| `blocked` | Plain text vs br's header format |
 | `stale` | Different empty-state message |
 | `init` | Prints 4 lines vs br's 1 line |
-| Timestamps | Second precision in JSON vs br's nanosecond precision |
 
 ### Different behavior (same command name, different semantics)
 
@@ -233,10 +317,9 @@ comments (add/list), defer, undefer, doctor (text), ready (JSON), blocked (JSON)
 ### Known gaps
 
 - `--file` flag in create is a stub (prints "not yet implemented")
-- List filters `--priority-min`, `--priority-max`, `--overdue`, `--include-deferred` are parsed but ignored
-- No auto-flush to JSONL after mutations (br auto-flushes)
-- Missing global flags: `--actor`, `--no-auto-flush`, `--no-auto-import`, `--lock-timeout`, `--no-db`
-- Memory leak in `ready`/`blocked` commands (issue_store.get() result not freed)
+- `doctor --json` missing details objects (schema.tables, jsonl.parse)
+- `history` has different semantics (event viewer vs backup manager)
+- Some minor field naming differences in JSON output
 
 ## Architecture
 
@@ -274,6 +357,7 @@ src/
 - **Writes**: SQLite INSERT/UPDATE with WAL mode (~1ms, auto-persisted)
 - **Reads**: SQLite SELECT (no replay needed, WAL mode handles concurrency)
 - **Sync**: `bz sync --flush` exports DB -> JSONL; `bz sync --import` imports JSONL -> DB
+- **Auto-flush**: Mutations automatically flush to JSONL (disable with `--no-auto-flush`)
 - **Schema**: 11 tables matching br exactly, 29+ indexes, FTS5 full-text search
 
 **Design principles**:
@@ -282,10 +366,6 @@ src/
 - Rich terminal output with TTY detection
 - Hash-based IDs prevent merge conflicts
 - SQLite schema identical to br for cross-compatibility
-
-## Performance
-
-Both `bz` and `br` now use SQLite with WAL mode, so performance characteristics are comparable. Zig's advantage is in startup time (no runtime, static binary) and cross-compilation.
 
 ## Global Options
 
@@ -296,9 +376,15 @@ Both `bz` and `br` now use SQLite with WAL mode, so performance characteristics 
 -v, --verbose       Increase verbosity
 --no-color          Disable ANSI colors (respects NO_COLOR env)
 --data <path>       Override .beads/ directory
+--no-auto-flush     Disable automatic JSONL flush after mutations
+--actor <name>      Set actor name for audit trail
 ```
 
-br also supports `--actor`, `--db`, `--lock-timeout`, `--no-auto-flush`, `--no-auto-import`, `--no-db`, and `--allow-stale` which are not yet implemented in bz.
+## Dependencies
+
+- **[rich_zig](https://github.com/hotschmoe/rich_zig)** - Terminal formatting (colors, TTY detection)
+- **[toon_zig](https://github.com/hotschmoe/toon_zig)** - LLM-optimized output format
+- **[zqlite](https://github.com/hotschmoe/zqlite)** - SQLite package (bundles amalgamation + FTS5/JSON1 flags)
 
 ## Why Zig?
 

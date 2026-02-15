@@ -209,7 +209,7 @@ src/
 ```bash
 zig build                  # Build (SQLite via zqlite dependency)
 zig build run              # Run CLI
-zig build test             # Run all tests (625 tests)
+zig build test             # Run all tests (633 tests)
 
 # Cross-compile (SQLite bundled via Zig's C cross-compiler)
 zig build -Dtarget=aarch64-linux-gnu
@@ -228,12 +228,12 @@ cd sandbox
 
 The project root may have a `.beads/` for beads_rust tracking.
 
-#### Parity Status (2026-02-13)
+#### Parity Status (2026-02-15)
 
-**625/625 unit tests pass, 28/30 conformance tests pass.**
+**633/633 unit tests pass, 30/30 conformance tests pass.**
 
 Commands with FULL output parity: create, list, show, update, close, reopen, delete, q,
-search, count, dep, label, comments, defer, undefer, doctor (text)
+search, count, dep, label, comments, defer, undefer, doctor (text), ready (JSON), blocked (JSON)
 
 Commands with PARTIAL parity (functional, output differs): stats, info, version, where,
 ready (text), blocked (text), stale, init
@@ -242,10 +242,7 @@ Commands with DIFFERENT semantics than br: history (event viewer vs backup manag
 schema (markdown vs JSON Schema), lint (DB checker vs template checker),
 audit (event dump vs subcommand-based recorder), config (dump vs subcommands)
 
-Known bugs: Memory leak in ready/blocked (issue_store.get() result not freed)
+Known stubs: --file in create
 
-Known stubs: --file in create, list priority-range filters, audit limit/days,
-sync orphan_policy/rename_prefix
-
-Missing: auto-flush to JSONL, global flags (--actor, --lock-timeout, --no-auto-flush, etc.)
+Known gaps: doctor --json missing details, history different semantics, minor JSON field naming diffs
 

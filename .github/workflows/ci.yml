@@ -31,6 +31,18 @@ jobs:
           fi
           echo "Version bump verified: $MASTER_VERSION -> $PR_VERSION"
 
+      - name: Check Version Sync (build.zig.zon == version.zig)
+        run: |
+          ZON_VERSION=$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon)
+          ZIG_VERSION=$(sed -n 's/.*VERSION = "\([^"]*\)".*/\1/p' src/cli/version.zig)
+          echo "build.zig.zon: $ZON_VERSION"
+          echo "version.zig:   $ZIG_VERSION"
+          if [ "$ZON_VERSION" != "$ZIG_VERSION" ]; then
+            echo "::error::Version mismatch! build.zig.zon ($ZON_VERSION) != version.zig ($ZIG_VERSION)"
+            exit 1
+          fi
+          echo "Version sync verified: $ZON_VERSION"
+
   test:
     name: Test (${{ matrix.os }}, ${{ matrix.optimize }})
     runs-on: ${{ matrix.os }}
