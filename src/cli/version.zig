@@ -7,7 +7,7 @@ const builtin = @import("builtin");
 const output = @import("../output/mod.zig");
 
 // Keep in sync with .version in build.zig.zon (CI enforces this)
-pub const VERSION = "0.1.7";
+pub const VERSION = "0.1.8";
 
 pub const VersionError = error{
     WriteError,
