@@ -214,7 +214,10 @@ fn renderAsciiFullGraph(
                 const connector = if (is_last) "`-- depends on: " else "|-- depends on: ";
 
                 if (try ctx.issue_store.get(dep.depends_on_id)) |blocker| {
-                    defer { var b = blocker; b.deinit(allocator); }
+                    defer {
+                        var b = blocker;
+                        b.deinit(allocator);
+                    }
                     const blocker_status = if (blocker.status.eql(.closed)) "[x]" else "[ ]";
                     try writer.print("  {s}{s} {s} - {s}\n", .{ connector, blocker.id, blocker_status, truncateTitle(blocker.title, 40) });
                 } else {
@@ -595,7 +598,10 @@ fn renderAllOpenGraph(
                     const connector = if (is_last) "`-- " else "|-- ";
 
                     if (try ctx.issue_store.get(dep.depends_on_id)) |blocker| {
-                        defer { var b = blocker; b.deinit(allocator); }
+                        defer {
+                            var b = blocker;
+                            b.deinit(allocator);
+                        }
                         const blocker_status = if (blocker.status.eql(.closed)) "[x]" else "[ ]";
                         try writer.print("  {s}{s} {s} - {s}\n", .{ connector, blocker.id, blocker_status, truncateTitle(blocker.title, 40) });
                     } else {

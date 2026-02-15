@@ -630,9 +630,7 @@ pub const IssueStore = struct {
 
     /// Add a label to an issue.
     pub fn addLabel(self: *Self, issue_id: []const u8, label: []const u8) !void {
-        var stmt = try self.db.prepare(
-            "INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?1, ?2)"
-        );
+        var stmt = try self.db.prepare("INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?1, ?2)");
         defer stmt.deinit();
         try stmt.bindText(1, issue_id);
         try stmt.bindText(2, label);
@@ -642,9 +640,7 @@ pub const IssueStore = struct {
 
     /// Remove a label from an issue.
     pub fn removeLabel(self: *Self, issue_id: []const u8, label: []const u8) !void {
-        var stmt = try self.db.prepare(
-            "DELETE FROM labels WHERE issue_id = ?1 AND label = ?2"
-        );
+        var stmt = try self.db.prepare("DELETE FROM labels WHERE issue_id = ?1 AND label = ?2");
         defer stmt.deinit();
         try stmt.bindText(1, issue_id);
         try stmt.bindText(2, label);
