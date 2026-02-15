@@ -630,26 +630,17 @@ pub const UpgradeArgs = struct {
     force: bool = false, // Force upgrade even if same version
 };
 
-/// Agents subcommand variants.
-pub const AgentsSubcommand = union(enum) {
-    check: void,
-    add: struct {
-        name: []const u8,
-        instructions: ?[]const u8 = null,
-    },
-    remove: struct {
-        name: []const u8,
-    },
-    update: struct {
-        name: []const u8,
-        instructions: ?[]const u8 = null,
-    },
-    list: void,
+/// Agents command action.
+pub const AgentsAction = enum {
+    check,
+    add,
+    remove,
+    update,
 };
 
-/// Agents command arguments.
+/// Agents command arguments (matches br: --add, --remove, --check, --update).
 pub const AgentsArgs = struct {
-    subcommand: AgentsSubcommand,
+    action: AgentsAction = .check,
     dry_run: bool = false,
     force: bool = false,
 };
@@ -1883,45 +1874,22 @@ pub const ArgParser = struct {
     }
 
     fn parseAgentsArgs(self: *Self) ParseError!AgentsArgs {
-        var result = AgentsArgs{ .subcommand = .{ .check = {} } };
+        var result = AgentsArgs{};
 
-        const subcmd = self.next() orelse return result;
-
-        if (std.mem.eql(u8, subcmd, "check")) {
-            result.subcommand = .{ .check = {} };
-        } else if (std.mem.eql(u8, subcmd, "add")) {
-            const name = self.next() orelse return error.MissingRequiredArgument;
-            var instructions: ?[]const u8 = null;
-            while (self.hasNext()) {
-                if (self.consumeFlag("-i", "--instructions")) {
-                    instructions = self.next() orelse return error.MissingFlagValue;
-                } else if (self.consumeFlag("-n", "--dry-run")) {
-                    result.dry_run = true;
-                } else if (self.consumeFlag("-f", "--force")) {
-                    result.force = true;
-                } else break;
-            }
-            result.subcommand = .{ .add = .{ .name = name, .instructions = instructions } };
-        } else if (std.mem.eql(u8, subcmd, "remove") or std.mem.eql(u8, subcmd, "rm")) {
-            const name = self.next() orelse return error.MissingRequiredArgument;
-            result.subcommand = .{ .remove = .{ .name = name } };
-        } else if (std.mem.eql(u8, subcmd, "update")) {
-            const name = self.next() orelse return error.MissingRequiredArgument;
-            var instructions: ?[]const u8 = null;
-            while (self.hasNext()) {
-                if (self.consumeFlag("-i", "--instructions")) {
-                    instructions = self.next() orelse return error.MissingFlagValue;
-                } else if (self.consumeFlag("-n", "--dry-run")) {
-                    result.dry_run = true;
-                } else if (self.consumeFlag("-f", "--force")) {
-                    result.force = true;
-                } else break;
-            }
-            result.subcommand = .{ .update = .{ .name = name, .instructions = instructions } };
-        } else if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
-            result.subcommand = .{ .list = {} };
-        } else {
-            return error.UnknownSubcommand;
+        while (self.hasNext()) {
+            if (self.consumeFlag(null, "--add")) {
+                result.action = .add;
+            } else if (self.consumeFlag(null, "--remove")) {
+                result.action = .remove;
+            } else if (self.consumeFlag(null, "--check")) {
+                result.action = .check;
+            } else if (self.consumeFlag(null, "--update")) {
+                result.action = .update;
+            } else if (self.consumeFlag("-n", "--dry-run")) {
+                result.dry_run = true;
+            } else if (self.consumeFlag("-f", "--force")) {
+                result.force = true;
+            } else break;
         }
 
         return result;
@@ -2931,16 +2899,17 @@ test "parse agents command default (check)" {
     const result = try parser.parse();
 
     try std.testing.expect(result.command == .agents);
-    try std.testing.expect(result.command.agents.subcommand == .check);
+    try std.testing.expect(result.command.agents.action == .check);
 }
 
-test "parse agents list" {
-    const args_list = [_][]const u8{ "agents", "list" };
+test "parse agents --add --force" {
+    const args_list = [_][]const u8{ "agents", "--add", "--force" };
     var parser = ArgParser.init(std.testing.allocator, &args_list);
     const result = try parser.parse();
 
     try std.testing.expect(result.command == .agents);
-    try std.testing.expect(result.command.agents.subcommand == .list);
+    try std.testing.expect(result.command.agents.action == .add);
+    try std.testing.expect(result.command.agents.force);
 }
 
 test "parse status as alias for stats" {
