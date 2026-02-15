@@ -181,9 +181,58 @@ pub fn formatRfc3339Alloc(allocator: std.mem.Allocator, timestamp: i64) ![]u8 {
     return allocator.dupe(u8, result);
 }
 
+/// Parsed timestamp result with nanosecond precision.
+pub const TimestampFull = struct {
+    seconds: i64,
+    nanos: u32 = 0,
+};
+
+/// Parse RFC3339 timestamp string preserving fractional seconds as nanoseconds.
+/// Returns null for invalid input.
+pub fn parseRfc3339WithNanos(s: []const u8) ?TimestampFull {
+    if (s.len < 20) return null;
+
+    // Reuse existing parser for the base seconds value
+    const seconds = parseRfc3339(s) orelse return null;
+
+    // Extract fractional seconds if present
+    var nanos: u32 = 0;
+    if (s.len > 19 and s[19] == '.') {
+        var pos: usize = 20;
+        var frac: u64 = 0;
+        var digits: u32 = 0;
+        while (pos < s.len and std.ascii.isDigit(s[pos]) and digits < 9) {
+            frac = frac * 10 + (s[pos] - '0');
+            digits += 1;
+            pos += 1;
+        }
+        // Skip remaining digits beyond 9
+        while (pos < s.len and std.ascii.isDigit(s[pos])) {
+            pos += 1;
+        }
+        // Pad to 9 digits (nanoseconds)
+        while (digits < 9) : (digits += 1) {
+            frac *= 10;
+        }
+        nanos = @intCast(frac);
+    }
+
+    return .{ .seconds = seconds, .nanos = nanos };
+}
+
 /// Get current time as Unix epoch seconds.
 pub fn now() i64 {
     return std.time.timestamp();
+}
+
+/// Get current time with nanosecond precision.
+pub fn nowNanos() TimestampFull {
+    const ns: i128 = std.time.nanoTimestamp();
+    const ns_per_s: i128 = std.time.ns_per_s;
+    return .{
+        .seconds = @intCast(@divFloor(ns, ns_per_s)),
+        .nanos = @intCast(@mod(ns, ns_per_s)),
+    };
 }
 
 /// Convert year/month/day to epoch day (days since 1970-01-01).
@@ -452,4 +501,35 @@ test "parseRfc3339Strict returns specific errors" {
     try std.testing.expectError(TimestampError.InvalidDate, parseRfc3339Strict("2024-13-01T00:00:00Z"));
     try std.testing.expectError(TimestampError.InvalidTime, parseRfc3339Strict("2024-01-01T25:00:00Z"));
     try std.testing.expectError(TimestampError.InvalidTimezone, parseRfc3339Strict("2024-01-01T00:00:00X"));
+}
+
+test "parseRfc3339WithNanos preserves fractional seconds" {
+    const result = parseRfc3339WithNanos("2024-01-29T15:30:00.123456789Z");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqual(@as(i64, 1706542200), result.?.seconds);
+    try std.testing.expectEqual(@as(u32, 123456789), result.?.nanos);
+}
+
+test "parseRfc3339WithNanos zero nanos without fractional part" {
+    const result = parseRfc3339WithNanos("2024-01-29T15:30:00Z");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqual(@as(i64, 1706542200), result.?.seconds);
+    try std.testing.expectEqual(@as(u32, 0), result.?.nanos);
+}
+
+test "parseRfc3339WithNanos pads short fractional" {
+    const result = parseRfc3339WithNanos("2024-01-29T15:30:00.123Z");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqual(@as(u32, 123000000), result.?.nanos);
+}
+
+test "parseRfc3339WithNanos rejects invalid" {
+    try std.testing.expect(parseRfc3339WithNanos("invalid") == null);
+}
+
+test "nowNanos returns reasonable values" {
+    const result = nowNanos();
+    const min_reasonable: i64 = 1704067200;
+    try std.testing.expect(result.seconds >= min_reasonable);
+    try std.testing.expect(result.nanos < 1_000_000_000);
 }

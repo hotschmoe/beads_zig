@@ -2,17 +2,16 @@
 //!
 //! `bz search <query> [-n LIMIT]` - Full-text search across issues
 //!
-//! Searches issue titles, descriptions, and notes using substring matching.
+//! Searches issue titles, descriptions, and notes using SQLite FTS5.
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const output_mod = @import("../output/mod.zig");
 
 const Issue = models.Issue;
-const Status = models.Status;
-const IssueStore = common.IssueStore;
 const CommandContext = common.CommandContext;
 
 pub const SearchError = error{
@@ -33,7 +32,6 @@ pub const SearchResult = struct {
         title: []const u8,
         status: []const u8,
         priority: u3,
-        match_field: []const u8, // Which field matched
     };
 };
 
@@ -47,127 +45,72 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const query_lower = try toLower(search_args.query, allocator);
-    defer allocator.free(query_lower);
-
-    var matches: std.ArrayListUnmanaged(MatchedIssue) = .{};
-    defer matches.deinit(allocator);
-
-    // Linear scan with substring matching
-    for (ctx.store.issues.items) |issue| {
-        // Skip tombstoned issues
-        if (issue.status.eql(.tombstone)) continue;
-
-        // Check title
-        const title_lower = try toLower(issue.title, allocator);
-        defer allocator.free(title_lower);
-
-        if (std.mem.indexOf(u8, title_lower, query_lower) != null) {
-            try matches.append(allocator, .{ .issue = issue, .match_field = "title" });
-            continue;
+    const issues = try ctx.issue_store.search(search_args.query);
+    defer {
+        for (issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
         }
-
-        // Check description
-        if (issue.description) |desc| {
-            const desc_lower = try toLower(desc, allocator);
-            defer allocator.free(desc_lower);
-
-            if (std.mem.indexOf(u8, desc_lower, query_lower) != null) {
-                try matches.append(allocator, .{ .issue = issue, .match_field = "description" });
-                continue;
-            }
-        }
-
-        // Check notes
-        if (issue.notes) |notes| {
-            const notes_lower = try toLower(notes, allocator);
-            defer allocator.free(notes_lower);
-
-            if (std.mem.indexOf(u8, notes_lower, query_lower) != null) {
-                try matches.append(allocator, .{ .issue = issue, .match_field = "notes" });
-                continue;
-            }
-        }
-
-        // Check ID
-        const id_lower = try toLower(issue.id, allocator);
-        defer allocator.free(id_lower);
-
-        if (std.mem.indexOf(u8, id_lower, query_lower) != null) {
-            try matches.append(allocator, .{ .issue = issue, .match_field = "id" });
-            continue;
-        }
+        allocator.free(issues);
     }
 
     // Apply limit
     const limit = search_args.limit orelse 50;
-    const display_count = @min(matches.items.len, limit);
-    const display_matches = matches.items[0..display_count];
+    const display_count = @min(issues.len, limit);
 
-    if (global.isStructuredOutput()) {
-        var result_issues = try allocator.alloc(SearchResult.IssueMatch, display_count);
-        defer allocator.free(result_issues);
-
-        for (display_matches, 0..) |m, i| {
-            result_issues[i] = .{
-                .id = m.issue.id,
-                .title = m.issue.title,
-                .status = m.issue.status.toString(),
-                .priority = m.issue.priority.value,
-                .match_field = m.match_field,
-            };
-        }
-
-        try ctx.output.printJson(SearchResult{
-            .success = true,
-            .query = search_args.query,
-            .issues = result_issues,
-            .count = matches.items.len,
-        });
-    } else if (global.quiet) {
-        for (display_matches) |m| {
-            try ctx.output.print("{s}\n", .{m.issue.id});
-        }
-    } else {
-        if (display_matches.len == 0) {
-            try ctx.output.info("No issues matching \"{s}\"", .{search_args.query});
-        } else {
-            try ctx.output.println("Search results for \"{s}\" ({d} match{s}):", .{
-                search_args.query,
-                matches.items.len,
-                if (matches.items.len == 1) "" else "es",
-            });
-            try ctx.output.print("\n", .{});
-
-            for (display_matches) |m| {
-                try ctx.output.print("{s}  [{s}]  {s}  (matched in {s})\n", .{
-                    m.issue.id,
-                    m.issue.status.toString(),
-                    m.issue.title,
-                    m.match_field,
-                });
-            }
-
-            if (matches.items.len > display_count) {
-                try ctx.output.print("\n...and {d} more (use -n to increase limit)\n", .{
-                    matches.items.len - display_count,
-                });
-            }
-        }
-    }
+    try outputResults(&ctx.output, issues[0..display_count], issues.len, search_args, global, allocator);
 }
 
-const MatchedIssue = struct {
-    issue: Issue,
-    match_field: []const u8,
-};
+fn outputResults(
+    output: *common.Output,
+    display_issues: []const Issue,
+    total_count: usize,
+    search_args: args.SearchArgs,
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    if (global.isStructuredOutput()) {
+        var full_issues = try allocator.alloc(common.IssueFull, display_issues.len);
+        defer allocator.free(full_issues);
 
-fn toLower(s: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    const result = try allocator.alloc(u8, s.len);
-    for (s, 0..) |c, i| {
-        result[i] = std.ascii.toLower(c);
+        for (display_issues, 0..) |issue, i| {
+            full_issues[i] = common.issueToFull(issue, 0, 0);
+        }
+
+        // Bare array matching br format
+        try output.printJson(full_issues);
+    } else if (global.quiet) {
+        for (display_issues) |issue| {
+            try output.print("{s}\n", .{issue.id});
+        }
+    } else {
+        if (display_issues.len == 0) {
+            try output.println("Found 0 issue(s) matching '{s}'", .{search_args.query});
+        } else {
+            try output.println("Found {d} issue(s) matching '{s}'", .{
+                total_count,
+                search_args.query,
+            });
+
+            for (display_issues) |issue| {
+                const icon = output_mod.statusIcon(issue.status);
+                const bullet = output_mod.priorityBullet(issue.priority);
+                try output.print("{s} {s} [{s} {s}]  - {s}\n", .{
+                    icon,
+                    issue.id,
+                    bullet,
+                    issue.priority.toDisplayString(),
+                    issue.title,
+                });
+            }
+
+            if (total_count > display_issues.len) {
+                try output.print("\n...and {d} more (use -n to increase limit)\n", .{
+                    total_count - display_issues.len,
+                });
+            }
+        }
     }
-    return result;
 }
 
 // --- Tests ---
@@ -198,14 +141,6 @@ test "run detects uninitialized workspace" {
     try std.testing.expectError(SearchError.WorkspaceNotInitialized, result);
 }
 
-test "toLower converts string correctly" {
-    const allocator = std.testing.allocator;
-    const result = try toLower("Hello World", allocator);
-    defer allocator.free(result);
-
-    try std.testing.expectEqualStrings("hello world", result);
-}
-
 test "run returns empty for no matches" {
     const allocator = std.testing.allocator;
 
@@ -216,13 +151,8 @@ test "run returns empty for no matches" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const search_args = args.SearchArgs{ .query = "nonexistent" };
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };

@@ -460,10 +460,10 @@ pub fn cleanupBackups(
     var dir = std.fs.cwd().openDir(beads_dir, .{ .iterate = true }) catch return;
     defer dir.close();
 
-    var backups = std.ArrayList([]const u8).init(allocator);
+    var backups: std.ArrayList([]const u8) = .empty;
     defer {
         for (backups.items) |item| allocator.free(item);
-        backups.deinit();
+        backups.deinit(allocator);
     }
 
     var iter = dir.iterate();
@@ -471,7 +471,7 @@ pub fn cleanupBackups(
         if (entry.kind == .file) {
             const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ beads_dir, entry.name });
             if (std.mem.startsWith(u8, full_path, backup_prefix)) {
-                try backups.append(full_path);
+                try backups.append(allocator, full_path);
             } else {
                 allocator.free(full_path);
             }

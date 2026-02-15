@@ -120,8 +120,8 @@ test "bz help shows usage" {
     defer result.deinit();
 
     try testing.expect(result.succeeded());
-    try testing.expect(std.mem.indexOf(u8, result.stdout, "USAGE") != null);
-    try testing.expect(std.mem.indexOf(u8, result.stdout, "COMMANDS") != null);
+    try testing.expect(std.mem.indexOf(u8, result.stdout, "Usage") != null);
+    try testing.expect(std.mem.indexOf(u8, result.stdout, "Commands") != null);
 }
 
 test "bz --help shows usage" {
@@ -134,7 +134,7 @@ test "bz --help shows usage" {
     defer result.deinit();
 
     try testing.expect(result.succeeded());
-    try testing.expect(std.mem.indexOf(u8, result.stdout, "USAGE") != null);
+    try testing.expect(std.mem.indexOf(u8, result.stdout, "Usage") != null);
 }
 
 test "bz init creates workspace" {

@@ -54,10 +54,6 @@ pub const Command = union(enum) {
     reopen: ReopenArgs,
     delete: DeleteArgs,
 
-    // Batch Operations
-    add_batch: AddBatchArgs,
-    import_cmd: ImportArgs,
-
     // Query
     list: ListArgs,
     ready: ReadyArgs,
@@ -91,14 +87,10 @@ pub const Command = union(enum) {
     // Sync
     sync: SyncArgs,
 
-    // Backup
-    backup: BackupArgs,
-
     // System
     version: void,
     schema: void,
     completions: CompletionsArgs,
-    metrics: MetricsArgs,
 
     // Saved Queries
     query: QueryArgs,
@@ -106,7 +98,10 @@ pub const Command = union(enum) {
     // Self-upgrade
     upgrade: UpgradeArgs,
 
-    // Help
+    // Agents
+    agents: AgentsArgs,
+
+    // Help (--help flag, not subcommand)
     help: HelpArgs,
 };
 
@@ -138,6 +133,11 @@ pub const CreateArgs = struct {
     estimate: ?i32 = null,
     ephemeral: bool = false, // Local-only, not written to JSONL
     dry_run: bool = false, // Preview issue creation without persisting
+    silent: bool = false, // Suppress success message, print ID only
+    status: ?[]const u8 = null, // Initial status (e.g., closed, deferred)
+    defer_until: ?[]const u8 = null, // Defer until date
+    parent: ?[]const u8 = null, // Parent issue ID (creates parent_child dependency)
+    file: ?[]const u8 = null, // Import from markdown file
 };
 
 /// Quick capture command arguments.
@@ -198,34 +198,6 @@ pub const DeleteArgs = struct {
     dry_run: bool = false,
 };
 
-/// Add-batch command arguments.
-/// Creates multiple issues from stdin or a file with single lock acquisition.
-pub const AddBatchArgs = struct {
-    file: ?[]const u8 = null, // Read from file instead of stdin
-    format: BatchFormat = .titles, // Input format
-};
-
-/// Batch input format.
-pub const BatchFormat = enum {
-    titles, // One title per line
-    jsonl, // Full JSONL format (one issue per line)
-
-    pub fn fromString(s: []const u8) ?BatchFormat {
-        if (std.ascii.eqlIgnoreCase(s, "titles")) return .titles;
-        if (std.ascii.eqlIgnoreCase(s, "jsonl")) return .jsonl;
-        if (std.ascii.eqlIgnoreCase(s, "json")) return .jsonl;
-        return null;
-    }
-};
-
-/// Import command arguments.
-/// Imports issues from a JSONL file with single lock acquisition.
-pub const ImportArgs = struct {
-    file: []const u8, // Path to JSONL file (required)
-    merge: bool = false, // Merge instead of replace
-    dry_run: bool = false, // Show what would be imported without importing
-};
-
 /// Output format for list/ready commands.
 pub const OutputFormat = enum {
     default,
@@ -269,8 +241,8 @@ pub const ListArgs = struct {
     all: bool = false,
     overdue: bool = false,
     include_deferred: bool = false,
-    sort: SortField = .created_at,
-    sort_desc: bool = true,
+    sort: SortField = .priority,
+    sort_desc: bool = false,
     parent: ?[]const u8 = null,
     recursive: bool = false,
     format: OutputFormat = .default,
@@ -485,6 +457,8 @@ pub const HistoryArgs = struct {
 
 /// Audit subcommand variants.
 pub const AuditSubcommand = union(enum) {
+    /// Show usage help when no subcommand given.
+    help,
     /// Record an LLM/tool interaction for training data.
     record: struct {
         kind: []const u8, // "llm_call" or "tool_call"
@@ -572,28 +546,6 @@ pub const SyncArgs = struct {
     rename_prefix: bool = false,
 };
 
-/// Backup subcommand variants.
-pub const BackupSubcommand = union(enum) {
-    list: void,
-    diff: struct {
-        file: []const u8,
-    },
-    restore: struct {
-        file: []const u8,
-        dry_run: bool = false,
-    },
-    prune: struct {
-        keep: u32 = 10,
-        dry_run: bool = false,
-    },
-    create: void,
-};
-
-/// Backup command arguments.
-pub const BackupArgs = struct {
-    subcommand: BackupSubcommand,
-};
-
 /// Shell completion types.
 pub const Shell = enum {
     bash,
@@ -616,11 +568,6 @@ pub const CompletionsArgs = struct {
     shell: Shell,
 };
 
-/// Metrics command arguments.
-pub const MetricsArgs = struct {
-    reset: bool = false, // Reset metrics after displaying
-};
-
 /// Help command arguments.
 pub const HelpArgs = struct {
     topic: ?[]const u8 = null,
@@ -628,6 +575,7 @@ pub const HelpArgs = struct {
 
 /// Config subcommand variants.
 pub const ConfigSubcommand = union(enum) {
+    help,
     get: struct {
         key: []const u8,
     },
@@ -635,7 +583,12 @@ pub const ConfigSubcommand = union(enum) {
         key: []const u8,
         value: []const u8,
     },
+    delete: struct {
+        key: []const u8,
+    },
     list: void,
+    path: void,
+    edit: void,
 };
 
 /// Config command arguments.
@@ -675,6 +628,21 @@ pub const UpgradeArgs = struct {
     version: ?[]const u8 = null,
     verify: bool = true, // Verify checksum (default: on)
     force: bool = false, // Force upgrade even if same version
+};
+
+/// Agents command action.
+pub const AgentsAction = enum {
+    check,
+    add,
+    remove,
+    update,
+};
+
+/// Agents command arguments (matches br: --add, --remove, --check, --update).
+pub const AgentsArgs = struct {
+    action: AgentsAction = .check,
+    dry_run: bool = false,
+    force: bool = false,
 };
 
 /// Orphans command arguments.
@@ -933,14 +901,6 @@ pub const ArgParser = struct {
             return .{ .delete = try self.parseDeleteArgs() };
         }
 
-        // Batch Operations
-        if (std.mem.eql(u8, cmd, "add-batch") or std.mem.eql(u8, cmd, "batch-add") or std.mem.eql(u8, cmd, "batch")) {
-            return .{ .add_batch = try self.parseAddBatchArgs() };
-        }
-        if (std.mem.eql(u8, cmd, "import")) {
-            return .{ .import_cmd = try self.parseImportArgs() };
-        }
-
         // Query
         if (std.mem.eql(u8, cmd, "list") or std.mem.eql(u8, cmd, "ls")) {
             return .{ .list = try self.parseListArgs() };
@@ -1008,11 +968,6 @@ pub const ArgParser = struct {
             return .{ .sync = try self.parseSyncArgs() };
         }
 
-        // Backup
-        if (std.mem.eql(u8, cmd, "backup") or std.mem.eql(u8, cmd, "backups")) {
-            return .{ .backup = try self.parseBackupArgs() };
-        }
-
         // System
         if (std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-V")) {
             return .{ .version = {} };
@@ -1023,10 +978,6 @@ pub const ArgParser = struct {
         if (std.mem.eql(u8, cmd, "completions") or std.mem.eql(u8, cmd, "completion")) {
             return .{ .completions = try self.parseCompletionsArgs() };
         }
-        if (std.mem.eql(u8, cmd, "metrics")) {
-            return .{ .metrics = try self.parseMetricsArgs() };
-        }
-
         // Saved Queries
         if (std.mem.eql(u8, cmd, "query")) {
             return .{ .query = try self.parseQueryArgs() };
@@ -1035,6 +986,16 @@ pub const ArgParser = struct {
         // Self-upgrade
         if (std.mem.eql(u8, cmd, "upgrade")) {
             return .{ .upgrade = try self.parseUpgradeArgs() };
+        }
+
+        // Agents
+        if (std.mem.eql(u8, cmd, "agents") or std.mem.eql(u8, cmd, "agent")) {
+            return .{ .agents = try self.parseAgentsArgs() };
+        }
+
+        // Status (alias for stats)
+        if (std.mem.eql(u8, cmd, "status")) {
+            return .{ .stats = try self.parseStatsArgs() };
         }
 
         // Help
@@ -1105,6 +1066,25 @@ pub const ArgParser = struct {
                 result.ephemeral = true;
             } else if (self.consumeFlag(null, "--dry-run")) {
                 result.dry_run = true;
+            } else if (self.consumeFlag("-s", "--status")) {
+                result.status = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--defer")) {
+                result.defer_until = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--parent")) {
+                result.parent = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag("-f", "--file")) {
+                result.file = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--labels")) {
+                const csv = self.next() orelse return error.MissingFlagValue;
+                var it = std.mem.splitScalar(u8, csv, ',');
+                while (it.next()) |label_raw| {
+                    const label = std.mem.trim(u8, label_raw, " ");
+                    if (label.len > 0) {
+                        labels.append(self.allocator, label) catch return error.InvalidArgument;
+                    }
+                }
+            } else if (self.consumeFlag(null, "--silent")) {
+                result.silent = true;
             } else if (self.peekPositional()) |_| {
                 if (!title_set) {
                     result.title = self.next().?;
@@ -1260,45 +1240,6 @@ pub const ArgParser = struct {
         return result;
     }
 
-    fn parseAddBatchArgs(self: *Self) ParseError!AddBatchArgs {
-        var result = AddBatchArgs{};
-        while (self.hasNext()) {
-            if (self.consumeFlag("-f", "--file")) {
-                result.file = self.next() orelse return error.MissingFlagValue;
-            } else if (self.consumeFlag(null, "--format")) {
-                const fmt_str = self.next() orelse return error.MissingFlagValue;
-                result.format = BatchFormat.fromString(fmt_str) orelse return error.InvalidArgument;
-            } else if (self.peekPositional()) |_| {
-                // Positional argument is treated as file path
-                if (result.file == null) {
-                    result.file = self.next().?;
-                } else break;
-            } else break;
-        }
-        return result;
-    }
-
-    fn parseImportArgs(self: *Self) ParseError!ImportArgs {
-        var result = ImportArgs{ .file = undefined };
-        var file_set = false;
-
-        while (self.hasNext()) {
-            if (self.consumeFlag("-m", "--merge")) {
-                result.merge = true;
-            } else if (self.consumeFlag("-n", "--dry-run")) {
-                result.dry_run = true;
-            } else if (self.peekPositional()) |_| {
-                if (!file_set) {
-                    result.file = self.next().?;
-                    file_set = true;
-                } else break;
-            } else break;
-        }
-
-        if (!file_set) return error.MissingRequiredArgument;
-        return result;
-    }
-
     fn parseListArgs(self: *Self) ParseError!ListArgs {
         var result = ListArgs{};
         var label_any_list: std.ArrayListUnmanaged([]const u8) = .{};
@@ -1449,6 +1390,14 @@ pub const ArgParser = struct {
         while (self.hasNext()) {
             if (self.consumeFlag("-g", "--group-by")) {
                 result.group_by = self.next() orelse return error.MissingFlagValue;
+            } else if (self.consumeFlag(null, "--by-status")) {
+                result.group_by = "status";
+            } else if (self.consumeFlag(null, "--by-priority")) {
+                result.group_by = "priority";
+            } else if (self.consumeFlag(null, "--by-type")) {
+                result.group_by = "type";
+            } else if (self.consumeFlag(null, "--by-assignee")) {
+                result.group_by = "assignee";
             } else break;
         }
         return result;
@@ -1658,8 +1607,8 @@ pub const ArgParser = struct {
     fn parseAuditArgs(self: *Self) ParseError!AuditArgs {
         // Check for subcommand
         const subcmd = self.next() orelse {
-            // Default: list with no limit
-            return .{ .subcommand = .{ .list = .{ .limit = null } } };
+            // No subcommand: show help (matching br)
+            return .{ .subcommand = .help };
         };
 
         // Handle --limit flag at top level (legacy support)
@@ -1806,59 +1755,10 @@ pub const ArgParser = struct {
         return result;
     }
 
-    fn parseBackupArgs(self: *Self) ParseError!BackupArgs {
-        const subcmd = self.next() orelse return .{ .subcommand = .{ .list = {} } };
-
-        if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
-            return .{ .subcommand = .{ .list = {} } };
-        }
-        if (std.mem.eql(u8, subcmd, "diff")) {
-            const file = self.next() orelse return error.MissingRequiredArgument;
-            return .{ .subcommand = .{ .diff = .{ .file = file } } };
-        }
-        if (std.mem.eql(u8, subcmd, "restore")) {
-            const file = self.next() orelse return error.MissingRequiredArgument;
-            var dry_run = false;
-            while (self.hasNext()) {
-                if (self.consumeFlag("-n", "--dry-run")) {
-                    dry_run = true;
-                } else break;
-            }
-            return .{ .subcommand = .{ .restore = .{ .file = file, .dry_run = dry_run } } };
-        }
-        if (std.mem.eql(u8, subcmd, "prune")) {
-            var keep: u32 = 10;
-            var dry_run = false;
-            while (self.hasNext()) {
-                if (self.consumeFlag("-k", "--keep")) {
-                    const keep_str = self.next() orelse return error.MissingFlagValue;
-                    keep = std.fmt.parseInt(u32, keep_str, 10) catch return error.InvalidArgument;
-                } else if (self.consumeFlag("-n", "--dry-run")) {
-                    dry_run = true;
-                } else break;
-            }
-            return .{ .subcommand = .{ .prune = .{ .keep = keep, .dry_run = dry_run } } };
-        }
-        if (std.mem.eql(u8, subcmd, "create") or std.mem.eql(u8, subcmd, "new")) {
-            return .{ .subcommand = .{ .create = {} } };
-        }
-        return error.UnknownSubcommand;
-    }
-
     fn parseCompletionsArgs(self: *Self) ParseError!CompletionsArgs {
         const shell_str = self.next() orelse return error.MissingRequiredArgument;
         const shell = Shell.fromString(shell_str) orelse return error.InvalidShell;
         return .{ .shell = shell };
-    }
-
-    fn parseMetricsArgs(self: *Self) ParseError!MetricsArgs {
-        var result = MetricsArgs{};
-        while (self.hasNext()) {
-            if (self.consumeFlag("-r", "--reset")) {
-                result.reset = true;
-            } else break;
-        }
-        return result;
     }
 
     fn parseHelpArgs(self: *Self) ParseError!HelpArgs {
@@ -1866,7 +1766,7 @@ pub const ArgParser = struct {
     }
 
     fn parseConfigArgs(self: *Self) ParseError!ConfigArgs {
-        const subcmd = self.next() orelse return .{ .subcommand = .{ .list = {} } };
+        const subcmd = self.next() orelse return .{ .subcommand = .help };
 
         if (std.mem.eql(u8, subcmd, "get")) {
             return .{ .subcommand = .{ .get = .{ .key = self.next() orelse return error.MissingRequiredArgument } } };
@@ -1877,8 +1777,17 @@ pub const ArgParser = struct {
                 .value = self.next() orelse return error.MissingRequiredArgument,
             } } };
         }
+        if (std.mem.eql(u8, subcmd, "delete") or std.mem.eql(u8, subcmd, "rm")) {
+            return .{ .subcommand = .{ .delete = .{ .key = self.next() orelse return error.MissingRequiredArgument } } };
+        }
         if (std.mem.eql(u8, subcmd, "list") or std.mem.eql(u8, subcmd, "ls")) {
             return .{ .subcommand = .{ .list = {} } };
+        }
+        if (std.mem.eql(u8, subcmd, "path")) {
+            return .{ .subcommand = .path };
+        }
+        if (std.mem.eql(u8, subcmd, "edit")) {
+            return .{ .subcommand = .edit };
         }
         return error.UnknownSubcommand;
     }
@@ -1961,6 +1870,28 @@ pub const ArgParser = struct {
                 result.force = true;
             } else break;
         }
+        return result;
+    }
+
+    fn parseAgentsArgs(self: *Self) ParseError!AgentsArgs {
+        var result = AgentsArgs{};
+
+        while (self.hasNext()) {
+            if (self.consumeFlag(null, "--add")) {
+                result.action = .add;
+            } else if (self.consumeFlag(null, "--remove")) {
+                result.action = .remove;
+            } else if (self.consumeFlag(null, "--check")) {
+                result.action = .check;
+            } else if (self.consumeFlag(null, "--update")) {
+                result.action = .update;
+            } else if (self.consumeFlag("-n", "--dry-run")) {
+                result.dry_run = true;
+            } else if (self.consumeFlag("-f", "--force")) {
+                result.force = true;
+            } else break;
+        }
+
         return result;
     }
 
@@ -2432,7 +2363,7 @@ test "parse list --sort flag" {
     const result = try parser.parse();
 
     try std.testing.expectEqual(SortField.priority, result.command.list.sort);
-    try std.testing.expect(result.command.list.sort_desc); // default
+    try std.testing.expect(!result.command.list.sort_desc); // default: ascending
 }
 
 test "parse list --sort with --asc" {
@@ -2807,13 +2738,13 @@ test "parse completions command missing shell returns error" {
     try std.testing.expectError(error.MissingRequiredArgument, parser.parse());
 }
 
-test "parse config list (default)" {
+test "parse config help (default)" {
     const args = [_][]const u8{"config"};
     var parser = ArgParser.init(std.testing.allocator, &args);
     const result = try parser.parse();
 
     try std.testing.expect(result.command == .config);
-    try std.testing.expect(result.command.config.subcommand == .list);
+    try std.testing.expect(result.command.config.subcommand == .help);
 }
 
 test "parse config get" {
@@ -2962,29 +2893,29 @@ test "GlobalOptions.isStructuredOutput" {
     try std.testing.expect(both_opts.isStructuredOutput());
 }
 
-test "parse metrics command" {
-    const args_list = [_][]const u8{"metrics"};
+test "parse agents command default (check)" {
+    const args_list = [_][]const u8{"agents"};
     var parser = ArgParser.init(std.testing.allocator, &args_list);
     const result = try parser.parse();
 
-    try std.testing.expect(result.command == .metrics);
-    try std.testing.expect(!result.command.metrics.reset);
+    try std.testing.expect(result.command == .agents);
+    try std.testing.expect(result.command.agents.action == .check);
 }
 
-test "parse metrics command with reset flag" {
-    const args_list = [_][]const u8{ "metrics", "--reset" };
+test "parse agents --add --force" {
+    const args_list = [_][]const u8{ "agents", "--add", "--force" };
     var parser = ArgParser.init(std.testing.allocator, &args_list);
     const result = try parser.parse();
 
-    try std.testing.expect(result.command == .metrics);
-    try std.testing.expect(result.command.metrics.reset);
+    try std.testing.expect(result.command == .agents);
+    try std.testing.expect(result.command.agents.action == .add);
+    try std.testing.expect(result.command.agents.force);
 }
 
-test "parse metrics command with -r flag" {
-    const args_list = [_][]const u8{ "metrics", "-r" };
+test "parse status as alias for stats" {
+    const args_list = [_][]const u8{"status"};
     var parser = ArgParser.init(std.testing.allocator, &args_list);
     const result = try parser.parse();
 
-    try std.testing.expect(result.command == .metrics);
-    try std.testing.expect(result.command.metrics.reset);
+    try std.testing.expect(result.command == .stats);
 }

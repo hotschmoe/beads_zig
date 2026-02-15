@@ -63,11 +63,34 @@ pub fn run(
     allocator: std.mem.Allocator,
 ) !void {
     switch (audit_args.subcommand) {
+        .help => try runHelp(global, allocator),
         .record => |record_args| try runRecord(record_args, global, allocator),
         .label => |label_args| try runLabel(label_args, global, allocator),
         .log => |log_args| try runLog(log_args, global, allocator),
         .summary => |summary_args| try runSummary(summary_args, global, allocator),
         .list => |list_args| try runList(list_args, global, allocator),
+    }
+}
+
+fn runHelp(
+    global: args.GlobalOptions,
+    allocator: std.mem.Allocator,
+) !void {
+    var output = common.initOutput(allocator, global);
+    if (global.isStructuredOutput()) {
+        try output.printJson(.{
+            .success = false,
+            .message = "audit requires a subcommand: record, label, log, summary, list",
+        });
+    } else if (!global.quiet) {
+        try output.println("Usage: bz audit <subcommand>", .{});
+        try output.print("\n", .{});
+        try output.print("Subcommands:\n", .{});
+        try output.print("  record <kind>       Record LLM/tool interaction\n", .{});
+        try output.print("  label <id> <label>  Label audit entry\n", .{});
+        try output.print("  log <issue-id>      View audit log for issue\n", .{});
+        try output.print("  summary             Summary of audit data\n", .{});
+        try output.print("  list                List all audit events\n", .{});
     }
 }
 
@@ -168,16 +191,15 @@ fn runRecord(
         .created_at = now,
     };
 
-    const event_id = try ctx.event_store.append(event);
+    try ctx.event_store.insert(event);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .event_id = event_id,
             .message = "Audit entry recorded",
         });
     } else if (!global.quiet) {
-        try ctx.output.println("Recorded audit entry {d}", .{event_id});
+        try ctx.output.println("Recorded audit entry", .{});
     }
 }
 
@@ -191,11 +213,9 @@ fn runLabel(
     };
     defer ctx.deinit();
 
-    // Record a label event referencing the original entry
     const actor = global.actor orelse "unknown";
     const now = std.time.timestamp();
 
-    // Build the label metadata
     var metadata_parts: std.ArrayListUnmanaged(u8) = .{};
     defer metadata_parts.deinit(allocator);
 
@@ -214,10 +234,9 @@ fn runLabel(
     const new_value = try allocator.dupe(u8, metadata_parts.items);
     defer allocator.free(new_value);
 
-    // Use 'updated' event type to represent a label action on an existing entry
     const event = Event{
         .id = 0,
-        .issue_id = "", // Labels are not issue-specific
+        .issue_id = "",
         .event_type = .updated,
         .actor = actor,
         .old_value = null,
@@ -225,12 +244,11 @@ fn runLabel(
         .created_at = now,
     };
 
-    const event_id = try ctx.event_store.append(event);
+    try ctx.event_store.insert(event);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .event_id = event_id,
             .message = "Label applied to audit entry",
         });
     } else if (!global.quiet) {
@@ -248,13 +266,7 @@ fn runLog(
     };
     defer ctx.deinit();
 
-    const limit = log_args.limit orelse 100;
-
-    // Query events for the specific issue from the event store
-    const events = try ctx.event_store.queryEvents(.{
-        .issue_id = log_args.issue_id,
-        .limit = limit,
-    });
+    const events = try ctx.event_store.getForIssue(log_args.issue_id);
     defer ctx.event_store.freeEvents(events);
 
     var audit_events: std.ArrayListUnmanaged(AuditResult.AuditEvent) = .{};
@@ -279,24 +291,29 @@ fn runLog(
         }
     }.lessThan);
 
+    const display_events = if (log_args.limit) |lim|
+        audit_events.items[0..@min(audit_events.items.len, lim)]
+    else
+        audit_events.items;
+
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .events = audit_events.items,
+            .events = display_events,
             .total = audit_events.items.len,
         });
     } else if (global.quiet) {
-        for (audit_events.items) |event| {
+        for (display_events) |event| {
             try ctx.output.print("{d} {s} {s}\n", .{ event.id, event.issue_id, event.event_type });
         }
     } else {
-        if (audit_events.items.len == 0) {
+        if (display_events.len == 0) {
             try ctx.output.info("No events found for issue {s}", .{log_args.issue_id});
         } else {
             try ctx.output.println("Audit Log for {s} ({d} events):", .{ log_args.issue_id, audit_events.items.len });
             try ctx.output.print("\n", .{});
 
-            for (audit_events.items) |event| {
+            for (display_events) |event| {
                 try ctx.output.print("[{d}] ts:{d}  {s: <15}  {s}\n", .{
                     event.id,
                     event.created_at,
@@ -323,14 +340,12 @@ fn runSummary(
     };
     defer ctx.deinit();
 
-    const now = std.time.timestamp();
-    const since = now - @as(i64, @intCast(summary_args.days)) * 24 * 60 * 60;
-
-    // Query all events in the time period
-    const events = try ctx.event_store.queryEvents(.{ .since = since });
+    const events = try ctx.event_store.getAll(null);
     defer ctx.event_store.freeEvents(events);
 
-    // Count by type
+    const cutoff: i64 = std.time.timestamp() - @as(i64, summary_args.days) * 86400;
+
+    // Count by type (only events within the time window)
     var llm_calls: usize = 0;
     var tool_calls: usize = 0;
     var issue_creates: usize = 0;
@@ -342,6 +357,8 @@ fn runSummary(
     defer actor_counts.deinit(allocator);
 
     for (events) |event| {
+        if (event.created_at < cutoff) continue;
+
         switch (event.event_type) {
             .llm_call => llm_calls += 1,
             .tool_call => tool_calls += 1,
@@ -375,7 +392,7 @@ fn runSummary(
 
     const summary = AuditResult.AuditSummary{
         .period_days = summary_args.days,
-        .total_events = events.len,
+        .total_events = llm_calls + tool_calls + issue_creates + issue_closes + other_events,
         .llm_calls = llm_calls,
         .tool_calls = tool_calls,
         .issue_creates = issue_creates,
@@ -420,41 +437,23 @@ fn runList(
 
     const limit = list_args.limit orelse 100;
 
-    // Build synthetic audit log from all issues
+    // Get real events from the event store
+    const stored_events = try ctx.event_store.getAll(@intCast(limit));
+    defer ctx.event_store.freeEvents(stored_events);
+
     var events: std.ArrayListUnmanaged(AuditResult.AuditEvent) = .{};
     defer events.deinit(allocator);
 
-    for (ctx.store.issues.items) |issue| {
-        // Created event
+    for (stored_events) |event| {
         try events.append(allocator, .{
-            .id = 0,
-            .issue_id = issue.id,
-            .event_type = "created",
-            .actor = issue.created_by orelse "unknown",
-            .created_at = issue.created_at.value,
+            .id = event.id,
+            .issue_id = event.issue_id,
+            .event_type = event.event_type.toString(),
+            .actor = event.actor,
+            .created_at = event.created_at,
+            .old_value = event.old_value,
+            .new_value = event.new_value,
         });
-
-        // Closed event
-        if (issue.closed_at.value) |closed_ts| {
-            try events.append(allocator, .{
-                .id = 0,
-                .issue_id = issue.id,
-                .event_type = "closed",
-                .actor = "unknown",
-                .created_at = closed_ts,
-            });
-        }
-
-        // If tombstoned
-        if (issue.status.eql(.tombstone)) {
-            try events.append(allocator, .{
-                .id = 0,
-                .issue_id = issue.id,
-                .event_type = "deleted",
-                .actor = "unknown",
-                .created_at = issue.updated_at.value,
-            });
-        }
     }
 
     // Sort by timestamp descending (most recent first)
@@ -464,39 +463,29 @@ fn runList(
         }
     }.lessThan);
 
-    // Apply limit
-    const display_count = @min(events.items.len, limit);
-    const display_events = events.items[0..display_count];
-
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(AuditResult{
             .success = true,
-            .events = display_events,
+            .events = events.items,
             .total = events.items.len,
         });
     } else if (global.quiet) {
-        for (display_events) |event| {
+        for (events.items) |event| {
             try ctx.output.print("{s} {s}\n", .{ event.issue_id, event.event_type });
         }
     } else {
-        if (display_events.len == 0) {
+        if (events.items.len == 0) {
             try ctx.output.info("No events found", .{});
         } else {
             try ctx.output.println("Audit Log ({d} events):", .{events.items.len});
             try ctx.output.print("\n", .{});
 
-            for (display_events) |event| {
+            for (events.items) |event| {
                 try ctx.output.print("[ts:{d}]  {s: <12}  {s: <15}  {s}\n", .{
                     event.created_at,
                     event.issue_id,
                     event.actor,
                     event.event_type,
-                });
-            }
-
-            if (events.items.len > display_count) {
-                try ctx.output.print("\n...and {d} more (use --limit to show more)\n", .{
-                    events.items.len - display_count,
                 });
             }
         }
@@ -527,6 +516,13 @@ test "run detects uninitialized workspace" {
 
     const result = run(audit_args, global, allocator);
     try std.testing.expectError(AuditError.WorkspaceNotInitialized, result);
+}
+
+test "run help for bare audit" {
+    const allocator = std.testing.allocator;
+    const audit_args = args.AuditArgs{ .subcommand = .help };
+    const global = args.GlobalOptions{ .silent = true };
+    try run(audit_args, global, allocator);
 }
 
 test "AuditSubcommand record parses correctly" {
@@ -571,7 +567,7 @@ test "AuditSubcommand summary parses days" {
     }
 }
 
-test "AuditSubcommand list is default" {
+test "AuditSubcommand help is default" {
     const allocator = std.testing.allocator;
     const cmd_args = [_][]const u8{"audit"};
     var parser = args.ArgParser.init(allocator, &cmd_args);
@@ -581,7 +577,7 @@ test "AuditSubcommand list is default" {
     switch (result.command) {
         .audit => |a| {
             switch (a.subcommand) {
-                .list => {},
+                .help => {},
                 else => try std.testing.expect(false),
             }
         },

@@ -6,7 +6,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const output = @import("../output/mod.zig");
 
-pub const VERSION = "0.1.5";
+// Keep in sync with .version in build.zig.zon (CI enforces this)
+pub const VERSION = "0.1.8";
 
 pub const VersionError = error{
     WriteError,
@@ -37,9 +38,7 @@ pub fn run(global: anytype, allocator: std.mem.Allocator) VersionError!VersionRe
         };
         out.printJson(version_info) catch return VersionError.WriteError;
     } else {
-        out.print("bz {s}\n", .{VERSION}) catch return VersionError.WriteError;
-        out.print("zig {s}\n", .{zig_version}) catch return VersionError.WriteError;
-        out.print("{s}\n", .{target}) catch return VersionError.WriteError;
+        out.print("bz version {s}\n", .{VERSION}) catch return VersionError.WriteError;
     }
 
     return .{

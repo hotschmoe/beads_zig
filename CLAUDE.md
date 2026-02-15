@@ -121,13 +121,10 @@ Only if all three answers are "yes" should you fix the code.
 zig build test
 
 # Run specific module tests (only if module has no external deps)
-zig test src/storage/store.zig
 zig test src/models/issue.zig
 ```
 
-**Note:** Use `zig build test` rather than `zig test src/root.zig` directly. The build system configures external dependencies (rich_zig, toon_zig).
-
-**Current test count:** 523 tests across all modules.
+**Note:** Use `zig build test` rather than `zig test src/root.zig` directly. The build system configures external dependencies (toon_zig) and links SQLite.
 
 **Manual CLI testing** is preferred for CLI commands - test in `sandbox/` directory.
 <!-- END:testing-philosophy -->
@@ -145,29 +142,55 @@ we love you, Claude! do your best today
 
 ### beads_zig Architecture Overview
 
-**beads_zig is a feature-complete Zig implementation with key architectural differences from beads_rust:**
+**beads_zig (`bz`) is an aligned Zig port of beads_rust (`br`).** All 38 CLI commands are implemented with shared SQLite schema. Core CRUD workflow has output parity; some auxiliary commands have divergent behavior/output (see Parity Status below).
 
-1. **No SQLite** - Pure Zig storage layer with JSONL + WAL
-2. **Lock + WAL + Compact** - Custom concurrent write handling
-3. **No C dependencies** - Single static binary
-4. **34 CLI commands** - Full feature parity
+#### Architecture
 
-### Codebase Structure (~19,421 LOC)
+1. **SQLite primary storage** - Via zqlite package dependency, matches br schema exactly
+2. **JSONL for sync** - Git-tracked export file for collaboration (not primary storage)
+3. **38 CLI commands** - All use SQLite-backed stores (IssueStore, DependencyStore, EventStore)
+
+#### Storage Layer
+
+```
+.beads/
+  beads.db          # SQLite database (primary, gitignored)
+  beads.db-wal      # SQLite WAL (auto-managed, gitignored)
+  issues.jsonl      # Git-tracked export (sync only)
+  config.yaml       # Configuration
+```
+
+**Write path**: SQLite INSERT/UPDATE with WAL mode (~1ms, auto-persisted)
+**Read path**: SQLite SELECT (no replay needed, WAL mode handles concurrency)
+**Sync**: `bz sync --flush` exports DB -> JSONL; `bz sync --import` imports JSONL -> DB
+
+#### Storage API
+
+All CLI commands go through `CommandContext` (common.zig) which provides:
+- `ctx.issue_store` - IssueStore (list, get, exists, insert, update, search, countTotal, softDelete, addLabel, removeLabel)
+- `ctx.dep_store` - DependencyStore (getDependencies, getDependents, add, remove, detectAllCycles)
+- `ctx.event_store` - EventStore (insert, getForIssue, getAll, getByType, count)
+- `ctx.db` - Direct Database handle for advanced queries
+
+Key: `get(id)` returns an owned `?Issue` copy (not a mutable pointer). Callers must call `deinit()` to free and use `update()` to persist changes.
+
+#### Codebase Structure
 
 ```
 src/
-  main.zig           # CLI entry point
+  main.zig           # CLI entry point + dispatch
   root.zig           # Library exports + test runner
-  cli/               # 26 command implementation files
-    args.zig         # Argument parsing (34 commands)
-    common.zig       # Shared context and output helpers
+  cli/               # Command implementation files (38 commands)
+    args.zig         # Argument parsing
+    common.zig       # CommandContext (SQLite DB + stores)
   storage/
-    jsonl.zig        # JSONL file I/O (atomic writes)
-    store.zig        # In-memory IssueStore with indexing
-    graph.zig        # Dependency graph with cycle detection
-    lock.zig         # flock-based concurrent write locking
-    wal.zig          # Write-ahead log operations
-    compact.zig      # WAL compaction into main file
+    sqlite.zig      # SQLite C bindings wrapper (via zqlite)
+    schema.zig      # Database schema (11 tables, 29+ indexes, FTS5)
+    issues.zig      # Issue CRUD + labels + comments via SQLite
+    dependencies.zig # Dependency management via SQLite
+    events.zig      # Event/audit trail via SQLite
+    jsonl.zig       # JSONL file I/O (for sync export/import)
+    mod.zig         # Storage module re-exports
   models/            # Data structures (Issue, Status, Priority, etc.)
   id/                # Hash-based ID generation (base36)
   config/            # YAML configuration
@@ -175,52 +198,25 @@ src/
   errors.zig         # Structured error handling
 ```
 
-### Storage Layer
+#### Dependencies
 
-```
-.beads/
-  issues.jsonl    # Main file (compacted state, git-tracked)
-  issues.wal      # Write-ahead log (gitignored)
-  .beads.lock     # flock target (gitignored)
-```
+- **rich_zig** - Terminal formatting/colors
+- **toon_zig** - LLM-optimized output format
+- **zqlite** - SQLite package (bundles amalgamation + FTS5/JSON1 flags)
 
-**Write path**: `flock(LOCK_EX) -> append WAL -> fsync -> flock(LOCK_UN)` (~1ms)
-**Read path**: `load main + replay WAL` (no lock)
-**Compaction**: Merge WAL into main when threshold exceeded (100 entries or 100KB)
-
-### Key Differences from beads_rust
-
-| Aspect | beads_rust | beads_zig |
-|--------|------------|-----------|
-| Storage | SQLite + WAL mode | JSONL + custom WAL |
-| Concurrency | SQLite locking (contention under load) | flock + append-only WAL |
-| Dependencies | SQLite C library | None (pure Zig) |
-| Lock behavior | SQLITE_BUSY retry storms | Blocking flock (no spinning) |
-
-### Why This Matters for Agents
-
-When 5+ agents write simultaneously:
-- SQLite: Retry storms, exponential backoff, potential timeouts
-- beads_zig: Sequential flock acquisition, ~1ms per write, no retries
-
-### Dependencies
-
-- **rich_zig** v1.1.1 - Terminal formatting/colors
-- **toon_zig** v0.1.5 - LLM-optimized output format
-
-### Build and Test
+#### Build and Test
 
 ```bash
-zig build                  # Build
+zig build                  # Build (SQLite via zqlite dependency)
 zig build run              # Run CLI
-zig build test             # Run tests (523 tests)
+zig build test             # Run all tests (633 tests)
 
-# Cross-compile
+# Cross-compile (SQLite bundled via Zig's C cross-compiler)
 zig build -Dtarget=aarch64-linux-gnu
 zig build -Dtarget=x86_64-windows-gnu
 ```
 
-### Sandbox Testing
+#### Sandbox Testing
 
 Always test in `sandbox/` directory, not project root:
 
@@ -231,4 +227,22 @@ cd sandbox
 ```
 
 The project root may have a `.beads/` for beads_rust tracking.
+
+#### Parity Status (2026-02-15)
+
+**633/633 unit tests pass, 30/30 conformance tests pass.**
+
+Commands with FULL output parity: create, list, show, update, close, reopen, delete, q,
+search, count, dep, label, comments, defer, undefer, doctor (text), ready (JSON), blocked (JSON)
+
+Commands with PARTIAL parity (functional, output differs): stats, info, version, where,
+ready (text), blocked (text), stale, init
+
+Commands with DIFFERENT semantics than br: history (event viewer vs backup manager),
+schema (markdown vs JSON Schema), lint (DB checker vs template checker),
+audit (event dump vs subcommand-based recorder), config (dump vs subcommands)
+
+Known stubs: --file in create
+
+Known gaps: doctor --json missing details, history different semantics, minor JSON field naming diffs
 

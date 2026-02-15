@@ -13,7 +13,43 @@ const test_util = @import("../test_util.zig");
 const Issue = models.Issue;
 const Comment = models.Comment;
 const CommandContext = common.CommandContext;
-const DependencyGraph = common.DependencyGraph;
+const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
+
+/// Extended issue JSON for show --json, includes dependencies and comments arrays.
+/// Field order matches br's show JSON output.
+const ShowIssueFull = struct {
+    id: []const u8,
+    title: []const u8,
+    description: ?[]const u8 = null,
+    status: []const u8,
+    priority: models.Priority,
+    issue_type: []const u8,
+    created_at: Rfc3339Timestamp,
+    created_by: ?[]const u8 = null,
+    updated_at: Rfc3339Timestamp,
+    source_repo: []const u8 = ".",
+    compaction_level: u32 = 0,
+    original_size: u64 = 0,
+    labels: ?[]const []const u8 = null,
+    dependencies: ?[]const DepDetail = null,
+    comments: ?[]const CommentDetail = null,
+};
+
+const DepDetail = struct {
+    id: []const u8,
+    title: []const u8,
+    status: []const u8,
+    priority: models.Priority,
+    dependency_type: []const u8,
+};
+
+const CommentDetail = struct {
+    id: i64,
+    issue_id: []const u8,
+    author: []const u8,
+    text: []const u8,
+    created_at: Rfc3339Timestamp,
+};
 
 pub const ShowError = error{
     WorkspaceNotInitialized,
@@ -41,49 +77,81 @@ pub fn run(
     defer ctx.deinit();
 
     const structured_output = global.isStructuredOutput();
-    var issue = (try ctx.store.getWithRelations(show_args.id)) orelse {
+
+    // Get issue with labels, dependencies, and comments embedded
+    var issue = (try ctx.issue_store.getWithRelations(show_args.id)) orelse {
         try common.outputNotFoundError(ShowResult, &ctx.output, structured_output, show_args.id, allocator);
         return ShowError.IssueNotFound;
     };
     defer issue.deinit(allocator);
 
-    var graph = ctx.createGraph();
+    // Get dependency info (issues this depends on, and issues that depend on this)
+    const deps = try ctx.dep_store.getDependencies(show_args.id);
+    defer ctx.dep_store.freeDependencies(deps);
 
-    const deps = try graph.getDependencies(show_args.id);
-    defer graph.freeDependencies(deps);
-
-    const dependents = try graph.getDependents(show_args.id);
-    defer graph.freeDependencies(dependents);
+    const dependents = try ctx.dep_store.getDependents(show_args.id);
+    defer ctx.dep_store.freeDependencies(dependents);
 
     if (structured_output) {
-        var depends_on_ids: ?[][]const u8 = null;
-        var blocks_ids: ?[][]const u8 = null;
-
-        if (deps.len > 0) {
-            depends_on_ids = try allocator.alloc([]const u8, deps.len);
-            for (deps, 0..) |dep, i| {
-                depends_on_ids.?[i] = dep.depends_on_id;
-            }
-        }
-
-        if (dependents.len > 0) {
-            blocks_ids = try allocator.alloc([]const u8, dependents.len);
-            for (dependents, 0..) |dep, i| {
-                blocks_ids.?[i] = dep.issue_id;
-            }
-        }
-
+        // Build dependency detail array
+        // Keep dep issues alive until after JSON serialization
+        var dep_issues = try allocator.alloc(?Issue, deps.len);
         defer {
-            if (depends_on_ids) |ids| allocator.free(ids);
-            if (blocks_ids) |ids| allocator.free(ids);
+            for (dep_issues) |*di_opt| {
+                if (di_opt.*) |*di| di.deinit(allocator);
+            }
+            allocator.free(dep_issues);
         }
 
-        try ctx.output.printJson(ShowResult{
-            .success = true,
-            .issue = issue,
-            .depends_on = depends_on_ids,
-            .blocks = blocks_ids,
-        });
+        var dep_details = try allocator.alloc(DepDetail, deps.len);
+        defer allocator.free(dep_details);
+
+        for (deps, 0..) |dep, i| {
+            dep_issues[i] = ctx.issue_store.get(dep.depends_on_id) catch null;
+            const di = dep_issues[i];
+            dep_details[i] = .{
+                .id = dep.depends_on_id,
+                .title = if (di) |d| d.title else "(not found)",
+                .status = if (di) |d| d.status.toString() else "unknown",
+                .priority = if (di) |d| d.priority else .{ .value = 2 },
+                .dependency_type = dep.dep_type.toString(),
+            };
+        }
+
+        // Build comment detail array
+        var comment_details = try allocator.alloc(CommentDetail, issue.comments.len);
+        defer allocator.free(comment_details);
+
+        for (issue.comments, 0..) |c, i| {
+            comment_details[i] = .{
+                .id = c.id,
+                .issue_id = c.issue_id,
+                .author = c.author,
+                .text = c.text,
+                .created_at = .{ .value = c.created_at },
+            };
+        }
+
+        const show_full = ShowIssueFull{
+            .id = issue.id,
+            .title = issue.title,
+            .description = issue.description,
+            .status = issue.status.toString(),
+            .priority = issue.priority,
+            .issue_type = issue.issue_type.toString(),
+            .created_at = issue.created_at,
+            .created_by = issue.created_by,
+            .updated_at = issue.updated_at,
+            .source_repo = issue.source_repo orelse ".",
+            .compaction_level = issue.compaction_level,
+            .original_size = if (issue.original_size) |size| @as(u64, @intCast(size)) else 0,
+            .labels = if (issue.labels.len > 0) issue.labels else null,
+            .dependencies = if (dep_details.len > 0) dep_details else null,
+            .comments = if (comment_details.len > 0) comment_details else null,
+        };
+
+        const arr = [_]ShowIssueFull{show_full};
+        try ctx.output.printJson(&arr);
     } else {
         try ctx.output.printIssue(issue);
 
@@ -109,39 +177,40 @@ pub fn run(
             }
         }
 
-        // History display placeholder (requires event storage implementation)
+        // Display history from event store
         if (show_args.with_history) {
-            try ctx.output.print("\n--- History ---\n", .{});
-            try ctx.output.print("  (history not yet implemented)\n", .{});
+            const events = try ctx.event_store.getForIssue(show_args.id);
+            defer {
+                for (events) |evt| {
+                    allocator.free(evt.issue_id);
+                    allocator.free(evt.actor);
+                    if (evt.old_value) |v| allocator.free(v);
+                    if (evt.new_value) |v| allocator.free(v);
+                    if (evt.comment) |v| allocator.free(v);
+                }
+                allocator.free(events);
+            }
+
+            try ctx.output.print("\n--- History ({d}) ---\n", .{events.len});
+            for (events) |evt| {
+                const ts_str: ?[]const u8 = common.formatTimestamp(evt.created_at, allocator) catch null;
+                defer if (ts_str) |ts| allocator.free(ts);
+                try ctx.output.print("  [{s}] {s} by {s}\n", .{
+                    ts_str orelse "unknown",
+                    evt.event_type.toString(),
+                    evt.actor,
+                });
+            }
         }
     }
 }
 
-/// Format and print a single comment.
 fn printComment(output: *common.Output, comment: Comment, allocator: std.mem.Allocator) !void {
-    const timestamp_str: ?[]const u8 = formatTimestamp(comment.created_at, allocator) catch null;
+    const timestamp_str: ?[]const u8 = common.formatTimestamp(comment.created_at, allocator) catch null;
     defer if (timestamp_str) |ts| allocator.free(ts);
 
     try output.print("\n[{s}] {s}:\n", .{ timestamp_str orelse "unknown", comment.author });
-    try output.print("{s}\n", .{comment.body});
-}
-
-/// Format a Unix timestamp as a human-readable string.
-fn formatTimestamp(unix_ts: i64, allocator: std.mem.Allocator) ![]const u8 {
-    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(unix_ts) };
-    const day_seconds = epoch_seconds.getDaySeconds();
-    const epoch_day = epoch_seconds.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-
-    return try std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
-        year_day.year,
-        @as(u32, month_day.month.numeric()),
-        @as(u32, month_day.day_index) + 1,
-        day_seconds.getHoursIntoDay(),
-        day_seconds.getMinutesIntoHour(),
-        day_seconds.getSecondsIntoMinute(),
-    });
+    try output.print("{s}\n", .{comment.text});
 }
 
 // --- Tests ---
@@ -179,13 +248,9 @@ test "run returns error for missing issue" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    // Initialize workspace
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const show_args = args.ShowArgs{ .id = "bd-nonexistent" };
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };
@@ -197,8 +262,7 @@ test "run returns error for missing issue" {
 test "formatTimestamp formats correctly" {
     const allocator = std.testing.allocator;
 
-    // 2024-01-29T14:53:20Z = 1706540000
-    const ts_str = try formatTimestamp(1706540000, allocator);
+    const ts_str = try common.formatTimestamp(1706540000, allocator);
     defer allocator.free(ts_str);
 
     try std.testing.expectEqualStrings("2024-01-29 14:53:20", ts_str);

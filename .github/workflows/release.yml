@@ -93,27 +93,31 @@ jobs:
       - name: Package (Unix)
         if: matrix.archive == 'tar.gz'
         run: |
-          mkdir -p dist/${{ matrix.name }}
-          cp zig-out/bin/bz dist/${{ matrix.name }}/
-          cp README.md LICENSE* dist/${{ matrix.name }}/ 2>/dev/null || true
-          cd dist
-          tar -czvf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
-          sha256sum ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+          mkdir -p dist pkg/${{ matrix.name }}
+          cp zig-out/bin/bz pkg/${{ matrix.name }}/
+          cp README.md LICENSE* pkg/${{ matrix.name }}/ 2>/dev/null || true
+          # Archive
+          tar -C pkg -czvf dist/${{ matrix.name }}.tar.gz ${{ matrix.name }}
+          sha256sum dist/${{ matrix.name }}.tar.gz > dist/${{ matrix.name }}.tar.gz.sha256
+          # Raw binary for install.sh and bz upgrade
+          cp zig-out/bin/bz dist/${{ matrix.name }}
+          cd dist && sha256sum ${{ matrix.name }} > ${{ matrix.name }}.sha256
 
       - name: Package (Windows)
         if: matrix.archive == 'zip'
         run: |
-          mkdir -p dist/${{ matrix.name }}
-          cp zig-out/bin/bz.exe dist/${{ matrix.name }}/
-          cp README.md LICENSE* dist/${{ matrix.name }}/ 2>/dev/null || true
-          cd dist
-          zip -r ${{ matrix.name }}.zip ${{ matrix.name }}
-          sha256sum ${{ matrix.name }}.zip > ${{ matrix.name }}.zip.sha256
+          mkdir -p dist pkg/${{ matrix.name }}
+          cp zig-out/bin/bz.exe pkg/${{ matrix.name }}/
+          cp README.md LICENSE* pkg/${{ matrix.name }}/ 2>/dev/null || true
+          # Archive
+          cd pkg && zip -r ../dist/${{ matrix.name }}.zip ${{ matrix.name }} && cd ..
+          sha256sum dist/${{ matrix.name }}.zip > dist/${{ matrix.name }}.zip.sha256
+          # Raw binary for install.sh and bz upgrade
+          cp zig-out/bin/bz.exe dist/${{ matrix.name }}.exe
+          cd dist && sha256sum ${{ matrix.name }}.exe > ${{ matrix.name }}.exe.sha256
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ needs.create-release.outputs.version }}
-          files: |
-            dist/*.${{ matrix.archive }}
-            dist/*.${{ matrix.archive }}.sha256
+          files: dist/*

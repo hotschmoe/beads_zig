@@ -15,13 +15,16 @@ pub const InfoError = error{
 };
 
 pub const InfoResult = struct {
-    success: bool,
-    beads_dir: ?[]const u8 = null,
+    database_path: []const u8,
+    beads_dir: []const u8,
+    mode: []const u8 = "direct",
+    daemon_connected: bool = false,
+    daemon_fallback_reason: []const u8 = "no-daemon",
+    daemon_detail: []const u8 = "bz runs in direct mode only",
+    issue_count: usize,
+    db_size: u64,
     jsonl_path: ?[]const u8 = null,
-    issue_count: ?usize = null,
     jsonl_size: ?u64 = null,
-    wal_size: ?u64 = null,
-    message: ?[]const u8 = null,
 };
 
 pub fn run(
@@ -34,30 +37,40 @@ pub fn run(
     defer ctx.deinit();
 
     const beads_dir = global.data_path orelse ".beads";
-    const jsonl_size = getFileSize(ctx.issues_path);
+    const db_size = getFileSize(ctx.db_path);
 
-    const wal_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.wal" });
-    defer allocator.free(wal_path);
-    const wal_size = getFileSize(wal_path);
+    const issue_count = try ctx.issue_store.countTotal();
 
-    const issue_count = ctx.store.countTotal();
+    // Resolve paths to absolute for display (matching br behavior)
+    var real_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs_db_path = std.fs.cwd().realpath(ctx.db_path, &real_path_buf) catch ctx.db_path;
+
+    var real_beads_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs_beads_dir = std.fs.cwd().realpath(beads_dir, &real_beads_buf) catch beads_dir;
+
+    // Check for JSONL file
+    const jsonl_path = try std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" });
+    defer allocator.free(jsonl_path);
+    var real_jsonl_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs_jsonl_path = std.fs.cwd().realpath(jsonl_path, &real_jsonl_buf) catch null;
+    const jsonl_size: ?u64 = if (abs_jsonl_path != null) getFileSize(jsonl_path) else null;
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(InfoResult{
-            .success = true,
-            .beads_dir = beads_dir,
-            .jsonl_path = ctx.issues_path,
+            .database_path = abs_db_path,
+            .beads_dir = abs_beads_dir,
             .issue_count = issue_count,
+            .db_size = db_size,
+            .jsonl_path = abs_jsonl_path,
             .jsonl_size = jsonl_size,
-            .wal_size = wal_size,
         });
     } else if (!global.quiet) {
-        try ctx.output.println("beads_zig workspace", .{});
-        try ctx.output.print("\n", .{});
-        try ctx.output.print("Directory:     {s}\n", .{beads_dir});
-        try ctx.output.print("JSONL:         {s} ({s})\n", .{ ctx.issues_path, formatBytes(jsonl_size) });
-        try ctx.output.print("WAL:           {s} ({s})\n", .{ wal_path, formatBytes(wal_size) });
-        try ctx.output.print("Total issues:  {d}\n", .{issue_count});
+        try ctx.output.println("Beads Database Information", .{});
+        try ctx.output.print("Database: {s}\n", .{abs_db_path});
+        try ctx.output.print("Mode: direct\n", .{});
+        try ctx.output.print("Daemon: not connected (no-daemon)\n", .{});
+        try ctx.output.print("  bz runs in direct mode only\n", .{});
+        try ctx.output.print("Issue count: {d}\n", .{issue_count});
     }
 }
 
@@ -66,13 +79,6 @@ fn getFileSize(path: []const u8) u64 {
     defer file.close();
     const stat = file.stat() catch return 0;
     return stat.size;
-}
-
-fn formatBytes(bytes: u64) []const u8 {
-    if (bytes == 0) return "0 B";
-    if (bytes < 1024) return "<1 KB";
-    if (bytes < 1024 * 1024) return "<1 MB";
-    return ">1 MB";
 }
 
 // --- Tests ---
@@ -84,13 +90,13 @@ test "InfoError enum exists" {
 
 test "InfoResult struct works" {
     const result = InfoResult{
-        .success = true,
-        .beads_dir = ".beads",
+        .database_path = "/tmp/.beads/beads.db",
+        .beads_dir = "/tmp/.beads",
         .issue_count = 5,
+        .db_size = 4096,
     };
-    try std.testing.expect(result.success);
-    try std.testing.expectEqualStrings(".beads", result.beads_dir.?);
-    try std.testing.expectEqual(@as(usize, 5), result.issue_count.?);
+    try std.testing.expectEqualStrings("/tmp/.beads", result.beads_dir);
+    try std.testing.expectEqual(@as(usize, 5), result.issue_count);
 }
 
 test "run detects uninitialized workspace" {
@@ -100,14 +106,6 @@ test "run detects uninitialized workspace" {
 
     const result = run(global, allocator);
     try std.testing.expectError(InfoError.WorkspaceNotInitialized, result);
-}
-
-test "formatBytes handles zero" {
-    try std.testing.expectEqualStrings("0 B", formatBytes(0));
-}
-
-test "formatBytes handles small values" {
-    try std.testing.expectEqualStrings("<1 KB", formatBytes(500));
 }
 
 test "getFileSize returns 0 for missing file" {

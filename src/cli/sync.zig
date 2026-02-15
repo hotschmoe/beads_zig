@@ -1,13 +1,13 @@
 //! Sync command for beads_zig.
 //!
 //! `bz sync` - Bidirectional sync with JSONL file
-//! `bz sync --flush-only` - Export to JSONL only
-//! `bz sync --import-only` - Import from JSONL only
+//! `bz sync --flush-only` - Export DB to JSONL
+//! `bz sync --import-only` - Import from JSONL into DB
 //! `bz sync --merge` - 3-way merge of local DB and remote JSONL
-//!
-//! Handles synchronization between in-memory state and JSONL file.
+//! `bz sync --status` - Show sync status
 
 const std = @import("std");
+const json = std.json;
 const models = @import("../models/mod.zig");
 const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
@@ -38,12 +38,16 @@ pub const SyncResult = struct {
     orphans_created: ?usize = null,
     errors: ?usize = null,
     message: ?[]const u8 = null,
-    // Status-specific fields
     db_count: ?usize = null,
     jsonl_count: ?usize = null,
     pending_export: ?usize = null,
-    // Manifest-specific fields
     manifest_path: ?[]const u8 = null,
+};
+
+const ImportOptions = struct {
+    orphan_policy: args.OrphanPolicy = .strict,
+    rename_prefix: bool = false,
+    error_policy: args.ErrorPolicy = .strict,
 };
 
 pub fn run(
@@ -58,248 +62,154 @@ pub fn run(
 
     const structured_output = global.isStructuredOutput();
 
+    const import_opts = ImportOptions{
+        .orphan_policy = sync_args.orphan_policy,
+        .rename_prefix = sync_args.rename_prefix,
+        .error_policy = sync_args.error_policy,
+    };
+
     if (sync_args.status) {
         try runStatus(&ctx, structured_output, global.quiet, allocator);
     } else if (sync_args.flush_only) {
-        try runFlush(&ctx, structured_output, global.quiet, sync_args.manifest, sync_args.error_policy, allocator);
+        try runFlush(&ctx, structured_output, global.quiet, sync_args.manifest, allocator);
     } else if (sync_args.import_only) {
-        try runImport(&ctx, structured_output, global.quiet, sync_args.orphan_policy, sync_args.rename_prefix, allocator);
+        try runImport(&ctx, structured_output, global.quiet, import_opts, allocator);
     } else if (sync_args.merge) {
-        try runMerge(&ctx, structured_output, global.quiet, sync_args.orphan_policy, sync_args.rename_prefix, allocator);
+        try runMerge(&ctx, structured_output, global.quiet, allocator);
     } else {
         try runBidirectional(&ctx, structured_output, global.quiet, allocator);
     }
 }
 
-fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_manifest: bool, error_policy: args.ErrorPolicy, allocator: std.mem.Allocator) !void {
-    const count = ctx.store.issues.items.len;
-    var errors: usize = 0;
+fn getJsonlPath(ctx: *CommandContext, allocator: std.mem.Allocator) ![]const u8 {
+    return std.fs.path.join(allocator, &.{ ctx.beads_dir, "issues.jsonl" });
+}
 
-    ctx.store.saveToFile() catch |err| {
-        switch (error_policy) {
-            .strict => {
-                try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to export issues");
-                return SyncError.ExportError;
-            },
-            .best_effort => {
-                errors += 1;
-                if (!quiet and !structured_output) {
-                    try ctx.output.warn("Export error (continuing): {}", .{err});
-                }
-            },
-            .partial => {
-                errors += 1;
-                // Silent skip
-            },
-        }
+fn runFlush(ctx: *CommandContext, structured_output: bool, quiet: bool, write_manifest: bool, allocator: std.mem.Allocator) !void {
+    const all_issues = try ctx.issue_store.list(.{ .include_tombstones = true });
+    defer ctx.issue_store.freeIssues(all_issues);
+
+    const jsonl_path = try getJsonlPath(ctx, allocator);
+    defer allocator.free(jsonl_path);
+
+    exportToJsonl(all_issues, jsonl_path, allocator) catch {
+        try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to export issues to JSONL");
+        return SyncError.ExportError;
     };
 
-    // Write manifest if requested
+    // Clear dirty flags after successful export
+    for (all_issues) |issue| {
+        ctx.issue_store.clearDirty(issue.id) catch {};
+    }
+
     var manifest_path: ?[]const u8 = null;
     if (write_manifest) {
-        manifest_path = try writeManifest(ctx, count, allocator);
+        manifest_path = try writeManifest(ctx, all_issues.len, allocator);
     }
     defer if (manifest_path) |path| allocator.free(path);
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
-            .success = errors == 0,
+            .success = true,
             .action = "flush",
-            .issues_exported = count,
-            .errors = if (errors > 0) errors else null,
+            .issues_exported = all_issues.len,
             .manifest_path = manifest_path,
         });
     } else if (!quiet) {
-        if (errors > 0) {
-            try ctx.output.warn("Exported {d} issue(s) to JSONL with {d} error(s)", .{ count, errors });
-        } else {
-            try ctx.output.success("Exported {d} issue(s) to JSONL", .{count});
-        }
+        try ctx.output.success("Exported {d} issue(s) to JSONL", .{all_issues.len});
         if (manifest_path) |path| {
             try ctx.output.info("Manifest written to {s}", .{path});
         }
     }
 }
 
-fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, orphan_policy: args.OrphanPolicy, rename_prefix: bool, allocator: std.mem.Allocator) !void {
-    // Check for merge conflict markers in the JSONL file
-    if (try hasMergeConflicts(ctx.store.jsonl_path, allocator)) {
+fn runImport(ctx: *CommandContext, structured_output: bool, quiet: bool, opts: ImportOptions, allocator: std.mem.Allocator) !void {
+    const jsonl_path = try getJsonlPath(ctx, allocator);
+    defer allocator.free(jsonl_path);
+
+    if (try hasMergeConflicts(jsonl_path, allocator)) {
         try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "JSONL file contains merge conflict markers - resolve conflicts first");
         return SyncError.MergeConflictDetected;
     }
 
-    // Reload from file (this replaces in-memory state)
-    const old_count = ctx.store.issues.items.len;
-
-    // Deinit existing issues
-    for (ctx.store.issues.items) |*issue| {
-        issue.deinit(allocator);
-    }
-    ctx.store.issues.clearRetainingCapacity();
-
-    // Clear and rebuild index
-    var id_it = ctx.store.id_index.keyIterator();
-    while (id_it.next()) |key| {
-        allocator.free(key.*);
-    }
-    ctx.store.id_index.clearRetainingCapacity();
-
-    // Reload from file
-    ctx.store.loadFromFile() catch {
+    const remote_issues = loadJsonlIssues(jsonl_path, allocator) catch {
         try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to import from JSONL");
         return SyncError.ImportError;
     };
-
-    var orphans_created: usize = 0;
-    var issues_skipped: usize = 0;
-    var issues_renamed: usize = 0;
-
-    // Get the expected prefix from config (default to "bd")
-    const expected_prefix = ctx.store.getPrefix();
-
-    // Process orphans and prefix renaming
-    var issues_to_remove: std.ArrayListUnmanaged(usize) = .{};
-    defer issues_to_remove.deinit(allocator);
-
-    var orphan_ids: std.ArrayListUnmanaged([]const u8) = .{};
     defer {
-        for (orphan_ids.items) |id| allocator.free(id);
-        orphan_ids.deinit(allocator);
-    }
-
-    for (ctx.store.issues.items, 0..) |*issue, idx| {
-        // Check for wrong prefix and rename if requested
-        if (rename_prefix) {
-            if (issue.id.len >= 3) {
-                const dash_pos = std.mem.indexOf(u8, issue.id, "-");
-                if (dash_pos) |pos| {
-                    const current_prefix = issue.id[0..pos];
-                    if (!std.mem.eql(u8, current_prefix, expected_prefix)) {
-                        // Create new ID with correct prefix
-                        const suffix = issue.id[pos..];
-                        const new_id = try std.fmt.allocPrint(allocator, "{s}{s}", .{ expected_prefix, suffix });
-
-                        // Update the issue's ID (need to free old and set new)
-                        allocator.free(issue.id);
-                        issue.id = new_id;
-                        issues_renamed += 1;
-                    }
-                }
-            }
+        for (remote_issues) |*issue| {
+            issue.deinit(allocator);
         }
-
-        // Check for orphaned parent references (hierarchical IDs like bd-abc.1)
-        if (std.mem.indexOf(u8, issue.id, ".")) |dot_pos| {
-            const parent_id = issue.id[0..dot_pos];
-            const parent_exists = ctx.store.id_index.contains(parent_id);
-
-            if (!parent_exists) {
-                switch (orphan_policy) {
-                    .strict => {
-                        try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "orphan detected: parent not found for hierarchical ID");
-                        return SyncError.ImportError;
-                    },
-                    .resurrect => {
-                        // Create a placeholder parent issue
-                        const parent_id_copy = try allocator.dupe(u8, parent_id);
-                        try orphan_ids.append(allocator, parent_id_copy);
-                        orphans_created += 1;
-                    },
-                    .skip => {
-                        try issues_to_remove.append(allocator, idx);
-                        issues_skipped += 1;
-                    },
-                }
-            }
-        }
+        allocator.free(remote_issues);
     }
 
-    // Remove skipped issues (in reverse order to maintain indices)
-    var i = issues_to_remove.items.len;
-    while (i > 0) {
-        i -= 1;
-        const idx = issues_to_remove.items[i];
-        var removed = ctx.store.issues.orderedRemove(idx);
-        removed.deinit(allocator);
-    }
+    // Get local prefix for orphan detection
+    const prefix = try common.getConfigPrefix(allocator, ctx.beads_dir);
+    defer allocator.free(prefix);
 
-    // Create placeholder parents for orphans (resurrect policy)
-    for (orphan_ids.items) |parent_id| {
-        if (!ctx.store.id_index.contains(parent_id)) {
-            const placeholder_title = try std.fmt.allocPrint(allocator, "[Placeholder] Parent of orphaned issue(s)", .{});
-            defer allocator.free(placeholder_title);
+    // Apply orphan policy and rename_prefix
+    var skipped: usize = 0;
+    var renamed: usize = 0;
+    const filtered = try filterOrphans(remote_issues, prefix, opts, allocator, &skipped, &renamed);
+    defer allocator.free(filtered);
 
-            var placeholder = Issue.init(parent_id, placeholder_title, std.time.timestamp());
-            placeholder.id = try allocator.dupe(u8, parent_id);
-            placeholder.title = try allocator.dupe(u8, placeholder_title);
-            try ctx.store.insert(placeholder);
-        }
-    }
-
-    // Rebuild index after modifications
-    ctx.store.rebuildIndex() catch {};
-
-    // Mark dirty if we made changes
-    if (issues_renamed > 0 or orphans_created > 0) {
-        ctx.store.dirty = true;
-    }
-
-    const new_count = ctx.store.issues.items.len;
+    const counts = try upsertRemoteIssues(&ctx.issue_store, filtered, allocator);
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
             .success = true,
             .action = "import",
-            .issues_imported = new_count,
-            .issues_skipped = if (issues_skipped > 0) issues_skipped else null,
-            .issues_renamed = if (issues_renamed > 0) issues_renamed else null,
-            .orphans_created = if (orphans_created > 0) orphans_created else null,
+            .issues_imported = filtered.len,
+            .issues_added = if (counts.added > 0) counts.added else null,
+            .issues_updated = if (counts.updated > 0) counts.updated else null,
+            .issues_skipped = if (skipped > 0) skipped else null,
+            .issues_renamed = if (renamed > 0) renamed else null,
         });
     } else if (!quiet) {
-        if (new_count > old_count) {
-            try ctx.output.success("Imported {d} issue(s) from JSONL (+{d})", .{ new_count, new_count - old_count });
-        } else if (new_count < old_count) {
-            try ctx.output.success("Imported {d} issue(s) from JSONL (-{d})", .{ new_count, old_count - new_count });
-        } else {
-            try ctx.output.success("Imported {d} issue(s) from JSONL (no change)", .{new_count});
-        }
-        if (issues_renamed > 0) {
-            try ctx.output.info("Renamed {d} issue(s) with wrong prefix", .{issues_renamed});
-        }
-        if (orphans_created > 0) {
-            try ctx.output.info("Created {d} placeholder parent(s) for orphans", .{orphans_created});
-        }
-        if (issues_skipped > 0) {
-            try ctx.output.info("Skipped {d} orphaned issue(s)", .{issues_skipped});
-        }
+        try ctx.output.success("Imported: {d} added, {d} updated from JSONL", .{ counts.added, counts.updated });
+        if (skipped > 0) try ctx.output.info("Skipped {d} orphan(s)", .{skipped});
+        if (renamed > 0) try ctx.output.info("Renamed {d} issue(s) to prefix '{s}'", .{ renamed, prefix });
     }
 }
 
 fn runBidirectional(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
-    // Check for merge conflict markers
-    if (try hasMergeConflicts(ctx.store.jsonl_path, allocator)) {
+    const jsonl_path = try getJsonlPath(ctx, allocator);
+    defer allocator.free(jsonl_path);
+
+    if (try hasMergeConflicts(jsonl_path, allocator)) {
         try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "JSONL file contains merge conflict markers - resolve conflicts first");
         return SyncError.MergeConflictDetected;
     }
 
-    // For bidirectional sync, we export the current state
-    // A full bidirectional merge would require content hashing which is complex
-    const count = ctx.store.issues.items.len;
+    // Check for dirty issues that need export
+    const dirty_ids = try ctx.issue_store.getDirtyIds();
+    defer {
+        for (dirty_ids) |id| allocator.free(id);
+        allocator.free(dirty_ids);
+    }
 
-    if (ctx.store.dirty) {
-        ctx.store.saveToFile() catch {
+    if (dirty_ids.len > 0) {
+        // Export all issues to JSONL (including tombstones for full export)
+        const all_issues = try ctx.issue_store.list(.{ .include_tombstones = true });
+        defer ctx.issue_store.freeIssues(all_issues);
+
+        exportToJsonl(all_issues, jsonl_path, allocator) catch {
             try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to sync issues");
             return SyncError.ExportError;
         };
+
+        for (dirty_ids) |id| {
+            ctx.issue_store.clearDirty(id) catch {};
+        }
 
         if (structured_output) {
             try ctx.output.printJson(SyncResult{
                 .success = true,
                 .action = "sync",
-                .issues_exported = count,
+                .issues_exported = all_issues.len,
             });
         } else if (!quiet) {
-            try ctx.output.success("Synced {d} issue(s)", .{count});
+            try ctx.output.success("Synced {d} issue(s)", .{all_issues.len});
         }
     } else {
         if (structured_output) {
@@ -314,122 +224,75 @@ fn runBidirectional(ctx: *CommandContext, structured_output: bool, quiet: bool, 
     }
 }
 
-/// Perform 3-way merge of local DB and remote JSONL.
-/// For each issue:
-/// - If only in local: keep
-/// - If only in remote: add
-/// - If in both: keep the one with newer updated_at timestamp
-fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, orphan_policy: args.OrphanPolicy, rename_prefix: bool, allocator: std.mem.Allocator) !void {
-    _ = orphan_policy; // TODO: implement orphan handling for merge
-    _ = rename_prefix; // TODO: implement prefix renaming for merge
-    // Check for merge conflict markers
-    if (try hasMergeConflicts(ctx.store.jsonl_path, allocator)) {
+fn runMerge(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
+    const jsonl_path = try getJsonlPath(ctx, allocator);
+    defer allocator.free(jsonl_path);
+
+    if (try hasMergeConflicts(jsonl_path, allocator)) {
         try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "JSONL file contains merge conflict markers - resolve conflicts first");
         return SyncError.MergeConflictDetected;
     }
 
-    // Load remote issues from JSONL file directly (without replacing store)
-    var remote_store = storage.IssueStore.init(allocator, ctx.store.jsonl_path);
-    defer remote_store.deinit();
-
-    remote_store.loadFromFile() catch |err| {
+    // Load remote issues from JSONL
+    const remote_issues = loadJsonlIssues(jsonl_path, allocator) catch |err| {
         if (err != error.FileNotFound) {
             try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to load remote JSONL");
             return SyncError.ImportError;
         }
+        return;
     };
-
-    var added: usize = 0;
-    var updated: usize = 0;
-
-    // Iterate through remote issues and merge into local store
-    for (remote_store.issues.items) |remote_issue| {
-        if (ctx.store.getRef(remote_issue.id)) |local_issue| {
-            // Issue exists in both - compare updated_at timestamps
-            const local_ts = local_issue.updated_at.value;
-            const remote_ts = remote_issue.updated_at.value;
-
-            if (remote_ts > local_ts) {
-                // Remote is newer - update local with remote data
-                // We need to copy the remote issue's data
-                const update = storage.IssueStore.IssueUpdate{
-                    .title = remote_issue.title,
-                    .description = remote_issue.description,
-                    .design = remote_issue.design,
-                    .acceptance_criteria = remote_issue.acceptance_criteria,
-                    .notes = remote_issue.notes,
-                    .status = remote_issue.status,
-                    .priority = remote_issue.priority,
-                    .issue_type = remote_issue.issue_type,
-                    .assignee = remote_issue.assignee,
-                    .owner = remote_issue.owner,
-                    .estimated_minutes = remote_issue.estimated_minutes,
-                    .closed_at = remote_issue.closed_at.value,
-                    .close_reason = remote_issue.close_reason,
-                    .due_at = remote_issue.due_at.value,
-                    .defer_until = remote_issue.defer_until.value,
-                    .external_ref = remote_issue.external_ref,
-                    .source_system = remote_issue.source_system,
-                    .pinned = remote_issue.pinned,
-                    .is_template = remote_issue.is_template,
-                };
-
-                ctx.store.update(remote_issue.id, update, remote_ts) catch continue;
-                updated += 1;
-            }
-            // If local is newer or equal, keep local (no action needed)
-        } else {
-            // Issue only in remote - add to local
-            // Clone the remote issue for insertion
-            var cloned = try remote_issue.clone(allocator);
-            ctx.store.insert(cloned) catch {
-                cloned.deinit(allocator);
-                continue;
-            };
-            added += 1;
+    defer {
+        for (remote_issues) |*issue| {
+            issue.deinit(allocator);
         }
+        allocator.free(remote_issues);
     }
 
-    // Save merged state if any changes were made
-    if (added > 0 or updated > 0 or ctx.store.dirty) {
-        ctx.store.saveToFile() catch {
-            try common.outputErrorTyped(SyncResult, &ctx.output, structured_output, "failed to save merged issues");
-            return SyncError.ExportError;
-        };
+    const counts = try upsertRemoteIssues(&ctx.issue_store, remote_issues, allocator);
+
+    // Re-export merged state (including tombstones for full export)
+    if (counts.added > 0 or counts.updated > 0) {
+        const all_issues = try ctx.issue_store.list(.{ .include_tombstones = true });
+        defer ctx.issue_store.freeIssues(all_issues);
+        exportToJsonl(all_issues, jsonl_path, allocator) catch {};
     }
 
-    const total = ctx.store.issues.items.len;
+    const total = try ctx.issue_store.countTotal();
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
             .success = true,
             .action = "merge",
-            .issues_added = added,
-            .issues_updated = updated,
+            .issues_added = counts.added,
+            .issues_updated = counts.updated,
             .issues_exported = total,
         });
     } else if (!quiet) {
-        if (added == 0 and updated == 0) {
+        if (counts.added == 0 and counts.updated == 0) {
             try ctx.output.info("No changes to merge", .{});
         } else {
-            try ctx.output.success("Merged: {d} added, {d} updated ({d} total)", .{ added, updated, total });
+            try ctx.output.success("Merged: {d} added, {d} updated ({d} total)", .{ counts.added, counts.updated, total });
         }
     }
 }
 
-/// Show sync status without making changes.
-/// Reports: DB issue count, JSONL issue count, pending export count.
 fn runStatus(ctx: *CommandContext, structured_output: bool, quiet: bool, allocator: std.mem.Allocator) !void {
-    const db_count = ctx.store.issues.items.len;
+    const db_count = try ctx.issue_store.countTotal();
 
-    // Count issues in JSONL file (without loading into store)
-    const jsonl_count = countJsonlIssues(ctx.store.jsonl_path, allocator) catch |err| switch (err) {
-        error.FileNotFound => 0,
+    const jsonl_path = try getJsonlPath(ctx, allocator);
+    defer allocator.free(jsonl_path);
+
+    const jsonl_count = countJsonlIssues(jsonl_path, allocator) catch |err| switch (err) {
+        error.FileNotFound => @as(usize, 0),
         else => return err,
     };
 
-    // Count pending exports (dirty issues)
-    const pending_export = ctx.store.dirty_ids.count();
+    const dirty_ids = try ctx.issue_store.getDirtyIds();
+    defer {
+        for (dirty_ids) |id| allocator.free(id);
+        allocator.free(dirty_ids);
+    }
+    const pending_export = dirty_ids.len;
 
     if (structured_output) {
         try ctx.output.printJson(SyncResult{
@@ -449,12 +312,149 @@ fn runStatus(ctx: *CommandContext, structured_output: bool, quiet: bool, allocat
     }
 }
 
-/// Count the number of issues in a JSONL file without fully parsing them.
+// -- Helpers --
+
+/// Check if an issue ID matches a given prefix (e.g., "bd-abc123" matches "bd").
+fn hasLocalPrefix(id: []const u8, prefix: []const u8) bool {
+    if (id.len <= prefix.len + 1) return false;
+    return std.mem.startsWith(u8, id, prefix) and id[prefix.len] == '-';
+}
+
+/// Filter remote issues based on orphan policy (foreign-prefix detection).
+/// Returns a slice of issues to import (subset of input). Does not free anything.
+fn filterOrphans(
+    issues: []Issue,
+    prefix: []const u8,
+    opts: ImportOptions,
+    allocator: std.mem.Allocator,
+    skipped: *usize,
+    renamed: *usize,
+) ![]Issue {
+    var result: std.ArrayListUnmanaged(Issue) = .{};
+    errdefer result.deinit(allocator);
+
+    for (issues) |issue| {
+        if (hasLocalPrefix(issue.id, prefix)) {
+            try result.append(allocator, issue);
+            continue;
+        }
+
+        // Foreign-prefix issue: skip or import based on policy
+        if (opts.orphan_policy == .skip) {
+            skipped.* += 1;
+            continue;
+        }
+
+        // strict and resurrect both import as-is
+        try result.append(allocator, issue);
+        if (opts.rename_prefix) {
+            renamed.* += 1;
+        }
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+const UpsertCounts = struct {
+    added: usize,
+    updated: usize,
+};
+
+/// Upsert remote issues into the local store. Updates existing issues only if
+/// the remote version is newer; inserts issues that do not yet exist locally.
+fn upsertRemoteIssues(
+    issue_store: *IssueStore,
+    remote_issues: []const Issue,
+    allocator: std.mem.Allocator,
+) !UpsertCounts {
+    var added: usize = 0;
+    var updated: usize = 0;
+
+    for (remote_issues) |remote_issue| {
+        if (try issue_store.exists(remote_issue.id)) {
+            const local_issue = (try issue_store.get(remote_issue.id)) orelse continue;
+            defer {
+                var li = local_issue;
+                li.deinit(allocator);
+            }
+
+            if (remote_issue.updated_at.value > local_issue.updated_at.value) {
+                try issue_store.update(remote_issue.id, .{
+                    .title = remote_issue.title,
+                    .description = remote_issue.description,
+                    .status = remote_issue.status,
+                    .priority = remote_issue.priority,
+                    .issue_type = remote_issue.issue_type,
+                    .assignee = remote_issue.assignee,
+                    .owner = remote_issue.owner,
+                    .notes = remote_issue.notes,
+                    .close_reason = remote_issue.close_reason,
+                    .pinned = remote_issue.pinned,
+                    .is_template = remote_issue.is_template,
+                }, remote_issue.updated_at.value);
+                updated += 1;
+            }
+        } else {
+            var cloned = try remote_issue.clone(allocator);
+            issue_store.insert(cloned) catch {
+                cloned.deinit(allocator);
+                continue;
+            };
+            added += 1;
+        }
+    }
+
+    return .{ .added = added, .updated = updated };
+}
+
+fn exportToJsonl(issues: []const Issue, path: []const u8, allocator: std.mem.Allocator) !void {
+    const file = try std.fs.cwd().createFile(path, .{});
+    defer file.close();
+
+    for (issues) |issue| {
+        const line = json.Stringify.valueAlloc(allocator, issue, .{}) catch continue;
+        defer allocator.free(line);
+        try file.writeAll(line);
+        try file.writeAll("\n");
+    }
+}
+
+fn loadJsonlIssues(path: []const u8, allocator: std.mem.Allocator) ![]Issue {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 50);
+    defer allocator.free(content);
+
+    var issues: std.ArrayListUnmanaged(Issue) = .{};
+    errdefer {
+        for (issues.items) |*issue| {
+            issue.deinit(allocator);
+        }
+        issues.deinit(allocator);
+    }
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0 or trimmed[0] != '{') continue;
+
+        const parsed = json.parseFromSlice(Issue, allocator, trimmed, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        }) catch continue;
+
+        try issues.append(allocator, parsed.value);
+    }
+
+    return issues.toOwnedSlice(allocator);
+}
+
 fn countJsonlIssues(path: []const u8, allocator: std.mem.Allocator) !usize {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 50); // 50MB max
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 50);
     defer allocator.free(content);
 
     var count: usize = 0;
@@ -468,28 +468,22 @@ fn countJsonlIssues(path: []const u8, allocator: std.mem.Allocator) !usize {
     return count;
 }
 
-/// Write a manifest file with export metadata.
 fn writeManifest(ctx: *CommandContext, issue_count: usize, allocator: std.mem.Allocator) ![]const u8 {
-    // Derive manifest path from jsonl_path
-    const dir_path = std.fs.path.dirname(ctx.store.jsonl_path) orelse ".beads";
-    const manifest_path = try std.fs.path.join(allocator, &.{ dir_path, "manifest.json" });
+    const manifest_path = try std.fs.path.join(allocator, &.{ ctx.beads_dir, "manifest.json" });
     errdefer allocator.free(manifest_path);
 
-    const timestamp = std.time.timestamp();
+    const ts = std.time.timestamp();
 
-    // Build manifest JSON
     var json_buf: std.ArrayListUnmanaged(u8) = .{};
     defer json_buf.deinit(allocator);
 
     const writer = json_buf.writer(allocator);
     try writer.writeAll("{\n");
-    try writer.print("  \"exported_at\": {d},\n", .{timestamp});
+    try writer.print("  \"exported_at\": {d},\n", .{ts});
     try writer.print("  \"issue_count\": {d},\n", .{issue_count});
-    try writer.print("  \"jsonl_path\": \"{s}\",\n", .{ctx.store.jsonl_path});
     try writer.print("  \"version\": \"0.1.0\"\n", .{});
     try writer.writeAll("}\n");
 
-    // Write to file
     const file = try std.fs.cwd().createFile(manifest_path, .{});
     defer file.close();
     try file.writeAll(json_buf.items);
@@ -497,7 +491,6 @@ fn writeManifest(ctx: *CommandContext, issue_count: usize, allocator: std.mem.Al
     return manifest_path;
 }
 
-/// Check if the JSONL file contains git merge conflict markers
 fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
     const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
@@ -508,7 +501,6 @@ fn hasMergeConflicts(path: []const u8, allocator: std.mem.Allocator) !bool {
     const content = try file.readToEndAlloc(allocator, 1024 * 1024 * 10);
     defer allocator.free(content);
 
-    // Check for common merge conflict markers
     if (std.mem.indexOf(u8, content, "<<<<<<<") != null) return true;
     if (std.mem.indexOf(u8, content, "=======") != null) return true;
     if (std.mem.indexOf(u8, content, ">>>>>>>") != null) return true;

@@ -48,12 +48,12 @@ pub fn run(
 
     // Check for hierarchical orphans (child IDs with missing parents)
     if (!cmd_args.deps_only) {
-        try findHierarchicalOrphans(&ctx.store, allocator, &orphans);
+        try findHierarchicalOrphans(&ctx.issue_store, allocator, &orphans);
     }
 
     // Check for dependency orphans (dependencies pointing to non-existent issues)
     if (!cmd_args.hierarchy_only) {
-        try findDependencyOrphans(&ctx.store, allocator, &orphans);
+        try findDependencyOrphans(&ctx.issue_store, &ctx.dep_store, allocator, &orphans);
     }
 
     // Apply limit if specified
@@ -94,17 +94,22 @@ pub fn run(
 /// Find issues with hierarchical IDs whose parent doesn't exist.
 /// Example: bd-abc.1 exists but bd-abc doesn't.
 fn findHierarchicalOrphans(
-    store: *IssueStore,
+    issue_store: *IssueStore,
     allocator: std.mem.Allocator,
     orphans: *std.ArrayListUnmanaged(OrphanInfo),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
-        // Check if this is a child issue (has a dot in the ID)
+    for (all_issues) |issue| {
         if (getParentId(issue.id)) |parent_id| {
-            // Parent ID found - check if parent exists
-            if (!store.id_index.contains(parent_id)) {
+            if (!try issue_store.exists(parent_id)) {
                 try orphans.append(allocator, .{
                     .id = issue.id,
                     .orphan_type = "hierarchy",
@@ -118,15 +123,26 @@ fn findHierarchicalOrphans(
 
 /// Find issues with dependencies pointing to non-existent issues.
 fn findDependencyOrphans(
-    store: *IssueStore,
+    issue_store: *IssueStore,
+    dep_store: *common.DependencyStore,
     allocator: std.mem.Allocator,
     orphans: *std.ArrayListUnmanaged(OrphanInfo),
 ) !void {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const all_issues = try issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
-        for (issue.dependencies) |dep| {
-            if (!store.id_index.contains(dep.depends_on_id)) {
+    for (all_issues) |issue| {
+        const deps = try dep_store.getDependencies(issue.id);
+        defer dep_store.freeDependencies(deps);
+
+        for (deps) |dep| {
+            if (!try issue_store.exists(dep.depends_on_id)) {
                 try orphans.append(allocator, .{
                     .id = issue.id,
                     .orphan_type = "dependency",

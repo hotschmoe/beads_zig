@@ -1,17 +1,22 @@
 //! Doctor command for beads_zig.
 //!
 //! `bz doctor` - Run diagnostic checks on the workspace
+//!
+//! Output format matches br exactly:
+//!   OK check_name
+//!   OK check_name: detail message
+//!   WARN check_name: detail message
+//!   FAIL check_name: detail message
 
 const std = @import("std");
 const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const test_util = @import("../test_util.zig");
+const JsonlFile = storage.JsonlFile;
 
 const IssueStore = common.IssueStore;
-const DependencyGraph = storage.DependencyGraph;
+const DependencyStore = common.DependencyStore;
 const CommandContext = common.CommandContext;
-const Wal = storage.Wal;
 
 pub const DoctorError = error{
     WorkspaceNotInitialized,
@@ -20,17 +25,13 @@ pub const DoctorError = error{
 };
 
 pub const DoctorResult = struct {
-    success: bool,
+    ok: bool = true,
     checks: ?[]const Check = null,
-    passed: ?usize = null,
-    failed: ?usize = null,
-    warnings: ?usize = null,
-    message: ?[]const u8 = null,
 
     pub const Check = struct {
         name: []const u8,
-        status: []const u8, // "pass", "fail", "warn"
-        message: ?[]const u8,
+        status: []const u8, // "ok", "fail", "warn"
+        message: ?[]const u8 = null,
     };
 };
 
@@ -43,327 +44,409 @@ pub fn run(
     };
     defer ctx.deinit();
 
+    // Arena for dynamic detail messages (e.g. "Parsed 5 records")
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const msg_alloc = arena.allocator();
+
     var checks: std.ArrayListUnmanaged(DoctorResult.Check) = .{};
     defer checks.deinit(allocator);
 
-    // Check 1: JSONL file exists and is readable
-    try checks.append(allocator, checkJsonlFile(ctx.issues_path));
+    // br check order (9 checks):
+    // 1. jsonl.merge_artifacts
+    try checks.append(allocator, checkMergeArtifacts(ctx.beads_dir));
 
-    // Check 2: No duplicate IDs
-    try checks.append(allocator, checkDuplicateIds(&ctx.store));
+    // 2. sync_jsonl_path
+    try checks.append(allocator, checkSyncJsonlPath(ctx.beads_dir));
 
-    // Check 3: No orphan dependencies (dependencies referencing non-existent issues)
-    try checks.append(allocator, try checkOrphanDependencies(&ctx.store, allocator));
+    // 3. sync_conflict_markers
+    try checks.append(allocator, try checkConflictMarkers(ctx.beads_dir, allocator));
 
-    // Check 4: No dependency cycles
-    var graph = ctx.createGraph();
-    try checks.append(allocator, try checkNoCycles(&graph));
+    // 4. jsonl.parse
+    try checks.append(allocator, try checkJsonlParse(ctx.beads_dir, allocator, msg_alloc));
 
-    // Check 5: All issues have valid titles
-    try checks.append(allocator, checkValidTitles(&ctx.store));
+    // 5. schema.tables
+    try checks.append(allocator, try checkSchemaTables(ctx.db));
 
-    // Check 6: WAL file status
-    const beads_dir = global.data_path orelse ".beads";
-    const wal_path = try std.fs.path.join(allocator, &.{ beads_dir, "beads.wal" });
-    defer allocator.free(wal_path);
-    try checks.append(allocator, checkWalFile(wal_path));
+    // 6. schema.columns
+    try checks.append(allocator, try checkSchemaColumns(ctx.db));
 
-    // Check 7: JSONL data integrity (use corruption data from context load)
-    try checks.append(allocator, checkJsonlIntegrityFromContext(&ctx));
+    // 7. sqlite.integrity_check
+    try checks.append(allocator, try checkIntegrity(ctx.db));
 
-    // Check 8: WAL data integrity (CRC validation)
-    try checks.append(allocator, try checkWalIntegrity(beads_dir, allocator));
+    // 8. counts.db_vs_jsonl
+    try checks.append(allocator, try checkDbVsJsonl(&ctx.issue_store, ctx.beads_dir, allocator, msg_alloc));
 
-    // Check 9: Schema version compatibility
-    try checks.append(allocator, checkSchemaVersion(beads_dir, allocator));
+    // 9. sync.metadata
+    try checks.append(allocator, try checkSyncMetadata(ctx.db, ctx.beads_dir, allocator));
 
-    // Count results
-    var passed: usize = 0;
-    var failed: usize = 0;
-    var warnings: usize = 0;
-
+    // Determine overall success
+    var has_fail = false;
     for (checks.items) |check| {
-        if (std.mem.eql(u8, check.status, "pass")) {
-            passed += 1;
-        } else if (std.mem.eql(u8, check.status, "fail")) {
-            failed += 1;
-        } else if (std.mem.eql(u8, check.status, "warn")) {
-            warnings += 1;
+        if (std.mem.eql(u8, check.status, "fail")) {
+            has_fail = true;
+            break;
         }
     }
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(DoctorResult{
-            .success = failed == 0,
+            .ok = !has_fail,
             .checks = checks.items,
-            .passed = passed,
-            .failed = failed,
-            .warnings = warnings,
         });
     } else if (!global.quiet) {
-        try ctx.output.println("Workspace Health Check", .{});
-        try ctx.output.print("\n", .{});
+        // Header: "bz doctor" (matches br's "br doctor")
+        try ctx.output.print("bz doctor\n", .{});
 
         for (checks.items) |check| {
-            const icon = if (std.mem.eql(u8, check.status, "pass"))
-                "[OK]  "
+            const label = if (std.mem.eql(u8, check.status, "ok"))
+                "OK"
             else if (std.mem.eql(u8, check.status, "fail"))
-                "[FAIL]"
+                "FAIL"
             else
-                "[WARN]";
+                "WARN";
 
-            try ctx.output.print("{s} {s}\n", .{ icon, check.name });
             if (check.message) |msg| {
-                try ctx.output.print("      {s}\n", .{msg});
+                try ctx.output.print("{s} {s}: {s}\n", .{ label, check.name, msg });
+            } else {
+                try ctx.output.print("{s} {s}\n", .{ label, check.name });
             }
         }
-
-        try ctx.output.print("\n{d} passed, {d} warnings, {d} failed\n", .{ passed, warnings, failed });
     }
 }
 
-fn checkJsonlFile(path: []const u8) DoctorResult.Check {
-    std.fs.cwd().access(path, .{}) catch {
+// -- Check implementations (br-compatible names, messages, and order) --
+
+fn checkMergeArtifacts(beads_dir: []const u8) DoctorResult.Check {
+    const suffixes = [_][]const u8{ ".base.jsonl", ".left.jsonl", ".right.jsonl" };
+
+    var dir = std.fs.cwd().openDir(beads_dir, .{ .iterate = true }) catch {
+        return .{ .name = "jsonl.merge_artifacts", .status = "ok" };
+    };
+    defer dir.close();
+
+    var iter = dir.iterate();
+    while (iter.next() catch null) |entry| {
+        for (suffixes) |suffix| {
+            if (std.mem.endsWith(u8, entry.name, suffix)) {
+                return .{
+                    .name = "jsonl.merge_artifacts",
+                    .status = "warn",
+                    .message = "Found merge artifact files",
+                };
+            }
+        }
+    }
+
+    return .{ .name = "jsonl.merge_artifacts", .status = "ok" };
+}
+
+fn checkSyncJsonlPath(beads_dir: []const u8) DoctorResult.Check {
+    // bz always stores JSONL inside .beads/ -- path is always valid.
+    // We verify the beads directory is accessible as a real check.
+    std.fs.cwd().access(beads_dir, .{}) catch {
         return .{
-            .name = "JSONL file exists",
+            .name = "sync_jsonl_path",
             .status = "fail",
-            .message = "issues.jsonl not found",
+            .message = "Cannot access beads directory",
         };
     };
     return .{
-        .name = "JSONL file exists",
-        .status = "pass",
-        .message = null,
+        .name = "sync_jsonl_path",
+        .status = "ok",
+        .message = "JSONL path is within sync allowlist",
     };
 }
 
-fn checkDuplicateIds(store: *IssueStore) DoctorResult.Check {
-    // IssueStore already enforces unique IDs via hash map
-    // Check if count matches list length
-    if (store.id_index.count() == store.issues.items.len) {
-        return .{
-            .name = "No duplicate IDs",
-            .status = "pass",
-            .message = null,
-        };
-    }
-    return .{
-        .name = "No duplicate IDs",
-        .status = "fail",
-        .message = "Duplicate issue IDs detected",
+fn checkConflictMarkers(beads_dir: []const u8, allocator: std.mem.Allocator) !DoctorResult.Check {
+    const jsonl_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
+        return .{ .name = "sync_conflict_markers", .status = "ok", .message = "No merge conflict markers found" };
     };
-}
+    defer allocator.free(jsonl_path);
 
-fn checkOrphanDependencies(store: *IssueStore, allocator: std.mem.Allocator) !DoctorResult.Check {
-    var orphan_count: usize = 0;
-
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
-        for (issue.dependencies) |dep| {
-            if (!store.id_index.contains(dep.depends_on_id)) {
-                orphan_count += 1;
-            }
-        }
-    }
-
-    _ = allocator;
-
-    if (orphan_count == 0) {
-        return .{
-            .name = "No orphan dependencies",
-            .status = "pass",
-            .message = null,
-        };
-    }
-    return .{
-        .name = "No orphan dependencies",
-        .status = "warn",
-        .message = "Some dependencies reference non-existent issues",
-    };
-}
-
-fn checkNoCycles(graph: *DependencyGraph) !DoctorResult.Check {
-    const cycles = try graph.detectCycles();
-    defer if (cycles) |c| graph.allocator.free(c);
-
-    if (cycles == null or cycles.?.len == 0) {
-        return .{
-            .name = "No dependency cycles",
-            .status = "pass",
-            .message = null,
-        };
-    }
-    return .{
-        .name = "No dependency cycles",
-        .status = "fail",
-        .message = "Circular dependencies detected",
-    };
-}
-
-fn checkValidTitles(store: *IssueStore) DoctorResult.Check {
-    for (store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
-        if (issue.title.len == 0) {
-            return .{
-                .name = "All issues have valid titles",
-                .status = "fail",
-                .message = "Found issue with empty title",
-            };
-        }
-        if (issue.title.len > 500) {
-            return .{
-                .name = "All issues have valid titles",
-                .status = "warn",
-                .message = "Found issue with title > 500 characters",
-            };
-        }
-    }
-    return .{
-        .name = "All issues have valid titles",
-        .status = "pass",
-        .message = null,
-    };
-}
-
-fn checkWalFile(path: []const u8) DoctorResult.Check {
-    const file = std.fs.cwd().openFile(path, .{}) catch {
-        return .{
-            .name = "WAL file status",
-            .status = "pass",
-            .message = "No pending WAL entries",
-        };
+    const file = std.fs.cwd().openFile(jsonl_path, .{}) catch {
+        return .{ .name = "sync_conflict_markers", .status = "ok", .message = "No merge conflict markers found" };
     };
     defer file.close();
 
-    const stat = file.stat() catch {
-        return .{
-            .name = "WAL file status",
-            .status = "warn",
-            .message = "Could not read WAL file",
-        };
+    const content = file.readToEndAlloc(allocator, 256 * 1024 * 1024) catch {
+        return .{ .name = "sync_conflict_markers", .status = "fail", .message = "Failed to read issues.jsonl" };
     };
+    defer allocator.free(content);
 
-    if (stat.size == 0) {
-        return .{
-            .name = "WAL file status",
-            .status = "pass",
-            .message = "WAL is empty",
-        };
-    }
-
-    if (stat.size > 100 * 1024) {
-        return .{
-            .name = "WAL file status",
-            .status = "warn",
-            .message = "WAL file is large, consider compacting",
-        };
-    }
-
-    return .{
-        .name = "WAL file status",
-        .status = "pass",
-        .message = "WAL has pending entries",
-    };
-}
-
-fn checkJsonlIntegrityFromContext(ctx: *const CommandContext) DoctorResult.Check {
-    if (ctx.corruption_count == 0) {
-        return .{
-            .name = "JSONL data integrity",
-            .status = "pass",
-            .message = null,
-        };
-    }
-
-    return .{
-        .name = "JSONL data integrity",
-        .status = "warn",
-        .message = "Corrupt entries detected. Run 'bz compact' to rebuild.",
-    };
-}
-
-fn checkSchemaVersion(beads_dir: []const u8, allocator: std.mem.Allocator) DoctorResult.Check {
-    const version = storage.checkSchemaVersion(allocator, beads_dir) catch |err| {
-        return switch (err) {
-            error.MetadataNotFound => .{
-                .name = "Schema version",
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "<<<<<<<") or
+            std.mem.startsWith(u8, line, "=======") or
+            std.mem.startsWith(u8, line, ">>>>>>>"))
+        {
+            return .{
+                .name = "sync_conflict_markers",
                 .status = "warn",
-                .message = "metadata.json not found, assuming version 1",
-            },
-            error.MetadataParseError => .{
-                .name = "Schema version",
-                .status = "fail",
-                .message = "metadata.json is corrupted",
-            },
-            else => .{
-                .name = "Schema version",
-                .status = "fail",
-                .message = "Failed to read metadata.json",
-            },
-        };
-    };
-
-    if (version > storage.CURRENT_SCHEMA_VERSION) {
-        return .{
-            .name = "Schema version",
-            .status = "fail",
-            .message = "Database schema is newer than this bz version. Please upgrade bz.",
-        };
+                .message = "Merge conflict markers found in JSONL",
+            };
+        }
     }
 
-    if (version < storage.CURRENT_SCHEMA_VERSION) {
-        return .{
-            .name = "Schema version",
-            .status = "warn",
-            .message = "Database schema is older. Migrations available.",
-        };
-    }
-
-    return .{
-        .name = "Schema version",
-        .status = "pass",
-        .message = null,
-    };
+    return .{ .name = "sync_conflict_markers", .status = "ok", .message = "No merge conflict markers found" };
 }
 
-fn checkWalIntegrity(beads_dir: []const u8, allocator: std.mem.Allocator) !DoctorResult.Check {
-    var wal = Wal.init(beads_dir, allocator) catch {
-        return .{
-            .name = "WAL data integrity",
-            .status = "pass",
-            .message = "No WAL file found",
-        };
+fn checkJsonlParse(beads_dir: []const u8, allocator: std.mem.Allocator, msg_alloc: std.mem.Allocator) !DoctorResult.Check {
+    const jsonl_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
+        return .{ .name = "jsonl.parse", .status = "fail", .message = "Out of memory" };
     };
-    defer wal.deinit();
+    defer allocator.free(jsonl_path);
 
-    // Try to read and parse all WAL entries
-    const entries = wal.readEntries() catch |err| {
-        return .{
-            .name = "WAL data integrity",
-            .status = "warn",
-            .message = switch (err) {
-                error.WalCorrupted => "WAL file is corrupted. Run 'bz compact' to rebuild.",
-                error.ParseError => "WAL contains unparseable entries. Run 'bz compact' to rebuild.",
-                error.ChecksumMismatch => "WAL has CRC mismatches. Run 'bz compact' to rebuild.",
-                else => "Failed to read WAL file",
-            },
-        };
+    std.fs.cwd().access(jsonl_path, .{}) catch {
+        return .{ .name = "jsonl.parse", .status = "ok", .message = "Parsed 0 records" };
     };
-    defer {
-        for (entries) |*e| {
-            var entry = e.*;
-            entry.deinit(allocator);
-        }
-        allocator.free(entries);
+
+    // Use a sub-arena for JSONL parsing (parseFromSliceLeaky may leak)
+    var parse_arena = std.heap.ArenaAllocator.init(allocator);
+    defer parse_arena.deinit();
+
+    var jsonl = JsonlFile.init(jsonl_path, parse_arena.allocator());
+    const result = jsonl.readAllWithRecovery() catch {
+        return .{ .name = "jsonl.parse", .status = "fail", .message = "Failed to parse issues.jsonl" };
+    };
+
+    if (result.corruption_count > 0) {
+        const msg = std.fmt.allocPrint(msg_alloc, "Parsed {d} records ({d} corrupt lines skipped)", .{
+            result.issues.len, result.corruption_count,
+        }) catch "Parsed records with corruption";
+        return .{ .name = "jsonl.parse", .status = "warn", .message = msg };
     }
 
-    return .{
-        .name = "WAL data integrity",
-        .status = "pass",
-        .message = null,
+    const msg = std.fmt.allocPrint(msg_alloc, "Parsed {d} records", .{result.issues.len}) catch "Parsed records";
+    return .{ .name = "jsonl.parse", .status = "ok", .message = msg };
+}
+
+fn checkSchemaTables(db: *storage.SqlDatabase) !DoctorResult.Check {
+    const expected = [_][]const u8{
+        "issues",
+        "dependencies",
+        "labels",
+        "comments",
+        "events",
+        "dirty_issues",
+        "blocked_issues_cache",
+        "config",
+        "metadata",
+        "export_hashes",
+        "child_counters",
     };
+
+    var stmt = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'") catch {
+        return .{ .name = "schema.tables", .status = "fail", .message = "Could not query sqlite_master" };
+    };
+    defer stmt.deinit();
+
+    var found_count: usize = 0;
+    var table_set: [expected.len]bool = .{false} ** expected.len;
+
+    while (try stmt.step()) {
+        const name = stmt.columnText(0) orelse continue;
+        for (expected, 0..) |exp, i| {
+            if (std.mem.eql(u8, name, exp)) {
+                table_set[i] = true;
+                found_count += 1;
+                break;
+            }
+        }
+    }
+
+    if (found_count == expected.len) {
+        return .{ .name = "schema.tables", .status = "ok" };
+    }
+
+    return .{ .name = "schema.tables", .status = "fail", .message = "One or more expected tables are missing" };
+}
+
+fn checkSchemaColumns(db: *storage.SqlDatabase) !DoctorResult.Check {
+    const TableCheck = struct {
+        table: []const u8,
+        required: []const []const u8,
+    };
+
+    const table_checks = [_]TableCheck{
+        .{
+            .table = "issues",
+            .required = &.{ "id", "title", "status", "priority", "issue_type", "created_at", "updated_at" },
+        },
+        .{
+            .table = "dependencies",
+            .required = &.{ "issue_id", "depends_on_id", "dep_type", "created_at" },
+        },
+    };
+
+    for (table_checks) |tc| {
+        var sql_buf: [128]u8 = undefined;
+        const sql = std.fmt.bufPrint(&sql_buf, "PRAGMA table_info({s})", .{tc.table}) catch {
+            return .{ .name = "schema.columns", .status = "fail", .message = "Internal error" };
+        };
+
+        var stmt = db.prepare(sql) catch {
+            return .{ .name = "schema.columns", .status = "fail", .message = "Could not query table columns" };
+        };
+        defer stmt.deinit();
+
+        var found: [16]bool = .{false} ** 16;
+        const required = tc.required;
+
+        while (try stmt.step()) {
+            const col_name = stmt.columnText(1) orelse continue;
+            for (required, 0..) |req, i| {
+                if (i >= found.len) break;
+                if (std.mem.eql(u8, col_name, req)) {
+                    found[i] = true;
+                    break;
+                }
+            }
+        }
+
+        for (0..required.len) |i| {
+            if (!found[i]) {
+                return .{ .name = "schema.columns", .status = "fail", .message = "Missing required columns" };
+            }
+        }
+    }
+
+    return .{ .name = "schema.columns", .status = "ok" };
+}
+
+fn checkIntegrity(db: *storage.SqlDatabase) !DoctorResult.Check {
+    var stmt = db.prepare("PRAGMA integrity_check") catch {
+        return .{ .name = "sqlite.integrity_check", .status = "fail", .message = "Could not run integrity check" };
+    };
+    defer stmt.deinit();
+
+    if (try stmt.step()) {
+        const result = stmt.columnText(0) orelse "unknown";
+        if (std.mem.eql(u8, result, "ok")) {
+            return .{ .name = "sqlite.integrity_check", .status = "ok" };
+        }
+        return .{ .name = "sqlite.integrity_check", .status = "fail", .message = "Integrity check reported errors" };
+    }
+    return .{ .name = "sqlite.integrity_check", .status = "fail", .message = "Integrity check returned no results" };
+}
+
+fn checkDbVsJsonl(
+    issue_store: *IssueStore,
+    beads_dir: []const u8,
+    allocator: std.mem.Allocator,
+    msg_alloc: std.mem.Allocator,
+) !DoctorResult.Check {
+    const jsonl_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
+        return .{ .name = "counts.db_vs_jsonl", .status = "fail", .message = "Out of memory" };
+    };
+    defer allocator.free(jsonl_path);
+
+    std.fs.cwd().access(jsonl_path, .{}) catch {
+        return .{ .name = "counts.db_vs_jsonl", .status = "ok", .message = "No JSONL file" };
+    };
+
+    const db_count = issue_store.countTotal() catch {
+        return .{ .name = "counts.db_vs_jsonl", .status = "fail", .message = "Could not count database issues" };
+    };
+
+    var parse_arena = std.heap.ArenaAllocator.init(allocator);
+    defer parse_arena.deinit();
+
+    var jsonl = JsonlFile.init(jsonl_path, parse_arena.allocator());
+    const jsonl_issues = jsonl.readAll() catch {
+        return .{ .name = "counts.db_vs_jsonl", .status = "warn", .message = "Could not parse JSONL file" };
+    };
+
+    if (db_count == jsonl_issues.len) {
+        const msg = std.fmt.allocPrint(msg_alloc, "Both have {d} records", .{db_count}) catch "Counts match";
+        return .{ .name = "counts.db_vs_jsonl", .status = "ok", .message = msg };
+    }
+
+    return .{ .name = "counts.db_vs_jsonl", .status = "warn", .message = "DB and JSONL counts differ" };
+}
+
+fn checkSyncMetadata(
+    db: *storage.SqlDatabase,
+    beads_dir: []const u8,
+    allocator: std.mem.Allocator,
+) !DoctorResult.Check {
+    const jsonl_path = std.fs.path.join(allocator, &.{ beads_dir, "issues.jsonl" }) catch {
+        return .{ .name = "sync.metadata", .status = "ok", .message = "Database and JSONL are in sync" };
+    };
+    defer allocator.free(jsonl_path);
+
+    // Check if JSONL file exists
+    const jsonl_exists = blk: {
+        std.fs.cwd().access(jsonl_path, .{}) catch break :blk false;
+        break :blk true;
+    };
+
+    if (!jsonl_exists) {
+        return .{ .name = "sync.metadata", .status = "ok", .message = "Database and JSONL are in sync" };
+    }
+
+    // Check metadata table for last_export_time
+    const has_export = blk: {
+        var stmt = db.prepare("SELECT value FROM metadata WHERE key = 'last_export_time'") catch {
+            break :blk false;
+        };
+        defer stmt.deinit();
+        break :blk (stmt.step() catch false);
+    };
+
+    if (!has_export) {
+        // JSONL exists but no export recorded -- matches br's message
+        return .{
+            .name = "sync.metadata",
+            .status = "warn",
+            .message = "JSONL exists but no export recorded; consider running sync --flush-only",
+        };
+    }
+
+    // Check if there are dirty (unexported) issues
+    const dirty_count: i64 = blk: {
+        var stmt = db.prepare("SELECT COUNT(*) FROM dirty_issues") catch break :blk 0;
+        defer stmt.deinit();
+        if (stmt.step() catch false) {
+            break :blk stmt.columnInt(0);
+        }
+        break :blk 0;
+    };
+
+    if (dirty_count > 0) {
+        return .{
+            .name = "sync.metadata",
+            .status = "warn",
+            .message = "Unexported changes exist; consider running sync --flush-only",
+        };
+    }
+
+    // Check if last_import_time > last_export_time (external changes pending)
+    const import_newer = blk: {
+        var stmt = db.prepare(
+            \\SELECT
+            \\  (SELECT value FROM metadata WHERE key = 'last_import_time'),
+            \\  (SELECT value FROM metadata WHERE key = 'last_export_time')
+        ) catch break :blk false;
+        defer stmt.deinit();
+        if (stmt.step() catch false) {
+            const import_time = stmt.columnText(0) orelse break :blk false;
+            const export_time = stmt.columnText(1) orelse break :blk false;
+            // Lexicographic comparison works for ISO-8601 timestamps
+            break :blk std.mem.order(u8, import_time, export_time) == .gt;
+        }
+        break :blk false;
+    };
+
+    if (import_newer) {
+        return .{
+            .name = "sync.metadata",
+            .status = "ok",
+            .message = "External changes pending import",
+        };
+    }
+
+    return .{ .name = "sync.metadata", .status = "ok", .message = "Database and JSONL are in sync" };
 }
 
 // --- Tests ---
@@ -375,12 +458,9 @@ test "DoctorError enum exists" {
 
 test "DoctorResult struct works" {
     const result = DoctorResult{
-        .success = true,
-        .passed = 5,
-        .failed = 0,
+        .ok = true,
     };
-    try std.testing.expect(result.success);
-    try std.testing.expectEqual(@as(usize, 5), result.passed.?);
+    try std.testing.expect(result.ok);
 }
 
 test "run detects uninitialized workspace" {
@@ -392,23 +472,157 @@ test "run detects uninitialized workspace" {
     try std.testing.expectError(DoctorError.WorkspaceNotInitialized, result);
 }
 
-test "checkJsonlFile returns pass for existing file" {
+test "checkIntegrity passes on valid database" {
     const allocator = std.testing.allocator;
-    const test_dir = try test_util.createTestDir(allocator, "doctor_jsonl");
-    defer allocator.free(test_dir);
-    defer test_util.cleanupTestDir(test_dir);
+    var db = try storage.SqlDatabase.open(allocator, ":memory:");
+    defer db.close();
+    try storage.createSchema(&db);
 
-    const path = try std.fs.path.join(allocator, &.{ test_dir, "test.jsonl" });
-    defer allocator.free(path);
-
-    const file = try std.fs.cwd().createFile(path, .{});
-    file.close();
-
-    const check = checkJsonlFile(path);
-    try std.testing.expectEqualStrings("pass", check.status);
+    const check = try checkIntegrity(&db);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("sqlite.integrity_check", check.name);
 }
 
-test "checkJsonlFile returns fail for missing file" {
-    const check = checkJsonlFile("/nonexistent/path/issues.jsonl");
+test "checkSchemaTables passes with full schema" {
+    const allocator = std.testing.allocator;
+    var db = try storage.SqlDatabase.open(allocator, ":memory:");
+    defer db.close();
+    try storage.createSchema(&db);
+
+    const check = try checkSchemaTables(&db);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("schema.tables", check.name);
+}
+
+test "checkSchemaTables fails with missing table" {
+    const allocator = std.testing.allocator;
+    var db = try storage.SqlDatabase.open(allocator, ":memory:");
+    defer db.close();
+    try db.exec("CREATE TABLE issues (id TEXT PRIMARY KEY)");
+
+    const check = try checkSchemaTables(&db);
     try std.testing.expectEqualStrings("fail", check.status);
+}
+
+test "checkSchemaColumns passes with full schema" {
+    const allocator = std.testing.allocator;
+    var db = try storage.SqlDatabase.open(allocator, ":memory:");
+    defer db.close();
+    try storage.createSchema(&db);
+
+    const check = try checkSchemaColumns(&db);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("schema.columns", check.name);
+}
+
+test "checkMergeArtifacts passes with clean directory" {
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const check = checkMergeArtifacts(temp_path);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("jsonl.merge_artifacts", check.name);
+}
+
+test "checkMergeArtifacts warns on artifact files" {
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    const f = try temp_dir.dir.createFile("issues.base.jsonl", .{});
+    f.close();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const check = checkMergeArtifacts(temp_path);
+    try std.testing.expectEqualStrings("warn", check.status);
+}
+
+test "checkConflictMarkers passes with clean file" {
+    const allocator = std.testing.allocator;
+
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    const f = try temp_dir.dir.createFile("issues.jsonl", .{});
+    try f.writeAll("{\"id\":\"test\"}\n");
+    f.close();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const check = try checkConflictMarkers(temp_path, allocator);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("sync_conflict_markers", check.name);
+}
+
+test "checkConflictMarkers warns on markers" {
+    const allocator = std.testing.allocator;
+
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    const f = try temp_dir.dir.createFile("issues.jsonl", .{});
+    try f.writeAll("{\"id\":\"test\"}\n<<<<<<< HEAD\n{\"id\":\"a\"}\n=======\n{\"id\":\"b\"}\n>>>>>>> branch\n");
+    f.close();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const check = try checkConflictMarkers(temp_path, allocator);
+    try std.testing.expectEqualStrings("warn", check.status);
+}
+
+test "checkConflictMarkers passes when no file" {
+    const allocator = std.testing.allocator;
+    const check = try checkConflictMarkers("/nonexistent/path", allocator);
+    try std.testing.expectEqualStrings("ok", check.status);
+}
+
+test "checkSyncJsonlPath passes for accessible directory" {
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const check = checkSyncJsonlPath(temp_path);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("sync_jsonl_path", check.name);
+    try std.testing.expectEqualStrings("JSONL path is within sync allowlist", check.message.?);
+}
+
+test "checkSyncMetadata warns when no export recorded" {
+    const allocator = std.testing.allocator;
+    var db = try storage.SqlDatabase.open(allocator, ":memory:");
+    defer db.close();
+    try storage.createSchema(&db);
+
+    // Create a temp dir with an issues.jsonl file but no export metadata
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    const f = try temp_dir.dir.createFile("issues.jsonl", .{});
+    f.close();
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_path = try temp_dir.dir.realpath(".", &path_buf);
+
+    const check = try checkSyncMetadata(&db, temp_path, allocator);
+    try std.testing.expectEqualStrings("warn", check.status);
+    try std.testing.expectEqualStrings("sync.metadata", check.name);
+}
+
+test "checkSyncMetadata passes when no JSONL" {
+    const allocator = std.testing.allocator;
+    var db = try storage.SqlDatabase.open(allocator, ":memory:");
+    defer db.close();
+    try storage.createSchema(&db);
+
+    const check = try checkSyncMetadata(&db, "/nonexistent/path", allocator);
+    try std.testing.expectEqualStrings("ok", check.status);
+    try std.testing.expectEqualStrings("Database and JSONL are in sync", check.message.?);
 }

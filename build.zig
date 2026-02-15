@@ -9,6 +9,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const zqlite = b.dependency("zqlite", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // Core library module
     const mod = b.addModule("beads_zig", .{
@@ -16,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "toon_zig", .module = toon_zig.module("toon_zig") },
+            .{ .name = "zqlite", .module = zqlite.module("zqlite") },
         },
     });
 
@@ -56,6 +61,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "toon_zig", .module = toon_zig.module("toon_zig") },
+                .{ .name = "zqlite", .module = zqlite.module("zqlite") },
             },
         }),
     });

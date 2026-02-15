@@ -5,12 +5,10 @@
 const std = @import("std");
 const args = @import("args.zig");
 const common = @import("common.zig");
-const output_mod = @import("../output/mod.zig");
 const models = @import("../models/mod.zig");
 const timestamp = @import("../models/timestamp.zig");
 
 const Issue = models.Issue;
-const Status = models.Status;
 const CommandContext = common.CommandContext;
 
 pub const StaleError = common.CommandError || error{WriteError};
@@ -32,53 +30,54 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const all_issues = ctx.store.getAllRef();
+    // Fetch open issues sorted by updated_at ascending (oldest first)
+    const all_issues = try ctx.issue_store.list(.{
+        .status = .open,
+        .order_by = .updated_at,
+        .order_desc = false,
+    });
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
     const now = std.time.timestamp();
     const stale_threshold = now - @as(i64, @intCast(stale_args.days)) * 24 * 60 * 60;
 
+    // Filter to stale issues (updated_at < threshold)
     var stale_issues: std.ArrayListUnmanaged(Issue) = .{};
     defer stale_issues.deinit(allocator);
 
     for (all_issues) |issue| {
-        // Skip closed or deleted issues
-        if (issue.status.eql(.closed) or issue.status.eql(.tombstone)) continue;
-
-        // Check if issue is stale based on updated_at
-        const updated_ts = issue.updated_at.value;
-        if (updated_ts < stale_threshold) {
-            stale_issues.append(allocator, issue) catch continue;
+        if (issue.updated_at.value < stale_threshold) {
+            try stale_issues.append(allocator, issue);
         }
     }
 
-    // Sort by oldest first (most stale)
-    std.mem.sort(Issue, stale_issues.items, {}, struct {
-        fn lessThan(_: void, a: Issue, b: Issue) bool {
-            return a.updated_at.value < b.updated_at.value;
-        }
-    }.lessThan);
-
-    // Apply limit if specified
+    // Apply limit
     const display_items = if (stale_args.limit) |limit|
         stale_issues.items[0..@min(limit, stale_issues.items.len)]
     else
         stale_issues.items;
 
-    if (global.json) {
+    if (global.isStructuredOutput()) {
         try outputJson(&ctx.output, display_items, stale_args.days, allocator);
-    } else if (global.toon) {
-        try outputToon(&ctx.output, display_items, stale_args.days);
     } else {
         try outputHuman(&ctx.output, display_items, stale_args.days, now);
     }
 }
 
 fn outputJson(out: *common.Output, issues: []const Issue, days: u32, allocator: std.mem.Allocator) !void {
-    // Build compact issue list for JSON output
+    _ = days;
+    const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
     const StaleIssue = struct {
         id: []const u8,
         title: []const u8,
-        updated_at: i64,
+        status: []const u8,
+        updated_at: Rfc3339Timestamp,
     };
 
     var compact_issues: std.ArrayListUnmanaged(StaleIssue) = .{};
@@ -88,30 +87,17 @@ fn outputJson(out: *common.Output, issues: []const Issue, days: u32, allocator: 
         try compact_issues.append(allocator, .{
             .id = issue.id,
             .title = issue.title,
-            .updated_at = issue.updated_at.value,
+            .status = issue.status.toString(),
+            .updated_at = issue.updated_at,
         });
     }
 
-    try out.printJson(.{
-        .stale_threshold_days = days,
-        .count = issues.len,
-        .issues = compact_issues.items,
-    });
-}
-
-fn outputToon(out: *common.Output, issues: []const Issue, days: u32) !void {
-    try out.print("stale issues (>{d} days without update): {d}\n", .{ days, issues.len });
-    for (issues) |issue| {
-        var buf: [timestamp.RFC3339_BUFFER_SIZE]u8 = undefined;
-        const formatted_ts = timestamp.formatRfc3339(issue.updated_at.value, &buf) catch "unknown";
-        const date_part = if (formatted_ts.len >= 10) formatted_ts[0..10] else formatted_ts;
-        try out.print("- {s}: {s} (last: {s})\n", .{ issue.id, issue.title, date_part });
-    }
+    try out.printJson(compact_issues.items);
 }
 
 fn outputHuman(out: *common.Output, issues: []const Issue, days: u32, now: i64) !void {
     if (issues.len == 0) {
-        try out.print("No stale issues (updated within {d} days)\n", .{days});
+        try out.print("Stale issues (0 not updated in {d}+ days):\n", .{days});
         return;
     }
 
@@ -128,7 +114,6 @@ fn outputHuman(out: *common.Output, issues: []const Issue, days: u32, now: i64) 
 }
 
 test "stale command filters correctly" {
-    // Unit test for timestamp parsing
     const ts = "2025-01-15T10:30:00Z";
     const epoch = timestamp.parseRfc3339(ts);
     try std.testing.expect(epoch != null);

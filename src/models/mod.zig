@@ -34,9 +34,12 @@ pub const timestamp = @import("timestamp.zig");
 pub const TimestampError = timestamp.TimestampError;
 pub const parseRfc3339 = timestamp.parseRfc3339;
 pub const parseRfc3339Strict = timestamp.parseRfc3339Strict;
+pub const parseRfc3339WithNanos = timestamp.parseRfc3339WithNanos;
+pub const TimestampFull = timestamp.TimestampFull;
 pub const formatRfc3339 = timestamp.formatRfc3339;
 pub const formatRfc3339Alloc = timestamp.formatRfc3339Alloc;
 pub const timestampNow = timestamp.now;
+pub const timestampNowNanos = timestamp.nowNanos;
 pub const RFC3339_LEN = timestamp.RFC3339_LEN;
 pub const RFC3339_BUFFER_SIZE = timestamp.RFC3339_BUFFER_SIZE;
 

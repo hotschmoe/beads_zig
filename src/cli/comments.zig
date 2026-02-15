@@ -19,6 +19,8 @@ pub const CommentsError = error{
     OutOfMemory,
 };
 
+const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
+
 pub const CommentsResult = struct {
     success: bool,
     id: ?[]const u8 = null,
@@ -30,9 +32,18 @@ pub const CommentsResult = struct {
     pub const CommentInfo = struct {
         id: i64,
         author: []const u8,
-        body: []const u8,
+        text: []const u8,
         created_at: i64,
     };
+};
+
+/// Comment JSON representation with RFC3339 timestamp for bare-array output.
+const CommentJson = struct {
+    id: i64,
+    issue_id: []const u8,
+    author: []const u8,
+    text: []const u8,
+    created_at: Rfc3339Timestamp,
 };
 
 pub fn run(
@@ -70,7 +81,7 @@ fn runAdd(
     }
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(CommentsResult{
                 .success = false,
@@ -94,12 +105,11 @@ fn runAdd(
         .id = comment_id,
         .issue_id = id,
         .author = actor,
-        .body = text,
+        .text = text,
         .created_at = now,
     };
 
-    try ctx.store.addComment(id, comment);
-    try ctx.saveIfAutoFlush();
+    try ctx.issue_store.addComment(id, comment);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(CommentsResult{
@@ -111,8 +121,10 @@ fn runAdd(
     } else if (global.quiet) {
         try ctx.output.print("{d}\n", .{comment_id});
     } else {
-        try ctx.output.success("Added comment to {s}", .{id});
+        try ctx.output.success("Comment added to {s}", .{id});
     }
+
+    ctx.autoFlush();
 }
 
 fn runList(
@@ -126,7 +138,7 @@ fn runList(
     defer ctx.deinit();
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(CommentsResult{
                 .success = false,
@@ -139,34 +151,31 @@ fn runList(
         return CommentsError.IssueNotFound;
     }
 
-    const comments = try ctx.store.getComments(id);
+    const comments = try ctx.issue_store.getComments(id);
     defer {
         for (comments) |c| {
             allocator.free(c.issue_id);
             allocator.free(c.author);
-            allocator.free(c.body);
+            allocator.free(c.text);
         }
         allocator.free(comments);
     }
 
     if (global.isStructuredOutput()) {
-        var comment_infos = try allocator.alloc(CommentsResult.CommentInfo, comments.len);
-        defer allocator.free(comment_infos);
+        var comment_jsons = try allocator.alloc(CommentJson, comments.len);
+        defer allocator.free(comment_jsons);
 
         for (comments, 0..) |c, i| {
-            comment_infos[i] = .{
+            comment_jsons[i] = .{
                 .id = c.id,
+                .issue_id = c.issue_id,
                 .author = c.author,
-                .body = c.body,
-                .created_at = c.created_at,
+                .text = c.text,
+                .created_at = .{ .value = c.created_at },
             };
         }
 
-        try ctx.output.printJson(CommentsResult{
-            .success = true,
-            .id = id,
-            .comments = comment_infos,
-        });
+        try ctx.output.printJson(comment_jsons);
     } else if (global.quiet) {
         for (comments) |c| {
             try ctx.output.print("{d}\n", .{c.id});
@@ -175,20 +184,20 @@ fn runList(
         if (comments.len == 0) {
             try ctx.output.info("No comments on {s}", .{id});
         } else {
-            try ctx.output.println("Comments on {s} ({d}):", .{ id, comments.len });
+            try ctx.output.println("Comments for {s}:", .{id});
             for (comments) |c| {
                 try ctx.output.print("\n", .{});
-                try ctx.output.print("[ts:{d}] {s}:\n", .{ c.created_at, c.author });
-                try ctx.output.print("  {s}\n", .{c.body});
+                const ts_str = common.formatTimestampShort(c.created_at, allocator) catch "unknown";
+                defer if (!std.mem.eql(u8, ts_str, "unknown")) allocator.free(ts_str);
+                try ctx.output.print("[{s}] at {s} UTC\n", .{ c.author, ts_str });
+                try ctx.output.print("  {s}\n", .{c.text});
             }
         }
     }
 }
 
 fn getDefaultActor() []const u8 {
-    const builtin = @import("builtin");
-    if (builtin.os.tag == .windows) return "unknown";
-    return std.posix.getenv("USER") orelse "unknown";
+    return common.getDefaultActor() orelse "unknown";
 }
 
 // --- Tests ---

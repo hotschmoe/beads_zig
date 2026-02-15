@@ -1,121 +1,20 @@
 //! Schema command for beads_zig.
 //!
-//! Displays the storage schema (JSONL field definitions).
-//! Unlike SQLite-based storage, beads_zig uses JSONL files,
-//! so this command shows the JSON schema for issues.
+//! Outputs JSON Schema (draft-07) describing the output types that
+//! commands produce (matching br's schema command).
 
 const std = @import("std");
 const output = @import("../output/mod.zig");
-const Issue = @import("../models/issue.zig").Issue;
-const Status = @import("../models/status.zig").Status;
-const Priority = @import("../models/priority.zig").Priority;
-const IssueType = @import("../models/issue_type.zig").IssueType;
+const version_cmd = @import("version.zig");
 
 pub const SchemaError = error{
     WriteError,
     OutOfMemory,
 };
 
-pub const SchemaObject = struct {
-    name: []const u8,
-    obj_type: []const u8,
-    description: []const u8,
-};
-
 pub const SchemaResult = struct {
     success: bool = true,
 };
-
-const ISSUE_SCHEMA =
-    \\## Issue (beads.jsonl)
-    \\
-    \\One JSON object per line in the main JSONL file.
-    \\
-    \\### Fields
-    \\
-    \\| Field | Type | Required | Description |
-    \\|-------|------|----------|-------------|
-    \\| id | string | yes | Issue ID (bd-XXXXX format) |
-    \\| content_hash | string | no | SHA256 hash for deduplication |
-    \\| title | string | yes | Issue title (1-500 chars) |
-    \\| description | string | no | Detailed description |
-    \\| design | string | no | Design notes |
-    \\| acceptance_criteria | string | no | Definition of done |
-    \\| notes | string | no | Additional notes |
-    \\| status | string | yes | open, in_progress, blocked, deferred, closed, tombstone, pinned |
-    \\| priority | number | yes | 0 (critical) to 4 (backlog) |
-    \\| issue_type | string | yes | task, bug, feature, epic, chore, docs, question |
-    \\| assignee | string | no | Assigned user |
-    \\| owner | string | no | Issue owner |
-    \\| created_at | string | yes | RFC3339 timestamp |
-    \\| created_by | string | no | Creator |
-    \\| updated_at | string | yes | RFC3339 timestamp |
-    \\| closed_at | string | no | RFC3339 timestamp when closed |
-    \\| close_reason | string | no | Reason for closing |
-    \\| due_at | string | no | RFC3339 due date |
-    \\| defer_until | string | no | RFC3339 defer date |
-    \\| estimated_minutes | number | no | Time estimate |
-    \\| external_ref | string | no | External tracker link |
-    \\| source_system | string | no | Import source |
-    \\| pinned | boolean | yes | High-priority display flag |
-    \\| is_template | boolean | yes | Template flag |
-    \\| labels | array | yes | String array of labels |
-    \\| dependencies | array | yes | Array of Dependency objects |
-    \\| comments | array | yes | Array of Comment objects |
-    \\
-;
-
-const WAL_SCHEMA =
-    \\## WAL Entry (beads.wal)
-    \\
-    \\Write-ahead log for concurrent writes.
-    \\
-    \\### Fields
-    \\
-    \\| Field | Type | Description |
-    \\|-------|------|-------------|
-    \\| op | string | add, update, close, reopen, delete, set_blocked, unset_blocked |
-    \\| ts | number | Unix timestamp for ordering |
-    \\| id | string | Issue ID |
-    \\| data | object | Full Issue object (for add/update) or null |
-    \\
-;
-
-const DEPENDENCY_SCHEMA =
-    \\## Dependency
-    \\
-    \\Embedded in Issue.dependencies array.
-    \\
-    \\### Fields
-    \\
-    \\| Field | Type | Description |
-    \\|-------|------|-------------|
-    \\| issue_id | string | Dependent issue |
-    \\| depends_on_id | string | Blocker issue |
-    \\| dep_type | string | blocks, parent_child, waits_for, related, etc. |
-    \\| created_at | string | RFC3339 timestamp |
-    \\| created_by | string | Creator |
-    \\| metadata | string | JSON blob for extra data |
-    \\| thread_id | string | Optional thread reference |
-    \\
-;
-
-const COMMENT_SCHEMA =
-    \\## Comment
-    \\
-    \\Embedded in Issue.comments array.
-    \\
-    \\### Fields
-    \\
-    \\| Field | Type | Description |
-    \\|-------|------|-------------|
-    \\| id | number | Comment ID |
-    \\| issue_id | string | Parent issue ID |
-    \\| author | string | Comment author |
-    \\| body | string | Comment text |
-    \\| created_at | string | RFC3339 timestamp |
-    \\
-;
 
 pub fn run(global: anytype, allocator: std.mem.Allocator) SchemaError!SchemaResult {
     var out = output.Output.init(allocator, .{
@@ -125,46 +24,170 @@ pub fn run(global: anytype, allocator: std.mem.Allocator) SchemaError!SchemaResu
         .no_color = global.no_color,
     });
 
-    const objects = [_]SchemaObject{
-        .{ .name = "Issue", .obj_type = "entity", .description = "Primary issue record stored in beads.jsonl" },
-        .{ .name = "WalEntry", .obj_type = "log", .description = "WAL operation entry in beads.wal" },
-        .{ .name = "Dependency", .obj_type = "embedded", .description = "Dependency relationship" },
-        .{ .name = "Comment", .obj_type = "embedded", .description = "Issue comment" },
-    };
+    // Build timestamp string
+    const now = std.time.timestamp();
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = @intCast(now) };
+    const day_seconds = epoch_seconds.getDaySeconds();
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
 
-    if (global.json) {
-        out.printJson(.{
-            .storage_type = "jsonl",
-            .files = .{
-                .main = "beads.jsonl",
-                .wal = "beads.wal",
-                .lock = "beads.lock",
-            },
-            .objects = objects,
-        }) catch return SchemaError.WriteError;
-    } else {
-        out.raw(
-            \\# beads_zig Storage Schema
-            \\
-            \\Storage Type: JSONL (JSON Lines)
-            \\
-            \\## Files
-            \\
-            \\- `.beads/beads.jsonl` - Main issue storage (git-tracked)
-            \\- `.beads/beads.wal` - Write-ahead log (gitignored)
-            \\- `.beads/beads.lock` - Lock file for flock (gitignored)
-            \\
-            \\
-        ) catch return SchemaError.WriteError;
+    var ts_buf: [25]u8 = undefined;
+    const generated_at = std.fmt.bufPrint(&ts_buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+        year_day.year,
+        @as(u32, month_day.month.numeric()),
+        @as(u32, month_day.day_index) + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    }) catch "unknown";
 
-        out.raw(ISSUE_SCHEMA) catch return SchemaError.WriteError;
-        out.raw("\n") catch return SchemaError.WriteError;
-        out.raw(WAL_SCHEMA) catch return SchemaError.WriteError;
-        out.raw("\n") catch return SchemaError.WriteError;
-        out.raw(DEPENDENCY_SCHEMA) catch return SchemaError.WriteError;
-        out.raw("\n") catch return SchemaError.WriteError;
-        out.raw(COMMENT_SCHEMA) catch return SchemaError.WriteError;
-    }
+    // Schema is always JSON output (even in text mode, matching br)
+    out.raw(
+        \\{
+        \\  "tool": "bz",
+        \\  "generated_at": "
+    ) catch return SchemaError.WriteError;
+    out.raw(generated_at) catch return SchemaError.WriteError;
+    out.raw(
+        \\",
+        \\  "schemas": {
+        \\    "Issue": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "Issue",
+        \\      "description": "A beads issue",
+        \\      "type": "object",
+        \\      "required": ["id", "title", "status", "priority", "issue_type", "created_at", "updated_at"],
+        \\      "properties": {
+        \\        "id": {"type": "string", "description": "Issue ID (prefix-hash format)"},
+        \\        "title": {"type": "string", "description": "Issue title"},
+        \\        "description": {"type": ["string", "null"], "description": "Detailed description"},
+        \\        "status": {"type": "string", "enum": ["open", "in_progress", "blocked", "deferred", "closed", "tombstone", "pinned"]},
+        \\        "priority": {"type": "integer", "minimum": 0, "maximum": 4},
+        \\        "issue_type": {"type": "string", "enum": ["task", "bug", "feature", "epic", "chore", "docs", "question"]},
+        \\        "assignee": {"type": ["string", "null"]},
+        \\        "created_at": {"type": "string", "format": "date-time"},
+        \\        "created_by": {"type": ["string", "null"]},
+        \\        "updated_at": {"type": "string", "format": "date-time"},
+        \\        "closed_at": {"type": ["string", "null"], "format": "date-time"},
+        \\        "labels": {"type": "array", "items": {"type": "string"}},
+        \\        "dependencies": {"type": "array", "items": {"$ref": "#/schemas/DependencyInfo"}},
+        \\        "comments": {"type": "array", "items": {"$ref": "#/schemas/Comment"}}
+        \\      }
+        \\    },
+        \\    "DependencyInfo": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "DependencyInfo",
+        \\      "description": "A dependency relationship between issues",
+        \\      "type": "object",
+        \\      "required": ["issue_id", "depends_on_id", "dep_type"],
+        \\      "properties": {
+        \\        "issue_id": {"type": "string"},
+        \\        "depends_on_id": {"type": "string"},
+        \\        "dep_type": {"type": "string", "enum": ["blocks", "parent_child", "waits_for", "related"]},
+        \\        "created_at": {"type": "string", "format": "date-time"},
+        \\        "created_by": {"type": ["string", "null"]}
+        \\      }
+        \\    },
+        \\    "Comment": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "Comment",
+        \\      "description": "An issue comment",
+        \\      "type": "object",
+        \\      "required": ["id", "issue_id", "author", "text", "created_at"],
+        \\      "properties": {
+        \\        "id": {"type": "integer"},
+        \\        "issue_id": {"type": "string"},
+        \\        "author": {"type": "string"},
+        \\        "text": {"type": "string"},
+        \\        "created_at": {"type": "string", "format": "date-time"}
+        \\      }
+        \\    },
+        \\    "CountResult": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "CountResult",
+        \\      "description": "Result of a count query",
+        \\      "type": "object",
+        \\      "required": ["count"],
+        \\      "properties": {
+        \\        "count": {"type": "integer"}
+        \\      }
+        \\    },
+        \\    "StatsResult": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "StatsResult",
+        \\      "description": "Project statistics summary",
+        \\      "type": "object",
+        \\      "required": ["summary"],
+        \\      "properties": {
+        \\        "summary": {
+        \\          "type": "object",
+        \\          "properties": {
+        \\            "total_issues": {"type": "integer"},
+        \\            "open_issues": {"type": "integer"},
+        \\            "in_progress_issues": {"type": "integer"},
+        \\            "closed_issues": {"type": "integer"},
+        \\            "blocked_issues": {"type": "integer"},
+        \\            "deferred_issues": {"type": "integer"},
+        \\            "ready_issues": {"type": "integer"}
+        \\          }
+        \\        }
+        \\      }
+        \\    },
+        \\    "InfoResult": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "InfoResult",
+        \\      "description": "Workspace information",
+        \\      "type": "object",
+        \\      "required": ["database_path", "beads_dir", "mode", "issue_count", "db_size"],
+        \\      "properties": {
+        \\        "database_path": {"type": "string"},
+        \\        "beads_dir": {"type": "string"},
+        \\        "mode": {"type": "string"},
+        \\        "daemon_connected": {"type": "boolean"},
+        \\        "issue_count": {"type": "integer"},
+        \\        "db_size": {"type": "integer"}
+        \\      }
+        \\    },
+        \\    "DoctorResult": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "DoctorResult",
+        \\      "description": "Health check results",
+        \\      "type": "object",
+        \\      "required": ["checks"],
+        \\      "properties": {
+        \\        "checks": {
+        \\          "type": "array",
+        \\          "items": {
+        \\            "type": "object",
+        \\            "properties": {
+        \\              "name": {"type": "string"},
+        \\              "status": {"type": "string", "enum": ["ok", "warn", "error"]},
+        \\              "message": {"type": "string"}
+        \\            }
+        \\          }
+        \\        }
+        \\      }
+        \\    },
+        \\    "BlockedIssue": {
+        \\      "$schema": "http://json-schema.org/draft-07/schema#",
+        \\      "title": "BlockedIssue",
+        \\      "description": "An issue that is blocked by dependencies",
+        \\      "type": "object",
+        \\      "required": ["id", "title", "status", "priority", "blocked_by"],
+        \\      "properties": {
+        \\        "id": {"type": "string"},
+        \\        "title": {"type": "string"},
+        \\        "status": {"type": "string"},
+        \\        "priority": {"type": "integer"},
+        \\        "blocked_by": {"type": "array", "items": {"type": "string"}},
+        \\        "blocks": {"type": "array", "items": {"type": "string"}}
+        \\      }
+        \\    }
+        \\  }
+        \\}
+        \\
+    ) catch return SchemaError.WriteError;
 
     return .{};
 }

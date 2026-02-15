@@ -60,7 +60,7 @@ pub fn run(
         filters.limit = n;
     }
 
-    const issues = try ctx.store.list(filters);
+    const issues = try ctx.issue_store.list(filters);
     defer {
         for (issues) |*issue| {
             var i = issue.*;
@@ -335,6 +335,7 @@ test "run detects uninitialized workspace" {
 
 test "run lists closed issues successfully" {
     const allocator = std.testing.allocator;
+    const storage = @import("../storage/mod.zig");
 
     const tmp_dir_path = try test_util.createTestDir(allocator, "changelog_test");
     defer allocator.free(tmp_dir_path);
@@ -345,11 +346,13 @@ test "run lists closed issues successfully" {
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
+    // Create SQLite database with schema (CommandContext.init requires beads.db)
+    const db_path = try std.fs.path.join(allocator, &.{ data_path, "beads.db" });
+    defer allocator.free(db_path);
 
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    defer f.close();
+    var db = try storage.SqlDatabase.open(allocator, db_path);
+    defer db.close();
+    try storage.createSchema(&db);
 
     const changelog_args = args.ChangelogArgs{};
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };

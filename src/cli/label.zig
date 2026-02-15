@@ -56,7 +56,7 @@ fn runAdd(
     defer ctx.deinit();
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(LabelResult{
                 .success = false,
@@ -74,7 +74,7 @@ fn runAdd(
 
     for (labels) |label| {
         // Check if already has label
-        const existing = try ctx.store.getLabels(id);
+        const existing = try ctx.issue_store.getLabels(id);
         defer {
             for (existing) |lbl| {
                 allocator.free(lbl);
@@ -91,12 +91,10 @@ fn runAdd(
         }
 
         if (!has_label) {
-            try ctx.store.addLabel(id, label);
+            try ctx.issue_store.addLabel(id, label);
             try added_labels.append(allocator, label);
         }
     }
-
-    try ctx.saveIfAutoFlush();
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(LabelResult{
@@ -110,11 +108,15 @@ fn runAdd(
         }
     } else {
         if (added_labels.items.len > 0) {
-            try ctx.output.success("Added {d} label(s) to {s}", .{ added_labels.items.len, id });
+            for (added_labels.items) |label| {
+                try ctx.output.success("\xe2\x9c\x93 Added label {s} to {s}", .{ label, id });
+            }
         } else {
             try ctx.output.info("No new labels added (already present)", .{});
         }
     }
+
+    ctx.autoFlush();
 }
 
 fn runRemove(
@@ -129,7 +131,7 @@ fn runRemove(
     defer ctx.deinit();
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(LabelResult{
                 .success = false,
@@ -147,7 +149,7 @@ fn runRemove(
 
     for (labels) |label| {
         // Check if has label
-        const existing = try ctx.store.getLabels(id);
+        const existing = try ctx.issue_store.getLabels(id);
         defer {
             for (existing) |lbl| {
                 allocator.free(lbl);
@@ -164,12 +166,10 @@ fn runRemove(
         }
 
         if (has_label) {
-            try ctx.store.removeLabel(id, label);
+            try ctx.issue_store.removeLabel(id, label);
             try removed_labels.append(allocator, label);
         }
     }
-
-    try ctx.saveIfAutoFlush();
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(LabelResult{
@@ -188,6 +188,8 @@ fn runRemove(
             try ctx.output.info("No labels removed (not present)", .{});
         }
     }
+
+    ctx.autoFlush();
 }
 
 fn runList(
@@ -201,7 +203,7 @@ fn runList(
     defer ctx.deinit();
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(LabelResult{
                 .success = false,
@@ -214,7 +216,7 @@ fn runList(
         return LabelError.IssueNotFound;
     }
 
-    const label_list = try ctx.store.getLabels(id);
+    const label_list = try ctx.issue_store.getLabels(id);
     defer {
         for (label_list) |lbl| {
             allocator.free(lbl);
@@ -236,7 +238,7 @@ fn runList(
         if (label_list.len == 0) {
             try ctx.output.info("No labels on {s}", .{id});
         } else {
-            try ctx.output.println("Labels on {s} ({d}):", .{ id, label_list.len });
+            try ctx.output.println("Labels for {s}:", .{id});
             for (label_list) |label| {
                 try ctx.output.print("  {s}\n", .{label});
             }
@@ -253,58 +255,29 @@ fn runListAll(
     };
     defer ctx.deinit();
 
-    // Collect all unique labels across all issues
-    var all_labels: std.StringHashMapUnmanaged(void) = .{};
+    const label_list = try ctx.issue_store.getAllLabels();
     defer {
-        var key_it = all_labels.keyIterator();
-        while (key_it.next()) |key| {
-            allocator.free(key.*);
+        for (label_list) |lbl| {
+            allocator.free(lbl);
         }
-        all_labels.deinit(allocator);
+        allocator.free(label_list);
     }
-
-    for (ctx.store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
-        for (issue.labels) |label| {
-            if (!all_labels.contains(label)) {
-                const label_copy = try allocator.dupe(u8, label);
-                try all_labels.put(allocator, label_copy, {});
-            }
-        }
-    }
-
-    // Convert to sorted slice
-    var label_list: std.ArrayListUnmanaged([]const u8) = .{};
-    defer label_list.deinit(allocator);
-
-    var key_it = all_labels.keyIterator();
-    while (key_it.next()) |key| {
-        try label_list.append(allocator, key.*);
-    }
-
-    // Sort alphabetically
-    std.mem.sortUnstable([]const u8, label_list.items, {}, struct {
-        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.lessThan(u8, a, b);
-        }
-    }.lessThan);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(LabelResult{
             .success = true,
-            .labels = label_list.items,
+            .labels = label_list,
         });
     } else if (global.quiet) {
-        for (label_list.items) |label| {
+        for (label_list) |label| {
             try ctx.output.print("{s}\n", .{label});
         }
     } else {
-        if (label_list.items.len == 0) {
+        if (label_list.len == 0) {
             try ctx.output.info("No labels in project", .{});
         } else {
-            try ctx.output.println("Labels ({d}):", .{label_list.items.len});
-            for (label_list.items) |label| {
+            try ctx.output.println("Labels ({d}):", .{label_list.len});
+            for (label_list) |label| {
                 try ctx.output.print("  {s}\n", .{label});
             }
         }
@@ -322,46 +295,7 @@ fn runRename(
     };
     defer ctx.deinit();
 
-    // Count how many issues have this label renamed
-    var renamed_count: usize = 0;
-
-    // Iterate through all issues
-    for (ctx.store.issues.items) |*issue| {
-        if (issue.status.eql(.tombstone)) continue;
-
-        // Check if issue has the old label
-        var has_old_label = false;
-        for (issue.labels) |label| {
-            if (std.mem.eql(u8, label, old_name)) {
-                has_old_label = true;
-                break;
-            }
-        }
-
-        if (has_old_label) {
-            // Check if it already has the new label (avoid duplicates)
-            var has_new_label = false;
-            for (issue.labels) |label| {
-                if (std.mem.eql(u8, label, new_name)) {
-                    has_new_label = true;
-                    break;
-                }
-            }
-
-            if (has_new_label) {
-                // Remove the old label (new label already exists)
-                try ctx.store.removeLabel(issue.id, old_name);
-            } else {
-                // Replace old label with new label in place
-                // First remove old, then add new
-                try ctx.store.removeLabel(issue.id, old_name);
-                try ctx.store.addLabel(issue.id, new_name);
-            }
-            renamed_count += 1;
-        }
-    }
-
-    try ctx.saveIfAutoFlush();
+    const renamed_count = try ctx.issue_store.renameLabel(old_name, new_name);
 
     if (global.isStructuredOutput()) {
         try ctx.output.printJson(LabelResult{
@@ -379,6 +313,8 @@ fn runRename(
             try ctx.output.info("No issues found with label '{s}'", .{old_name});
         }
     }
+
+    ctx.autoFlush();
 }
 
 // --- Tests ---

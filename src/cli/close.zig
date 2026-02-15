@@ -10,10 +10,11 @@ const models = @import("../models/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
+const storage = @import("../storage/mod.zig");
 const Event = @import("../models/event.zig").Event;
 
 const Status = models.Status;
-const IssueStore = common.IssueStore;
+const IssueUpdate = storage.IssueUpdate;
 const CommandContext = common.CommandContext;
 
 pub const CloseError = error{
@@ -42,18 +43,25 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    const issue_ref = ctx.store.getRef(close_args.id) orelse {
-        try common.outputNotFoundError(CloseResult, &ctx.output, global.isStructuredOutput(), close_args.id, allocator);
+    const structured_output = global.isStructuredOutput();
+
+    // Fetch the issue to check current status
+    const issue = (try ctx.issue_store.get(close_args.id)) orelse {
+        try common.outputNotFoundError(CloseResult, &ctx.output, structured_output, close_args.id, allocator);
         return CloseError.IssueNotFound;
     };
+    defer {
+        var i = issue;
+        i.deinit(allocator);
+    }
 
-    if (statusEql(issue_ref.status, .closed)) {
-        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "issue is already closed");
+    if (issue.status.eql(.closed)) {
+        try common.outputErrorTyped(CloseResult, &ctx.output, structured_output, "issue is already closed");
         return CloseError.AlreadyClosed;
     }
 
     const now = std.time.timestamp();
-    var updates = IssueStore.IssueUpdate{
+    var updates = IssueUpdate{
         .status = .closed,
         .closed_at = now,
     };
@@ -66,27 +74,20 @@ pub fn run(
         updates.closed_by_session = s;
     }
 
-    ctx.store.update(close_args.id, updates, now) catch {
-        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to close issue");
+    ctx.issue_store.update(close_args.id, updates, now) catch {
+        try common.outputErrorTyped(CloseResult, &ctx.output, structured_output, "failed to close issue");
         return CloseError.StorageError;
     };
 
-    // Record audit event
+    // Record audit event (best-effort)
     const actor = global.actor orelse "unknown";
-    const event = Event.issueClosed(allocator, close_args.id, actor, close_args.reason, now) catch Event{
-        .id = 0,
-        .issue_id = close_args.id,
-        .event_type = .closed,
-        .actor = actor,
-        .old_value = null,
-        .new_value = close_args.reason,
-        .created_at = now,
-    };
-    ctx.recordEvent(event);
+    if (Event.issueClosed(allocator, close_args.id, actor, close_args.reason, now)) |event| {
+        ctx.recordEvent(event);
+    } else |_| {}
 
-    try ctx.saveIfAutoFlush();
+    try outputSuccess(&ctx.output, global, close_args.id, issue.title, "closed", "\xe2\x9c\x93 Closed {s}: {s} (done)");
 
-    try outputSuccess(&ctx.output, global, close_args.id, "closed", "Closed issue {s}");
+    ctx.autoFlush();
 }
 
 pub fn runReopen(
@@ -99,24 +100,31 @@ pub fn runReopen(
     };
     defer ctx.deinit();
 
-    const issue_ref = ctx.store.getRef(reopen_args.id) orelse {
-        try common.outputNotFoundError(CloseResult, &ctx.output, global.isStructuredOutput(), reopen_args.id, allocator);
+    const structured_output = global.isStructuredOutput();
+
+    // Fetch the issue to check current status
+    const issue = (try ctx.issue_store.get(reopen_args.id)) orelse {
+        try common.outputNotFoundError(CloseResult, &ctx.output, structured_output, reopen_args.id, allocator);
         return CloseError.IssueNotFound;
     };
+    defer {
+        var i = issue;
+        i.deinit(allocator);
+    }
 
-    if (!statusEql(issue_ref.status, .closed)) {
-        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "issue is not closed");
+    if (!issue.status.eql(.closed)) {
+        try common.outputErrorTyped(CloseResult, &ctx.output, structured_output, "issue is not closed");
         return CloseError.NotClosed;
     }
 
     const now = std.time.timestamp();
-    const updates = IssueStore.IssueUpdate{
+    const updates = IssueUpdate{
         .status = .open,
         .closed_at = 0,
     };
 
-    ctx.store.update(reopen_args.id, updates, now) catch {
-        try common.outputErrorTyped(CloseResult, &ctx.output, global.isStructuredOutput(), "failed to reopen issue");
+    ctx.issue_store.update(reopen_args.id, updates, now) catch {
+        try common.outputErrorTyped(CloseResult, &ctx.output, structured_output, "failed to reopen issue");
         return CloseError.StorageError;
     };
 
@@ -124,15 +132,16 @@ pub fn runReopen(
     const actor = global.actor orelse "unknown";
     ctx.recordEvent(Event.issueReopened(reopen_args.id, actor, now));
 
-    try ctx.saveIfAutoFlush();
+    try outputSuccess(&ctx.output, global, reopen_args.id, issue.title, "reopened", "\xe2\x9c\x93 Reopened {s}: {s}");
 
-    try outputSuccess(&ctx.output, global, reopen_args.id, "reopened", "Reopened issue {s}");
+    ctx.autoFlush();
 }
 
 fn outputSuccess(
     output: *common.Output,
     global: args.GlobalOptions,
     id: []const u8,
+    title: []const u8,
     action: []const u8,
     comptime fmt: []const u8,
 ) !void {
@@ -143,7 +152,6 @@ fn outputSuccess(
             .action = action,
         });
     } else if (global.robot) {
-        // Robot format: ACTION<TAB>ID
         try output.raw(action);
         try output.raw("\t");
         try output.raw(id);
@@ -152,19 +160,8 @@ fn outputSuccess(
         try output.raw(id);
         try output.raw("\n");
     } else {
-        try output.success(fmt, .{id});
+        try output.success(fmt, .{ id, title });
     }
-}
-
-fn statusEql(a: Status, b: Status) bool {
-    const Tag = std.meta.Tag(Status);
-    const tag_a: Tag = a;
-    const tag_b: Tag = b;
-    if (tag_a != tag_b) return false;
-    if (tag_a == .custom) {
-        return std.mem.eql(u8, a.custom, b.custom);
-    }
-    return true;
 }
 
 // --- Tests ---
@@ -215,13 +212,9 @@ test "run returns error for missing issue" {
     const data_path = try std.fs.path.join(allocator, &.{ tmp_dir_path, ".beads" });
     defer allocator.free(data_path);
 
-    try std.fs.cwd().makeDir(data_path);
-
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
-
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    // Initialize workspace
+    const init_mod = @import("init.zig");
+    try init_mod.run(.{ .prefix = "bd" }, .{ .silent = true, .data_path = data_path }, allocator);
 
     const close_args = args.CloseArgs{ .id = "bd-nonexistent" };
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };

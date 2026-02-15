@@ -347,7 +347,7 @@ zig test src/models/issue.zig
 
 **Note:** Use `zig build test` rather than `zig test src/root.zig` directly. The build system correctly configures external dependencies (rich_zig, toon_zig) which are required for the full test suite.
 
-**Current test count:** 523 tests across all modules.
+**Current test count:** 633 tests across all modules.
 
 ---
 

@@ -17,35 +17,36 @@ pub const StatsError = error{
     GitError,
 };
 
-pub const StatsResult = struct {
-    success: bool,
-    total: ?usize = null,
-    open: ?usize = null,
-    closed: ?usize = null,
-    by_status: ?[]const CountEntry = null,
-    by_priority: ?[]const CountEntry = null,
-    by_type: ?[]const CountEntry = null,
-    activity: ?ActivityStats = null,
-    message: ?[]const u8 = null,
+/// JSON output matches br's summary-based format.
+pub const StatsSummary = struct {
+    total_issues: usize,
+    open_issues: usize,
+    in_progress_issues: usize,
+    closed_issues: usize,
+    blocked_issues: usize,
+    deferred_issues: usize,
+    ready_issues: usize,
+    tombstone_issues: usize,
+    pinned_issues: usize,
+};
 
-    pub const CountEntry = struct {
-        key: []const u8,
-        count: usize,
-    };
+pub const StatsJsonResult = struct {
+    summary: StatsSummary,
+};
 
-    pub const ActivityStats = struct {
-        period_hours: u32,
-        git_commits: usize,
-        issues_created: usize,
-        issues_closed: usize,
-        issues_updated: usize,
-        commits_with_issue_refs: usize,
-        issue_refs: ?[]const IssueRef = null,
+/// Internal struct kept for activity stats.
+pub const ActivityStats = struct {
+    period_hours: u32,
+    git_commits: usize,
+    issues_created: usize,
+    issues_closed: usize,
+    issues_updated: usize,
+    commits_with_issue_refs: usize,
+    issue_refs: ?[]const IssueRef = null,
 
-        pub const IssueRef = struct {
-            issue_id: []const u8,
-            commit_count: usize,
-        };
+    pub const IssueRef = struct {
+        issue_id: []const u8,
+        commit_count: usize,
     };
 };
 
@@ -59,79 +60,76 @@ pub fn run(
     };
     defer ctx.deinit();
 
-    // Count totals
     var total: usize = 0;
     var open: usize = 0;
     var closed: usize = 0;
+    var in_progress: usize = 0;
+    var blocked: usize = 0;
+    var deferred: usize = 0;
+    var ready: usize = 0;
+    var tombstone: usize = 0;
+    var pinned: usize = 0;
 
-    // Count by status
-    var status_counts: std.StringHashMapUnmanaged(usize) = .{};
-    defer status_counts.deinit(allocator);
+    const all_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (all_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(all_issues);
+    }
 
-    // Count by priority
-    var priority_counts: [5]usize = .{ 0, 0, 0, 0, 0 };
-
-    // Count by type
-    var type_counts: std.StringHashMapUnmanaged(usize) = .{};
-    defer type_counts.deinit(allocator);
-
-    for (ctx.store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    for (all_issues) |issue| {
+        if (issue.status.eql(.tombstone)) {
+            tombstone += 1;
+            continue;
+        }
 
         total += 1;
 
-        // Status
-        const status_str = issue.status.toString();
-        const status_entry = try status_counts.getOrPutValue(allocator, status_str, 0);
-        status_entry.value_ptr.* += 1;
-
-        if (issue.status.eql(.open) or issue.status.eql(.in_progress) or issue.status.eql(.blocked)) {
-            open += 1;
+        if (issue.status.eql(.in_progress)) {
+            in_progress += 1;
         } else if (issue.status.eql(.closed)) {
             closed += 1;
+        } else if (issue.status.eql(.deferred)) {
+            deferred += 1;
         }
 
-        // Priority
-        if (issue.priority.value <= 4) {
-            priority_counts[issue.priority.value] += 1;
+        if (issue.pinned) pinned += 1;
+    }
+
+    // Compute blocked/ready: check dependencies for non-closed issues
+    open = total - closed;
+
+    for (all_issues) |issue| {
+        if (issue.status.eql(.tombstone) or issue.status.eql(.closed) or issue.status.eql(.in_progress)) continue;
+
+        const deps = try ctx.dep_store.getDependencies(issue.id);
+        defer ctx.dep_store.freeDependencies(deps);
+
+        var has_open_blocker = false;
+        for (deps) |dep| {
+            const blocker = ctx.issue_store.get(dep.depends_on_id) catch null;
+            if (blocker) |b| {
+                var bi = b;
+                defer bi.deinit(allocator);
+                if (!bi.status.eql(.closed) and !bi.status.eql(.tombstone)) {
+                    has_open_blocker = true;
+                    break;
+                }
+            }
         }
 
-        // Type
-        const type_str = issue.issue_type.toString();
-        const type_entry = try type_counts.getOrPutValue(allocator, type_str, 0);
-        type_entry.value_ptr.* += 1;
-    }
-
-    // Convert to arrays for output
-    var status_list: std.ArrayListUnmanaged(StatsResult.CountEntry) = .{};
-    defer status_list.deinit(allocator);
-
-    var status_it = status_counts.iterator();
-    while (status_it.next()) |entry| {
-        try status_list.append(allocator, .{ .key = entry.key_ptr.*, .count = entry.value_ptr.* });
-    }
-
-    var priority_list: std.ArrayListUnmanaged(StatsResult.CountEntry) = .{};
-    defer priority_list.deinit(allocator);
-
-    const priority_names = [_][]const u8{ "critical", "high", "medium", "low", "backlog" };
-    for (0..5) |i| {
-        if (priority_counts[i] > 0) {
-            try priority_list.append(allocator, .{ .key = priority_names[i], .count = priority_counts[i] });
+        if (has_open_blocker) {
+            blocked += 1;
+        } else {
+            ready += 1;
         }
-    }
-
-    var type_list: std.ArrayListUnmanaged(StatsResult.CountEntry) = .{};
-    defer type_list.deinit(allocator);
-
-    var type_it = type_counts.iterator();
-    while (type_it.next()) |entry| {
-        try type_list.append(allocator, .{ .key = entry.key_ptr.*, .count = entry.value_ptr.* });
     }
 
     // Activity stats (if requested)
-    var activity_stats: ?StatsResult.ActivityStats = null;
-    var issue_refs_list: std.ArrayListUnmanaged(StatsResult.ActivityStats.IssueRef) = .{};
+    var activity_stats: ?ActivityStats = null;
+    var issue_refs_list: std.ArrayListUnmanaged(ActivityStats.IssueRef) = .{};
     defer issue_refs_list.deinit(allocator);
 
     if (stats_args.activity) {
@@ -139,45 +137,33 @@ pub fn run(
     }
 
     if (global.isStructuredOutput()) {
-        try ctx.output.printJson(StatsResult{
-            .success = true,
-            .total = total,
-            .open = open,
-            .closed = closed,
-            .by_status = status_list.items,
-            .by_priority = priority_list.items,
-            .by_type = type_list.items,
-            .activity = activity_stats,
+        try ctx.output.printJson(StatsJsonResult{
+            .summary = .{
+                .total_issues = total,
+                .open_issues = open,
+                .in_progress_issues = in_progress,
+                .closed_issues = closed,
+                .blocked_issues = blocked,
+                .deferred_issues = deferred,
+                .ready_issues = ready,
+                .tombstone_issues = tombstone,
+                .pinned_issues = pinned,
+            },
         });
     } else if (!global.quiet) {
-        try ctx.output.println("Issue Statistics", .{});
+        try ctx.output.println("Issue Database Status", .{});
         try ctx.output.print("\n", .{});
-        try ctx.output.print("Total: {d} issues ({d} open, {d} closed)\n", .{ total, open, closed });
-        try ctx.output.print("\n", .{});
-
-        if (status_list.items.len > 0) {
-            try ctx.output.print("By Status:\n", .{});
-            for (status_list.items) |entry| {
-                try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
-            }
-        }
-
-        if (priority_list.items.len > 0) {
-            try ctx.output.print("\nBy Priority:\n", .{});
-            for (priority_list.items) |entry| {
-                try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
-            }
-        }
-
-        if (type_list.items.len > 0) {
-            try ctx.output.print("\nBy Type:\n", .{});
-            for (type_list.items) |entry| {
-                try ctx.output.print("  {s: <12} {d}\n", .{ entry.key, entry.count });
-            }
-        }
+        try ctx.output.print("Summary:\n", .{});
+        try ctx.output.print("  Total Issues:          {d}\n", .{total});
+        try ctx.output.print("  Open:                  {d}\n", .{open});
+        try ctx.output.print("  In Progress:           {d}\n", .{in_progress});
+        try ctx.output.print("  Blocked:               {d}\n", .{blocked});
+        try ctx.output.print("  Closed:                {d}\n", .{closed});
+        try ctx.output.print("  Ready to Work:         {d}\n", .{ready});
+        try ctx.output.print("\nFor more details, use 'bz list' to see individual issues.\n", .{});
 
         if (activity_stats) |activity| {
-            try ctx.output.print("\nActivity (last {d} hours):\n", .{activity.period_hours});
+            try ctx.output.print("\nRecent Activity (last {d} hours):\n", .{activity.period_hours});
             try ctx.output.print("  Git commits:           {d}\n", .{activity.git_commits});
             try ctx.output.print("  Issues created:        {d}\n", .{activity.issues_created});
             try ctx.output.print("  Issues closed:         {d}\n", .{activity.issues_closed});
@@ -203,8 +189,8 @@ fn getActivityStats(
     allocator: std.mem.Allocator,
     ctx: *CommandContext,
     hours: u32,
-    issue_refs_list: *std.ArrayListUnmanaged(StatsResult.ActivityStats.IssueRef),
-) !StatsResult.ActivityStats {
+    issue_refs_list: *std.ArrayListUnmanaged(ActivityStats.IssueRef),
+) !ActivityStats {
     const now = std.time.timestamp();
     const since = now - @as(i64, @intCast(hours)) * 60 * 60;
 
@@ -213,9 +199,16 @@ fn getActivityStats(
     var issues_closed: usize = 0;
     var issues_updated: usize = 0;
 
-    for (ctx.store.issues.items) |issue| {
-        if (issue.status.eql(.tombstone)) continue;
+    const activity_issues = try ctx.issue_store.list(.{});
+    defer {
+        for (activity_issues) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(activity_issues);
+    }
 
+    for (activity_issues) |issue| {
         if (issue.created_at.value >= since) {
             issues_created += 1;
         }
@@ -238,7 +231,7 @@ fn getActivityStats(
     // Run git log to get recent commits
     const git_result = runGitLog(allocator, hours) catch {
         // Git not available or not a git repo - return partial stats
-        return StatsResult.ActivityStats{
+        return ActivityStats{
             .period_hours = hours,
             .git_commits = 0,
             .issues_created = issues_created,
@@ -281,7 +274,7 @@ fn getActivityStats(
                     const key = normalized[0..len];
 
                     // Check if this issue exists in our store
-                    if (ctx.store.exists(key) catch false) {
+                    if (ctx.issue_store.exists(key) catch false) {
                         const entry = try issue_ref_counts.getOrPutValue(allocator, key, 0);
                         entry.value_ptr.* += 1;
                         found_ref = true;
@@ -306,13 +299,13 @@ fn getActivityStats(
     }
 
     // Sort by commit count descending
-    std.mem.sortUnstable(StatsResult.ActivityStats.IssueRef, issue_refs_list.items, {}, struct {
-        fn lessThan(_: void, a: StatsResult.ActivityStats.IssueRef, b: StatsResult.ActivityStats.IssueRef) bool {
+    std.mem.sortUnstable(ActivityStats.IssueRef, issue_refs_list.items, {}, struct {
+        fn lessThan(_: void, a: ActivityStats.IssueRef, b: ActivityStats.IssueRef) bool {
             return a.commit_count > b.commit_count;
         }
     }.lessThan);
 
-    return StatsResult.ActivityStats{
+    return ActivityStats{
         .period_hours = hours,
         .git_commits = git_commits,
         .issues_created = issues_created,
@@ -350,15 +343,21 @@ test "StatsError enum exists" {
     try std.testing.expect(err == StatsError.WorkspaceNotInitialized);
 }
 
-test "StatsResult struct works" {
-    const result = StatsResult{
-        .success = true,
-        .total = 10,
-        .open = 5,
-        .closed = 5,
+test "StatsJsonResult struct works" {
+    const result = StatsJsonResult{
+        .summary = .{
+            .total_issues = 10,
+            .open_issues = 5,
+            .in_progress_issues = 0,
+            .closed_issues = 5,
+            .blocked_issues = 0,
+            .deferred_issues = 0,
+            .ready_issues = 5,
+            .tombstone_issues = 0,
+            .pinned_issues = 0,
+        },
     };
-    try std.testing.expect(result.success);
-    try std.testing.expectEqual(@as(usize, 10), result.total.?);
+    try std.testing.expectEqual(@as(usize, 10), result.summary.total_issues);
 }
 
 test "run detects uninitialized workspace" {

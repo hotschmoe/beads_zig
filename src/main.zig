@@ -93,18 +93,6 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .add_batch => |batch_args| {
-            cli.runAddBatch(batch_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError, error.InvalidInput, error.FileReadError, error.NoIssuesToAdd => std.process.exit(1),
-                else => return err,
-            };
-        },
-        .import_cmd => |import_args| {
-            cli.runImportCmd(import_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.StorageError, error.InvalidInput, error.FileReadError => std.process.exit(1),
-                else => return err,
-            };
-        },
         .ready => |ready_args| {
             cli.runReady(ready_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -141,12 +129,6 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .backup => |backup_args| {
-            cli.runBackup(backup_args, result.global, allocator) catch |err| switch (err) {
-                error.WorkspaceNotInitialized, error.BackupNotFound, error.RestoreFailed, error.CreateFailed => std.process.exit(1),
-                else => return err,
-            };
-        },
         .search => |search_args| {
             cli.runSearch(search_args, result.global, allocator) catch |err| switch (err) {
                 error.WorkspaceNotInitialized => std.process.exit(1),
@@ -177,10 +159,60 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
                 else => return err,
             };
         },
-        .help => |help_args| {
-            cli.runHelp(help_args.topic, allocator) catch {
-                std.process.exit(1);
-            };
+        .help => |_| {
+            const stdout = std.fs.File.stdout();
+            stdout.writeAll(
+                \\Agent-first issue tracker (SQLite + JSONL)
+                \\
+                \\Usage: bz [OPTIONS] <COMMAND>
+                \\
+                \\Commands:
+                \\  init         Initialize a beads workspace
+                \\  create       Create a new issue
+                \\  q            Quick capture (create issue, print ID only)
+                \\  list         List issues
+                \\  show         Show issue details
+                \\  update       Update an issue
+                \\  close        Close an issue
+                \\  reopen       Reopen an issue
+                \\  delete       Delete an issue (creates tombstone)
+                \\  ready        List ready issues (unblocked, not deferred)
+                \\  blocked      List blocked issues
+                \\  search       Search issues
+                \\  dep          Manage dependencies
+                \\  label        Manage labels
+                \\  comments     Manage comments
+                \\  stats        Show project statistics
+                \\  count        Count issues with optional grouping
+                \\  stale        List stale issues
+                \\  lint         Check issues for consistency
+                \\  defer        Defer issues (schedule for later)
+                \\  undefer      Undefer issues (make ready again)
+                \\  config       Configuration management
+                \\  sync         Sync database with JSONL file (export or import)
+                \\  doctor       Run read-only diagnostics
+                \\  info         Show diagnostic metadata about the workspace
+                \\  schema       Emit JSON Schemas for bz output types
+                \\  where        Show the active .beads directory
+                \\  version      Show version information
+                \\  completions  Generate shell completions
+                \\  audit        View audit log
+                \\  history      Show issue history
+                \\  orphans      List orphan issues
+                \\  changelog    Generate changelog from closed issues
+                \\  help         Print this message or the help of the given subcommand(s)
+                \\
+                \\Options:
+                \\      --json       Output as JSON
+                \\      --toon       Output in TOON format
+                \\  -q, --quiet      Quiet mode (no output except errors)
+                \\  -v, --verbose    Increase logging verbosity
+                \\      --no-color   Disable colored output
+                \\      --data       Override .beads/ directory
+                \\  -h, --help       Print help
+                \\  -V, --version    Print version
+                \\
+            ) catch {};
         },
         .version => {
             _ = cli.runVersion(result.global, allocator) catch |err| switch (err) {
@@ -195,11 +227,6 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         .completions => |comp_args| {
             _ = cli.runCompletions(comp_args, result.global, allocator) catch |err| switch (err) {
                 error.WriteError => std.process.exit(1),
-            };
-        },
-        .metrics => |metrics_args| {
-            cli.runMetrics(metrics_args, result.global, allocator) catch |err| switch (err) {
-                error.WriteError, error.OutOfMemory => std.process.exit(1),
             };
         },
         .info => {
@@ -277,6 +304,12 @@ fn dispatch(result: cli.ParseResult, allocator: std.mem.Allocator) !void {
         .upgrade => |upgrade_args| {
             cli.runUpgrade(upgrade_args, result.global, allocator) catch |err| switch (err) {
                 error.NetworkError, error.UnsupportedPlatform, error.WriteError => std.process.exit(1),
+                else => return err,
+            };
+        },
+        .agents => |agents_args| {
+            cli.runAgents(agents_args, result.global, allocator) catch |err| switch (err) {
+                error.WorkspaceNotInitialized, error.StorageError => std.process.exit(1),
                 else => return err,
             };
         },

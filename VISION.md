@@ -23,12 +23,13 @@ Issues live in `.beads/` within your repository:
 
 ```
 .beads/
-  issues.jsonl    # Main storage - git-friendly diffs (tracked)
-  issues.wal      # Write-ahead log for concurrent writes (gitignored)
-  .beads.lock     # Lock file for process coordination (gitignored)
+  beads.db        # SQLite database - primary storage (gitignored)
+  beads.db-wal    # SQLite WAL - auto-managed (gitignored)
+  issues.jsonl    # Git-tracked JSONL export (for sync/collaboration)
+  config.yaml     # Project configuration
 ```
 
-**Git is the infrastructure.** No servers, no accounts, no external dependencies. Issues travel with your code through normal push/pull operations.
+**Git is the infrastructure.** No servers, no accounts, no external dependencies. SQLite handles fast local queries; JSONL export enables git-based collaboration. Issues travel with your code through normal push/pull operations.
 
 ---
 
@@ -100,10 +101,10 @@ beads_zig never:
 
 - **Single static binary** - No runtime dependencies, drop into any system
 - **Fast compilation** - Seconds, not minutes
-- **No C dependencies** - Pure Zig storage layer (no SQLite, no libc on many targets)
+- **Bundled SQLite** - SQLite compiled in via zqlite, no system dependencies
 - **Memory safety** - Explicit allocation without garbage collection
 - **Cross-platform** - Compile for any target from any host
-- **Native concurrency** - Leverage kernel-managed flock for concurrent agent access
+- **Native concurrency** - SQLite WAL mode for concurrent reads and writes
 
 ---
 

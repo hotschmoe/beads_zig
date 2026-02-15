@@ -7,7 +7,7 @@
 
 const std = @import("std");
 const models = @import("../models/mod.zig");
-const store = @import("../storage/store.zig");
+const storage = @import("../storage/mod.zig");
 const common = @import("common.zig");
 const args = @import("args.zig");
 const test_util = @import("../test_util.zig");
@@ -15,8 +15,7 @@ const test_util = @import("../test_util.zig");
 const Issue = models.Issue;
 const Priority = models.Priority;
 const CommandContext = common.CommandContext;
-const DependencyGraph = common.DependencyGraph;
-const containsIgnoreCase = store.containsIgnoreCase;
+const DependencyStore = storage.DependencyStore;
 
 pub const ReadyError = error{
     WorkspaceNotInitialized,
@@ -40,19 +39,20 @@ pub const BlockedResult = struct {
 
     /// Full blocked issue representation for agent consumption.
     /// Includes all fields commonly needed for workflow automation.
+    const Rfc3339Timestamp = @import("../models/issue.zig").Rfc3339Timestamp;
     const BlockedIssueFull = struct {
         id: []const u8,
         title: []const u8,
         description: ?[]const u8 = null,
         status: []const u8,
-        priority: u3,
+        priority: Priority,
         issue_type: []const u8,
         assignee: ?[]const u8 = null,
         labels: []const []const u8,
-        created_at: i64,
-        updated_at: i64,
-        blocked_by: []const []const u8, // IDs of blocking issues
-        blocks: []const []const u8, // IDs of issues this blocks (dependents)
+        created_at: Rfc3339Timestamp,
+        updated_at: Rfc3339Timestamp,
+        blocked_by: []const []const u8,
+        blocks: []const []const u8,
     };
 };
 
@@ -82,29 +82,76 @@ pub fn run(
         };
     }
 
-    var graph = ctx.createGraph();
-    var issues = try graph.getReadyIssues(ready_args.include_deferred);
+    // Get ready issue IDs from dependency store
+    const ready_ids = try ctx.dep_store.getReadyIssueIds();
+    defer ctx.dep_store.freeIds(ready_ids);
 
-    // Apply parent filter if specified (before other filters for efficiency)
+    // Fetch full Issue objects
+    var issues: std.ArrayList(Issue) = .empty;
+    defer {
+        for (issues.items) |*issue| {
+            issue.deinit(allocator);
+        }
+        issues.deinit(allocator);
+    }
+
+    for (ready_ids) |id| {
+        if (try ctx.issue_store.get(id)) |issue| {
+            // Filter deferred issues if not explicitly included
+            if (!ready_args.include_deferred) {
+                if (issue.defer_until.value) |defer_time| {
+                    const now = std.time.timestamp();
+                    if (defer_time > now) {
+                        var i = issue;
+                        i.deinit(allocator);
+                        continue;
+                    }
+                }
+            }
+            try issues.append(allocator, issue);
+        }
+    }
+
+    const issues_slice = try issues.toOwnedSlice(allocator);
+
+    // Apply parent filter if specified
+    var filtered_issues: []Issue = issues_slice;
+    var parent_owned: ?[]Issue = null;
+    defer if (parent_owned) |owned| {
+        for (owned) |*issue| {
+            issue.deinit(allocator);
+        }
+        allocator.free(owned);
+    };
+    defer {
+        if (parent_owned == null) {
+            for (issues_slice) |*issue| {
+                var i = issue.*;
+                i.deinit(allocator);
+            }
+        }
+        allocator.free(issues_slice);
+    }
+
     if (ready_args.parent) |parent_id| {
-        var parent_filtered: std.ArrayListUnmanaged(Issue) = .{};
+        var parent_filtered: std.ArrayList(Issue) = .empty;
         errdefer parent_filtered.deinit(allocator);
 
-        for (issues) |issue| {
-            if (graph.isChildOf(issue.id, parent_id, ready_args.recursive)) {
+        for (issues_slice) |issue| {
+            const is_child = try isChildOf(&ctx.dep_store, issue.id, parent_id, ready_args.recursive, allocator);
+            if (is_child) {
                 try parent_filtered.append(allocator, issue);
             } else {
                 var i = issue;
                 i.deinit(allocator);
             }
         }
-        allocator.free(issues);
-        issues = try parent_filtered.toOwnedSlice(allocator);
+        parent_owned = try parent_filtered.toOwnedSlice(allocator);
+        filtered_issues = parent_owned.?;
     }
-    defer graph.freeIssues(issues);
 
     // Apply filters
-    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, ready_args.title_contains, ready_args.desc_contains, ready_args.notes_contains, ready_args.overdue);
+    const filtered = try applyFilters(allocator, filtered_issues, priority_min, priority_max, ready_args.title_contains, ready_args.desc_contains, ready_args.notes_contains, ready_args.overdue);
     defer allocator.free(filtered);
 
     const display_issues = applyLimit(filtered, ready_args.limit);
@@ -120,38 +167,37 @@ pub fn run(
 
     if (global.isStructuredOutput()) {
         var full_issues = try allocator.alloc(common.IssueFull, display_issues.len);
-        defer {
-            for (full_issues) |fi| {
-                common.freeBlocksIds(allocator, fi.blocks);
-            }
-            allocator.free(full_issues);
-        }
+        defer allocator.free(full_issues);
 
         for (display_issues, 0..) |issue, i| {
-            full_issues[i] = .{
-                .id = issue.id,
-                .title = issue.title,
-                .description = issue.description,
-                .status = issue.status.toString(),
-                .priority = issue.priority.value,
-                .issue_type = issue.issue_type.toString(),
-                .assignee = issue.assignee,
-                .labels = issue.labels,
-                .created_at = issue.created_at.value,
-                .updated_at = issue.updated_at.value,
-                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
-            };
+            const issue_deps = try ctx.dep_store.getDependencies(issue.id);
+            defer ctx.dep_store.freeDependencies(issue_deps);
+            const issue_dependents = try ctx.dep_store.getDependents(issue.id);
+            defer ctx.dep_store.freeDependencies(issue_dependents);
+
+            full_issues[i] = common.issueToFull(issue, issue_deps.len, issue_dependents.len);
         }
 
-        try ctx.output.printJson(ReadyResult{
-            .success = true,
-            .issues = full_issues,
-            .count = display_issues.len,
-        });
-    } else {
-        try ctx.output.printIssueList(display_issues);
-        if (!global.quiet and display_issues.len == 0) {
+        // Bare array matching br format
+        try ctx.output.printJson(full_issues);
+    } else if (!global.quiet) {
+        if (display_issues.len == 0) {
             try ctx.output.info("No ready issues", .{});
+        } else {
+            try ctx.output.println("Ready work ({d} issue(s) with no blockers):", .{display_issues.len});
+            try ctx.output.print("\n", .{});
+            for (display_issues, 0..) |issue, idx| {
+                const output_mod = @import("../output/mod.zig");
+                const bullet = output_mod.priorityBullet(issue.priority);
+                try ctx.output.print("{d}. [{s} P{d}] [{s}] {s}: {s}\n", .{
+                    idx + 1,
+                    bullet,
+                    issue.priority.value,
+                    issue.issue_type.toString(),
+                    issue.id,
+                    issue.title,
+                });
+            }
         }
     }
 }
@@ -182,12 +228,36 @@ pub fn runBlocked(
         };
     }
 
-    var graph = ctx.createGraph();
-    const issues = try graph.getBlockedIssues();
-    defer graph.freeIssues(issues);
+    // Get blocked issue IDs and their blockers
+    const blocked_infos = try ctx.dep_store.getBlockedIssueIds();
+    defer ctx.dep_store.freeBlockedInfos(blocked_infos);
+
+    // Fetch full Issue objects
+    var issues: std.ArrayList(Issue) = .empty;
+    defer {
+        for (issues.items) |*issue| {
+            issue.deinit(allocator);
+        }
+        issues.deinit(allocator);
+    }
+
+    for (blocked_infos) |info| {
+        if (try ctx.issue_store.get(info.issue_id)) |issue| {
+            try issues.append(allocator, issue);
+        }
+    }
+
+    const issues_slice = try issues.toOwnedSlice(allocator);
+    defer {
+        for (issues_slice) |*issue| {
+            var i = issue.*;
+            i.deinit(allocator);
+        }
+        allocator.free(issues_slice);
+    }
 
     // Apply filters (blocked command doesn't support overdue filter)
-    const filtered = try applyFilters(allocator, issues, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains, false);
+    const filtered = try applyFilters(allocator, issues_slice, priority_min, priority_max, blocked_args.title_contains, blocked_args.desc_contains, blocked_args.notes_contains, false);
     defer allocator.free(filtered);
 
     const display_issues = applyLimit(filtered, blocked_args.limit);
@@ -203,54 +273,83 @@ pub fn runBlocked(
         }
 
         for (display_issues, 0..) |issue, i| {
-            const blockers = try graph.getBlockers(issue.id);
-            defer graph.freeIssues(blockers);
+            // Find the corresponding BlockedInfo for this issue
+            var blocker_ids_list: std.ArrayList([]const u8) = .empty;
+            defer blocker_ids_list.deinit(allocator);
 
-            var blocker_ids = try allocator.alloc([]const u8, blockers.len);
-            for (blockers, 0..) |blocker, j| {
-                blocker_ids[j] = try allocator.dupe(u8, blocker.id);
+            for (blocked_infos) |info| {
+                if (std.mem.eql(u8, info.issue_id, issue.id)) {
+                    // Parse comma-separated blocker IDs
+                    var iter = std.mem.splitScalar(u8, info.blocked_by, ',');
+                    while (iter.next()) |blocker_id| {
+                        try blocker_ids_list.append(allocator, try allocator.dupe(u8, blocker_id));
+                    }
+                    break;
+                }
             }
+
+            const blocker_ids = try blocker_ids_list.toOwnedSlice(allocator);
 
             blocked_issues[i] = .{
                 .id = issue.id,
                 .title = issue.title,
                 .description = issue.description,
                 .status = issue.status.toString(),
-                .priority = issue.priority.value,
+                .priority = issue.priority,
                 .issue_type = issue.issue_type.toString(),
                 .assignee = issue.assignee,
                 .labels = issue.labels,
-                .created_at = issue.created_at.value,
-                .updated_at = issue.updated_at.value,
+                .created_at = issue.created_at,
+                .updated_at = issue.updated_at,
                 .blocked_by = blocker_ids,
-                .blocks = try common.collectBlocksIds(allocator, &graph, issue.id),
+                .blocks = try common.collectBlocksIds(allocator, &ctx.dep_store, issue.id),
             };
         }
 
-        try ctx.output.printJson(BlockedResult{
-            .success = true,
-            .issues = blocked_issues,
-            .count = display_issues.len,
-        });
-    } else {
-        for (display_issues) |issue| {
-            const blockers = try graph.getBlockers(issue.id);
-            defer graph.freeIssues(blockers);
-
-            try ctx.output.print("{s}  {s}\n", .{ issue.id, issue.title });
-
-            if (blockers.len > 0) {
-                try ctx.output.print("  blocked by: ", .{});
-                for (blockers, 0..) |blocker, j| {
-                    if (j > 0) try ctx.output.print(", ", .{});
-                    try ctx.output.print("{s}", .{blocker.id});
-                }
-                try ctx.output.print("\n", .{});
-            }
-        }
-
-        if (!global.quiet and display_issues.len == 0) {
+        // Bare array matching br format
+        try ctx.output.printJson(blocked_issues);
+    } else if (!global.quiet) {
+        if (display_issues.len == 0) {
             try ctx.output.info("No blocked issues", .{});
+        } else {
+            try ctx.output.println("Blocked issues ({d}):", .{display_issues.len});
+            try ctx.output.print("\n", .{});
+
+            for (display_issues, 0..) |issue, idx| {
+                // Find blocker IDs for this issue
+                var blocker_ids_list: std.ArrayList([]const u8) = .empty;
+                defer {
+                    for (blocker_ids_list.items) |bid| allocator.free(bid);
+                    blocker_ids_list.deinit(allocator);
+                }
+
+                for (blocked_infos) |info| {
+                    if (std.mem.eql(u8, info.issue_id, issue.id)) {
+                        var iter = std.mem.splitScalar(u8, info.blocked_by, ',');
+                        while (iter.next()) |blocker_id| {
+                            try blocker_ids_list.append(allocator, try allocator.dupe(u8, blocker_id));
+                        }
+                        break;
+                    }
+                }
+
+                try ctx.output.print("{d}. [P{d}] [{s}] {s}: {s}\n", .{
+                    idx + 1,
+                    issue.priority.value,
+                    issue.issue_type.toString(),
+                    issue.id,
+                    issue.title,
+                });
+
+                if (blocker_ids_list.items.len > 0) {
+                    try ctx.output.print("   Blocked by {d} open dep(s): ", .{blocker_ids_list.items.len});
+                    for (blocker_ids_list.items, 0..) |blocker_id, j| {
+                        if (j > 0) try ctx.output.print(", ", .{});
+                        try ctx.output.print("{s}", .{blocker_id});
+                    }
+                    try ctx.output.print("\n", .{});
+                }
+            }
         }
     }
 }
@@ -320,6 +419,51 @@ fn applyFilters(
     return filtered.toOwnedSlice(allocator);
 }
 
+/// Case-insensitive substring search.
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        var match = true;
+        for (0..needle.len) |j| {
+            const h = std.ascii.toLower(haystack[i + j]);
+            const n = std.ascii.toLower(needle[j]);
+            if (h != n) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+/// Check if an issue is a child of a parent (optionally recursive).
+fn isChildOf(
+    dep_store: *DependencyStore,
+    issue_id: []const u8,
+    parent_id: []const u8,
+    recursive: bool,
+    allocator: std.mem.Allocator,
+) !bool {
+    const deps = try dep_store.getDependencies(issue_id);
+    defer dep_store.freeDependencies(deps);
+
+    for (deps) |dep| {
+        if (dep.dep_type == .parent_child and std.mem.eql(u8, dep.depends_on_id, parent_id)) {
+            return true;
+        }
+
+        if (recursive and dep.dep_type == .parent_child) {
+            if (try isChildOf(dep_store, dep.depends_on_id, parent_id, true, allocator)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 // --- Tests ---
 
 test "ReadyError enum exists" {
@@ -377,11 +521,15 @@ test "run returns empty list for empty workspace" {
 
     try std.fs.cwd().makeDir(data_path);
 
-    const issues_path = try std.fs.path.join(allocator, &.{ data_path, "issues.jsonl" });
-    defer allocator.free(issues_path);
+    // Create a SQLite database instead of issues.jsonl
+    const db_path = try std.fs.path.join(allocator, &.{ data_path, "beads.db" });
+    defer allocator.free(db_path);
 
-    const f = try std.fs.cwd().createFile(issues_path, .{});
-    f.close();
+    {
+        var db = try storage.SqlDatabase.open(allocator, db_path);
+        defer db.close();
+        try storage.createSchema(&db);
+    }
 
     const ready_args = args.ReadyArgs{};
     const global = args.GlobalOptions{ .silent = true, .data_path = data_path };

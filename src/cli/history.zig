@@ -5,8 +5,6 @@
 const std = @import("std");
 const common = @import("common.zig");
 const args = @import("args.zig");
-const Event = @import("../models/event.zig").Event;
-
 const CommandContext = common.CommandContext;
 
 pub const HistoryError = error{
@@ -45,7 +43,7 @@ pub fn run(
     const id = history_args.id;
 
     // Verify issue exists
-    if (!try ctx.store.exists(id)) {
+    if (!try ctx.issue_store.exists(id)) {
         if (global.isStructuredOutput()) {
             try ctx.output.printJson(HistoryResult{
                 .success = false,
@@ -58,9 +56,8 @@ pub fn run(
         return HistoryError.IssueNotFound;
     }
 
-    // Get real events from the event store
-    const stored_events = ctx.event_store.getEventsForIssue(id) catch &[_]Event{};
-    defer if (stored_events.len > 0) ctx.event_store.freeEvents(@constCast(stored_events));
+    const stored_events = try ctx.event_store.getForIssue(id);
+    defer ctx.event_store.freeEvents(stored_events);
 
     // Convert to output format
     var events: std.ArrayListUnmanaged(HistoryResult.EventInfo) = .{};
@@ -79,7 +76,7 @@ pub fn run(
 
     // If no stored events, generate synthetic events from issue data for backwards compatibility
     if (events.items.len == 0) {
-        const issue_opt = try ctx.store.get(id);
+        const issue_opt = try ctx.issue_store.get(id);
         if (issue_opt) |issue_val| {
             var issue = issue_val;
             defer issue.deinit(allocator);
